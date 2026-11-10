@@ -352,19 +352,17 @@ class RunHistoryServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(RunHistoryRequestError, "未装配归档服务"):
             service.regenerate_failed_artifacts(RUN_ID)
 
-    def test_location_actions_require_a_location_port(self):
+    def test_artifact_location_requires_a_location_port(self):
         service = RunHistoryService(statuses=StaticStatusPort([_summary()]))
 
-        with self.assertRaisesRegex(RunHistoryRequestError, "未装配运行位置入口"):
-            service.run_directory(RUN_ID)
         with self.assertRaisesRegex(RunHistoryRequestError, "未装配运行位置入口"):
             service.artifact_location(RUN_ID, ArtifactKind.REPORT)
 
-    def test_location_actions_reject_runs_outside_the_history(self):
+    def test_artifact_location_rejects_runs_outside_the_history(self):
         service = RunHistoryService(statuses=StaticStatusPort([_summary()]))
 
         with self.assertRaisesRegex(RunHistoryRequestError, "不在历史列表中"):
-            service.run_directory(OTHER_RUN_ID)
+            service.artifact_location(OTHER_RUN_ID, ArtifactKind.REPORT)
 
     def test_archive_contract_errors_become_history_request_errors(self):
         class BrokenArchival:
@@ -407,9 +405,6 @@ class StaticLocationPort:
     def __init__(self, target=None):
         self.target = target
         self.calls = []
-
-    def run_directory(self, run_id):
-        return f"/runs/{run_id}"
 
     def artifact_location(self, run_id, kind, *, source_result=None):
         self.calls.append((run_id, kind, source_result))
@@ -996,24 +991,19 @@ class RunHistoryPageTests(unittest.TestCase):
         page.run_table.setCurrentCell(0, 0)
         self.assertTrue(page.regenerate_button.isEnabled())
 
-    def test_page_opens_the_selected_run_directory(self):
-        """历史页只承接“打开运行目录”：报告查看已移到数据可视化页。"""
+    def test_page_exposes_only_run_maintenance_actions(self):
+        """历史页只保留运行维护：不再暴露目录或报告打开动作。"""
         self._complete_amplifier_run()
         self._archive(ArchiveArtifactGenerator(self.runs))
         page = self._page()
         page.run_table.setCurrentCell(0, 0)
 
-        self.assertTrue(page.open_run_dir_button.isEnabled())
+        self.assertFalse(hasattr(page, "open_run_dir_button"))
+        self.assertFalse(hasattr(page, "open_run_directory"))
         self.assertFalse(hasattr(page, "open_report_button"))
         self.assertFalse(hasattr(page, "open_test_report"))
-        with patch(
-            "presentation.qt.run_history_page.QDesktopServices.openUrl",
-            return_value=True,
-        ) as open_url:
-            self.assertTrue(page.open_run_directory())
-
-        opened = [Path(call.args[0].toLocalFile()) for call in open_url.call_args_list]
-        self.assertEqual(opened, [self.runs.layout(RUN_ID).run_directory])
+        self.assertTrue(hasattr(page, "regenerate_button"))
+        self.assertTrue(hasattr(page, "delete_runs_button"))
 
     def test_artifact_location_matches_the_requested_source_result(self):
         """同一运行有多份产物时，按来源结果精确匹配而不是取第一份。"""

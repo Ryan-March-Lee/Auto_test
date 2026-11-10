@@ -60,7 +60,6 @@ _DYNAMIC_STATE_WIDGETS = frozenset(
     {
         "self.run_empty_hint",
         "self.regenerate_button",
-        "self.open_run_dir_button",
         "self.delete_runs_button",
     }
 )
@@ -251,13 +250,6 @@ class RunHistoryPageStateTests(unittest.TestCase):
             .can_regenerate
         )
 
-    def test_open_directory_follows_the_selected_run(self):
-        state = RunHistoryPageState(
-            selected_run=RunHistoryRow.from_summary(_summary(can_regenerate=False))
-        )
-
-        self.assertTrue(state.can_open_directory)
-
     def test_delete_follows_all_selected_runs(self):
         terminal = _run_row()
         running = _run_row(run_id=OTHER_RUN_ID, run_status=RunStatus.RUNNING)
@@ -297,7 +289,6 @@ class RunHistoryPageRenderingTests(unittest.TestCase):
 
         self.assertFalse(page.run_empty_hint.isHidden())
         self.assertFalse(page.regenerate_button.isEnabled())
-        self.assertFalse(page.open_run_dir_button.isEnabled())
 
     def test_run_table_is_a_read_only_display_panel(self):
         page = _page(summaries=[_summary()])

@@ -188,11 +188,7 @@ class FileRunHistoryRepository(RunHistoryRepository):
         target = self._verified_target(run_id, result_id)
         return target.read_bytes()
 
-    # -- 位置定位 -----------------------------------------------------------
-
-    def run_directory(self, run_id: str) -> str:
-        """返回已登记运行的本地目录，沿用历史读取的目录边界校验。"""
-        return str(self._run_directory(run_id))
+    # -- 产物定位 -----------------------------------------------------------
 
     def artifact_location(
         self,

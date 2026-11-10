@@ -113,15 +113,11 @@ class RunArchiveStatusPort(Protocol):
 
 
 class RunLocationPort(Protocol):
-    """历史运行的只读位置入口。
+    """历史运行的只读产物位置入口。
 
-    只把已登记运行的位置交给界面，不读取文件内容，也不判断产物是否可打开；页面据此
-    触发“打开运行目录/测试报告”，不自行拼接运行目录或产物路径。
+    只把已登记运行的交付产物位置交给界面，不读取文件内容，也不判断产物是否可打开；
+    数据可视化页据此触发“打开测试报告”，不自行拼接运行目录或产物路径。
     """
-
-    def run_directory(self, run_id: str) -> str:
-        """返回已登记运行的本地目录。"""
-        ...
 
     def artifact_location(
         self,
@@ -173,10 +169,6 @@ class RunHistoryServicePort(Protocol):
         同一批次的其它运行；空列表或非法输入抛出
         ``application.run_history_service.RunHistoryRequestError``。
         """
-        ...
-
-    def run_directory(self, run_id: str) -> str:
-        """返回历史运行的本地目录；未装配位置入口或运行不可用时明确失败。"""
         ...
 
     def artifact_location(

@@ -170,8 +170,6 @@ class RunHistoryRow:
     artifact_text: str
     problem_text: str = ""
     can_regenerate: bool = False
-    # 打开运行目录只跟随“运行可用”；真正的路径解析由应用层的位置入口完成。
-    can_open_directory: bool = False
     # 删除只跟随“不是进行中”：终态、损坏与结构不完整的运行都允许用户清理；
     # 进行中的运行目录可能仍在写入，页面与应用层都不允许删除。
     can_delete: bool = True
@@ -191,7 +189,6 @@ class RunHistoryRow:
             artifact_text=_artifact_text(summary),
             problem_text=_problem_text(summary),
             can_regenerate=summary.can_regenerate,
-            can_open_directory=summary.browsable,
             can_delete=summary.run_status is not RunStatus.RUNNING,
         )
 
@@ -475,7 +472,7 @@ class HistoryViewModel:
     def select_run(self, index: int | None) -> RunHistoryRow | None:
         """推进单个“当前运行”；非法或空行索引会清空选择。
 
-        打开目录/重新生成只作用于一条运行。如果该行已经在多选集合里，只更新当前行，
+        补生成只作用于一条运行。如果该行已经在多选集合里，只更新当前行，
         不破坏用户为删除而做的多选；否则把选择收敛为这一行。
         """
         row = self.run_at(index)

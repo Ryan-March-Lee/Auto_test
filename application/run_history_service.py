@@ -72,13 +72,10 @@ class RunHistoryService:
             raise TypeError("历史运行服务需要状态端口提供 list_run_summaries()")
         if archival is not None and not callable(getattr(archival, "archive", None)):
             raise TypeError("历史运行服务的归档入口必须提供 archive()")
-        if locations is not None and (
-            not callable(getattr(locations, "run_directory", None))
-            or not callable(getattr(locations, "artifact_location", None))
+        if locations is not None and not callable(
+            getattr(locations, "artifact_location", None)
         ):
-            raise TypeError(
-                "历史运行服务的位置入口必须提供 run_directory() 与 artifact_location()"
-            )
+            raise TypeError("历史运行服务的位置入口必须提供 artifact_location()")
         if deletions is not None and not callable(
             getattr(deletions, "delete_run", None)
         ):
@@ -174,21 +171,6 @@ class RunHistoryService:
         return RunDeletionOutcome(tuple(deleted), tuple(failures))
 
     # -- 位置定位 -----------------------------------------------------------
-
-    def run_directory(self, run_id: str) -> str:
-        """返回历史运行的本地目录；只接受历史列表中可浏览的运行。"""
-        summary = self._require_run(run_id)
-        if self.locations is None:
-            raise RunHistoryRequestError("未装配运行位置入口，无法打开运行目录")
-        try:
-            target = self.locations.run_directory(summary.run_id)
-        except (OSError, ValueError) as error:
-            raise RunHistoryRequestError(
-                f"运行 {summary.run_id} 的目录不可用: {error}"
-            ) from error
-        if not isinstance(target, str) or not target.strip():
-            raise RunHistoryRequestError(f"运行 {summary.run_id} 没有可打开的目录")
-        return target
 
     def artifact_location(
         self,

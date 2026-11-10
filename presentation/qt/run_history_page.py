@@ -4,10 +4,10 @@
 **历史管理**，页面类名、路由与模块名都不再沿用“导出页”语义：
 
 - 页面只列出历史运行，并显示每次运行的阶段进度、正式结果数与交付产物状态；
-- 页面动作只保留运行级维护：打开运行目录、对未生成的交付产物执行“补生成”（写回原
-  运行目录，不重跑测量），以及删除用户明确选中的历史运行（整目录删除，进行中的运行
-  不允许删除）。历史结果浏览、测试报告查看与另存为都属于“查看结果”的动作，已移到
-  数据可视化页（见 ``visualization_page``）。
+- 页面动作只保留运行级维护：对未生成的交付产物执行“补生成”（写回原运行目录，不重跑
+  测量），以及删除用户明确选中的历史运行（整目录删除，进行中的运行不允许删除）。
+  历史结果浏览、测试报告查看与另存为都属于“查看结果”的动作，已移到数据可视化页
+  （见 ``visualization_page``）；页面不再提供文件系统入口。
 
 页面职责边界：
 
@@ -28,8 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from PySide6.QtCore import QSignalBlocker, Qt, QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtCore import QSignalBlocker, Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QGroupBox,
@@ -68,8 +67,8 @@ class RunHistoryPageState:
 
     页面不再在刷新、选中与读取失败分支里各自调用 ``setVisible`` / ``setEnabled``：
     这些分支只更新运行表格的数据，再交给 :meth:`RunHistoryPage.render_state` 一次渲染。
-    状态对象因此只保留驱动外观所需的事实（行数、当前运行与多选运行），行内展示文本、
-    “能否重新生成/删除”与“能否打开目录”仍由视图模型给出。以后增加淡入、禁用或
+    状态对象因此只保留驱动外观所需的事实（行数、当前运行与多选运行），行内展示文本与
+    “能否重新生成/删除”仍由视图模型给出。以后增加淡入、禁用或
     局部过渡时只改渲染入口，不需要追踪每个回调。
     """
 
@@ -102,11 +101,6 @@ class RunHistoryPageState:
     def can_regenerate(self) -> bool:
         """选中的运行是否有可重新生成的失败产物。"""
         return self.selected_run is not None and self.selected_run.can_regenerate
-
-    @property
-    def can_open_directory(self) -> bool:
-        """选中的运行是否允许打开运行目录。"""
-        return self.selected_run is not None and self.selected_run.can_open_directory
 
     @property
     def deletable_runs(self) -> tuple[RunHistoryRow, ...]:
@@ -158,7 +152,7 @@ class RunHistoryPage(QWidget):
         self.run_table.setAlternatingRowColors(True)
         self.run_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.run_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        # 历史运行是只读展示面板：用户只能选择、查看与打开位置，不能就地改写词条。
+        # 历史运行是只读展示面板：用户只能选择与查看，不能就地改写词条。
         self.run_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.run_table.setMinimumHeight(140)
         _fit_columns(self.run_table, stretch_column=len(_RUN_COLUMNS) - 1)
@@ -169,10 +163,6 @@ class RunHistoryPage(QWidget):
         run_layout.addWidget(self.run_empty_hint)
         run_actions = QHBoxLayout()
         run_actions.setSpacing(10)
-        self.open_run_dir_button = QPushButton("打开运行目录")
-        set_button_variant(self.open_run_dir_button, "secondary")
-        self.open_run_dir_button.clicked.connect(self.open_run_directory)
-        run_actions.addWidget(self.open_run_dir_button)
         self.delete_runs_button = QPushButton("删除选中的运行")
         set_button_variant(self.delete_runs_button, "danger")
         self.delete_runs_button.clicked.connect(self.delete_selected_runs)
@@ -237,15 +227,7 @@ class RunHistoryPage(QWidget):
         self.regenerate_button.setEnabled(state.can_regenerate)
         deletion_ready = self._deletion_service_ready()
         self.delete_runs_button.setEnabled(state.can_delete and deletion_ready)
-        location_ready = self._location_service_ready()
-        self.open_run_dir_button.setEnabled(state.can_open_directory and location_ready)
         return state
-
-    def _location_service_ready(self) -> bool:
-        """历史运行服务是否装配了目录位置入口；没有时只禁用打开动作，不影响列表。"""
-        return self.run_service is not None and callable(
-            getattr(self.run_service, "run_directory", None)
-        )
 
     def _deletion_service_ready(self) -> bool:
         """历史运行服务是否装配了删除入口；没有时只禁用删除动作，不影响列表。"""
@@ -258,7 +240,7 @@ class RunHistoryPage(QWidget):
         selection = self.run_table.selectionModel()
         indexes = () if selection is None else selection.selectedRows()
         self.history.select_runs(index.row() for index in indexes)
-        # 单运行动作（打开/重新生成）跟随当前行：只有当前行确实在多选里时才推进，
+        # 单运行动作（补生成）跟随当前行：只有当前行确实在多选里时才推进，
         # 避免把用户为删除而做的多选收敛掉。
         current = self.run_table.currentRow()
         if current in self.history.selected_run_indices:
@@ -313,50 +295,6 @@ class RunHistoryPage(QWidget):
         if row is None:
             QMessageBox.warning(self, "历史运行", "请先选择一次历史运行")
         return row
-
-    # -- 打开运行目录 -------------------------------------------------------
-
-    def open_run_directory(self) -> bool:
-        """打开选中历史运行的目录；路径由应用层位置入口解析。"""
-        row = self.selected_run_row()
-        if row is None:
-            return False
-        if not row.can_open_directory:
-            QMessageBox.warning(
-                self,
-                "无法打开",
-                f"运行 {row.run_id} {row.state_text}，不能打开运行目录",
-            )
-            return False
-        return self._open_run_directory(row.run_id)
-
-    def _open_run_directory(self, run_id: str) -> bool:
-        """把应用层给出的运行目录交给系统打开；页面不拼路径、不判断文件。"""
-        service = self.run_service
-        if not self._location_service_ready():
-            self.log_callback("未装配历史运行位置入口，无法打开运行目录")
-            QMessageBox.warning(
-                self, "无法打开", "未装配历史运行位置入口，无法打开运行目录"
-            )
-            return False
-        try:
-            target = service.run_directory(run_id)
-        except (OSError, ValueError, RuntimeError) as error:
-            self.log_callback(f"无法定位运行目录: {error}")
-            QMessageBox.warning(self, "无法打开", f"无法定位运行目录: {error}")
-            return False
-        if not isinstance(target, str) or not target.strip():
-            self.log_callback(f"运行 {run_id} 没有可打开的运行目录")
-            QMessageBox.warning(
-                self, "无法打开", f"运行 {run_id} 没有可打开的运行目录"
-            )
-            return False
-        if not QDesktopServices.openUrl(QUrl.fromLocalFile(target)):
-            self.log_callback(f"系统无法打开运行目录: {target}")
-            QMessageBox.warning(self, "无法打开", f"系统无法打开运行目录: {target}")
-            return False
-        self.log_callback(f"已打开运行目录: {target}")
-        return True
 
     # -- 补生成失败产物 -----------------------------------------------------
 
@@ -540,7 +478,7 @@ def build_run_history_page(
 
     窗口只做装配：页面需要的运行摘要/重新生成依赖来自同一个门面，页面自己持有视图
     模型，窗口不再逐项拼装页面内部结构。历史结果浏览、报告查看与另存为属于数据
-    可视化页。
+    可视化页，页面不再提供打开运行目录动作。
     """
     run_service = gui_data_service.run_history
     return RunHistoryPage(

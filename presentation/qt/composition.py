@@ -60,8 +60,8 @@ def build_gui_data_service(
         run_history=RunHistoryService(
             statuses=run_history,
             archival=archival,
-            # 同一运行目录仓储同时提供只读位置：历史页的“打开运行目录”和数据可视化页
-            # 的“打开测试报告”都不自行拼路径。
+            # 同一运行目录仓储同时提供只读产物位置：数据可视化页的“打开测试报告”
+            # 不自行拼路径。
             locations=run_history,
             # 用户明确发起的删除：整目录删除，进行中的运行由用例与适配器双重拒绝。
             deletions=deletion,

@@ -35,7 +35,7 @@
 ``OFF`` 同时从两份计划里移除。角色因此仍由现有计划结构表达，不新增通道字段。一个
 通道只能属于一份计划；页面在卡片与计划编辑器之间做双向同步。``OFF`` 时该通道整块
 降为灰色（``disabled_bg``），数值框与勾选框一起禁用；``Driver`` / ``DUT`` 时恢复
-通道底色（左浅蓝、右浅琥珀）。驱放测试模式关闭时 ``Driver`` 档被禁用，循环会跳过它。
+通道底色（左浅琥珀、右浅蓝）。驱放测试模式关闭时 ``Driver`` 档被禁用，循环会跳过它。
 
 卡片同时支持两种尺寸：``render_power_card`` 按 440×186 的原始逻辑尺寸导出静态
 位图，``PowerSupplyCard`` 则按卡片墙给的缩放比例设置控件尺寸；绘制统一在
@@ -797,15 +797,15 @@ def _calibration_font() -> QFont:
 
 
 def _accent(index: int) -> QColor:
-    """通道强调色：左边主色，右边警告色。"""
-    return _PRIMARY if index == 0 else _WARNING
+    """通道强调色：左边琥珀（``warning``），右边蓝（``primary``）。"""
+    return _WARNING if index == 0 else _PRIMARY
 
 
 def _panel_fill(index: int, enabled: bool) -> QColor:
-    """通道底色：开启时左浅蓝/右浅琥珀，关闭时统一降到禁用灰。"""
+    """通道底色：开启时左浅琥珀/右浅蓝，关闭时统一降到禁用灰。"""
     if not enabled:
         return _OFF
-    return _COOL if index == 0 else _WARM
+    return _WARM if index == 0 else _COOL
 
 
 def _rounded_rect(rect: QRectF, radius: float) -> QPainterPath:
@@ -818,7 +818,7 @@ def _rounded_rect(rect: QRectF, radius: float) -> QPainterPath:
 def _paint_title(painter: QPainter, data: PowerSupplyCardData, rect: QRectF) -> None:
     """设备码铭牌：顶部正中的白色圆角牌，压住左右两半的分界线。
 
-    牌面比通道底色亮，设备码因此不会被两半的蓝/黄底色染色；外沿叠两层极淡的
+    牌面比通道底色亮，设备码因此不会被两半的黄/蓝底色染色；外沿叠两层极淡的
     ``text`` 色圆角矩形当投影，不依赖模糊滤镜，离屏渲染与页面显示一致。
     """
     radius = 12.0
@@ -1766,9 +1766,9 @@ class CardValueField(KeyboardOnlyDoubleSpinBox):
 
 def _value_field_style(channel: str, scale: float) -> str:
     """数值框的卡面样式：与 ``_paint_value`` 的数值框同色同圆角，按缩放调整。"""
-    accent = TOKENS["primary"] if channel == "CH1" else TOKENS["warning"]
+    accent = TOKENS["warning"] if channel == "CH1" else TOKENS["primary"]
     focus_background = (
-        TOKENS["primary_soft"] if channel == "CH1" else TOKENS["warning_soft"]
+        TOKENS["warning_soft"] if channel == "CH1" else TOKENS["primary_soft"]
     )
     border = max(1, round(1.5 * scale))
     radius = max(2, round(6.0 * scale))
@@ -1805,9 +1805,9 @@ def _value_field_style(channel: str, scale: float) -> str:
 
 def _order_combo_style(channel: str, scale: float) -> str:
     """上电顺序下拉框：与通道数值框同色细边，按卡片缩放调整字号与圆角。"""
-    accent = TOKENS["primary"] if channel == "CH1" else TOKENS["warning"]
+    accent = TOKENS["warning"] if channel == "CH1" else TOKENS["primary"]
     focus_background = (
-        TOKENS["primary_soft"] if channel == "CH1" else TOKENS["warning_soft"]
+        TOKENS["warning_soft"] if channel == "CH1" else TOKENS["primary_soft"]
     )
     border = max(1, round(1.5 * scale))
     radius = max(2, round(6.0 * scale))

@@ -576,11 +576,11 @@ class PowerCardRenderTests(unittest.TestCase):
         both_on = render_power_card(_data())
         self.assertEqual(
             _color_at(both_on, open_left, sample_y).name(),
-            TOKENS["channel_cool"].lower(),
+            TOKENS["channel_warm"].lower(),
         )
         self.assertEqual(
             _color_at(both_on, open_right, sample_y).name(),
-            TOKENS["channel_warm"].lower(),
+            TOKENS["channel_cool"].lower(),
         )
         self.assertEqual(
             _color_at(both_on, POWER_CARD_WIDTH / 2.0, sample_y).name(),
@@ -591,7 +591,7 @@ class PowerCardRenderTests(unittest.TestCase):
         ch2_off = render_power_card(_data(ch2=False))
         self.assertEqual(
             _color_at(ch2_off, open_left, sample_y).name(),
-            TOKENS["channel_cool"].lower(),
+            TOKENS["channel_warm"].lower(),
             "只关 CH2 时 CH1 保持原色",
         )
         self.assertEqual(
@@ -645,7 +645,7 @@ class PowerCardRenderTests(unittest.TestCase):
                         ch2_current=False,
                     )
                     expected = (
-                        TOKENS["primary"] if index == 0 else TOKENS["warning"]
+                        TOKENS["warning"] if index == 0 else TOKENS["primary"]
                     ).lower()
                     self.assertEqual(
                         _color_at(render_power_card(checked), *sample).name(),
@@ -690,15 +690,15 @@ class PowerCardRenderTests(unittest.TestCase):
                 )
                 if index == 0:
                     self.assertGreater(
-                        on.blue(),
-                        on.red() + 40,
-                        "CH1 标记后用主色蓝填充",
+                        on.red(),
+                        on.blue() + 40,
+                        "CH1 标记后用警告色琥珀填充",
                     )
                 else:
                     self.assertGreater(
-                        on.red(),
-                        on.blue() + 40,
-                        "CH2 标记后用警告色琥珀填充",
+                        on.blue(),
+                        on.red() + 40,
+                        "CH2 标记后用主色蓝填充",
                     )
 
     def test_mode_selector_draws_a_dark_slot_and_red_accent(self):

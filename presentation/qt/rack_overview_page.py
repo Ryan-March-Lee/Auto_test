@@ -14,7 +14,7 @@
 
 点“下一步”时，本页先把除电源卡片以外的内容淡出，再把卡片的屏幕位置交给电源配置页；
 那边由 :class:`presentation.qt.power_card_morph.PowerCardMorphOverlay` 把卡片展开成
-带蓝黄通道的通道卡片，落到按同一九宫格相对位置摆放的卡片墙上。
+带黄蓝通道的通道卡片，落到按同一九宫格相对位置摆放的卡片墙上。
 
 页面只依赖表现层：卡片正面由
 :func:`presentation.qt.card_assets.render_card_front` 按同一份

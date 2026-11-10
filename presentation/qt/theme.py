@@ -90,8 +90,9 @@ TOKENS = {
     "success_soft": "#F0FDF4",
     "warning": "#D97706",
     "warning_soft": "#FFFBEB",
-    # 电源通道卡片的两个通道底色：与主色/警告色同色系，但比 *_soft 稍深一点，
-    # 左右两半并排时能一眼分开；关闭态改用 disabled_bg，不另造灰色。
+    # 电源通道卡片的两个通道底色：``cool`` / ``warm`` 只是色相名，不绑定左右；
+    # 卡面左通道取 warm、右通道取 cool（与 warning / primary 强调色同色系），比
+    # *_soft 稍深一点，左右两半并排时能一眼分开；关闭态改用 disabled_bg，不另造灰色。
     "channel_cool": "#DBEAFE",
     "channel_warm": "#FEF3C7",
     # 电源通道卡片的 OFF / DUT / Driver 竖直滚筒：深色玻璃槽体、金属拉丝底、

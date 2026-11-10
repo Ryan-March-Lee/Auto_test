@@ -31,6 +31,7 @@ from application.dto import (
     ChannelSetting,
     DrainChannel,
     PowerPlan,
+    PowerScanSchedule,
     PowerSweep,
     SupplyChannel,
 )
@@ -55,8 +56,12 @@ def _inputs(**overrides):
     routes = (_route("PS1", "CH1"), _route("PS1", "CH2"))
     values = {
         "frequencies": (Frequency.from_ghz(1.0), Frequency.from_ghz(2.4)),
-        "input_power_sweep": PowerSweep(
-            start=PowerDbm(-20.0), stop=PowerDbm(0.0), step=Decibels(1.0)
+        "power_scan_schedule": PowerScanSchedule(
+            plans=(
+                PowerSweep(
+                    start=PowerDbm(-20.0), stop=PowerDbm(0.0), step=Decibels(1.0)
+                ),
+            )
         ),
         "compression_target": Decibels(1.0),
         "attenuator": Decibels(10.0),
@@ -267,8 +272,13 @@ class AmplifierMeasurementInputsTests(unittest.TestCase):
             [item.ghz for item in inputs.frequencies], [1.0, 2.4]
         )
         self.assertIsInstance(inputs.frequencies[0], Frequency)
-        self.assertEqual(inputs.input_power_sweep.start, PowerDbm(-20.0))
-        self.assertEqual(inputs.input_power_sweep.step, Decibels(1.0))
+        self.assertEqual(len(inputs.power_scan_schedule.plans), 1)
+        self.assertEqual(inputs.power_scan_schedule.plans[0].start, PowerDbm(-20.0))
+        self.assertEqual(inputs.power_scan_schedule.plans[0].step, Decibels(1.0))
+        self.assertEqual(
+            inputs.target_input_powers,
+            tuple(PowerDbm(value) for value in range(-20, 1)),
+        )
         self.assertEqual(inputs.compression_target, Decibels(1.0))
         self.assertEqual(inputs.attenuator, Decibels(10.0))
         self.assertEqual(inputs.max_dut_input_power, PowerDbm(30.0))
@@ -347,8 +357,14 @@ class AmplifierMeasurementInputsTests(unittest.TestCase):
         routes = (_route("PS1", "CH1"),)
         valid = {
             "frequencies": (Frequency.from_ghz(1.0),),
-            "input_power_sweep": PowerSweep(
-                start=PowerDbm(-20.0), stop=PowerDbm(0.0), step=Decibels(1.0)
+            "power_scan_schedule": PowerScanSchedule(
+                plans=(
+                    PowerSweep(
+                        start=PowerDbm(-20.0),
+                        stop=PowerDbm(0.0),
+                        step=Decibels(1.0),
+                    ),
+                )
             ),
             "compression_target": Decibels(1.0),
             "attenuator": Decibels(10.0),
@@ -367,7 +383,7 @@ class AmplifierMeasurementInputsTests(unittest.TestCase):
     def test_explicit_none_is_rejected(self):
         for name in (
             "frequencies",
-            "input_power_sweep",
+            "power_scan_schedule",
             "compression_target",
             "attenuator",
             "max_dut_input_power",
@@ -524,10 +540,104 @@ class AmplifierMeasurementInputsTests(unittest.TestCase):
     def test_invalid_input_fails_at_construction(self):
         """非法输入在构造期失败：不依赖任何设备动作或运行目录。"""
         with self.assertRaises(AmplifierInputError):
-            _inputs(input_power_sweep={"start_power": -20, "stop_power": 0, "step": 1})
+            _inputs(power_scan_schedule={"start_power": -20, "stop_power": 0, "step": 1})
+
+        with self.assertRaises(AmplifierInputError):
+            _inputs(power_scan_schedule=PowerSweep(
+                start=PowerDbm(-20.0), stop=PowerDbm(0.0), step=Decibels(1.0)
+            ))
 
         with self.assertRaises(AmplifierInputError):
             _inputs(max_dut_input_power="30dBm")
+
+
+class PowerScanScheduleInputTests(unittest.TestCase):
+    """步骤 4.1：正式输入从单段扫描迁移到多段计划集合，构造期确定目标点。"""
+
+    @staticmethod
+    def _schedule(*plans):
+        return PowerScanSchedule(
+            plans=tuple(
+                PowerSweep(
+                    start=PowerDbm(start),
+                    stop=PowerDbm(stop),
+                    step=Decibels(step),
+                )
+                for start, step, stop in plans
+            )
+        )
+
+    def test_multiple_plans_keep_their_order_and_merge_boundaries_once(self):
+        inputs = _inputs(
+            power_scan_schedule=self._schedule(
+                (-10.0, 2.0, -6.0),
+                (-6.0, 1.0, -3.0),
+            )
+        )
+
+        self.assertEqual(len(inputs.power_scan_schedule.plans), 2)
+        self.assertEqual(
+            [point.dbm for point in inputs.target_input_powers],
+            [-10.0, -8.0, -6.0, -5.0, -4.0, -3.0],
+        )
+        # 目标点顺序与配置列表顺序一致；公共边界 -6 只出现一次。
+        self.assertEqual(
+            [plan.start.dbm for plan in inputs.power_scan_schedule.plans],
+            [-10.0, -6.0],
+        )
+
+    def test_gap_between_plans_fails_before_any_device_action(self):
+        with self.assertRaises(AmplifierInputError) as raised:
+            _inputs(
+                power_scan_schedule=self._schedule(
+                    (-10.0, 1.0, -6.0),
+                    (-5.0, 1.0, -3.0),
+                )
+            )
+
+        self.assertIn("空档", str(raised.exception))
+
+    def test_overlap_between_plans_fails_before_any_device_action(self):
+        with self.assertRaises(AmplifierInputError) as raised:
+            _inputs(
+                power_scan_schedule=self._schedule(
+                    (-10.0, 1.0, -5.0),
+                    (-6.0, 1.0, -3.0),
+                )
+            )
+
+        self.assertIn("重叠", str(raised.exception))
+
+    def test_target_grid_is_truncated_at_the_dut_limit(self):
+        inputs = _inputs(
+            power_scan_schedule=self._schedule((-10.0, 1.0, 0.0)),
+            max_dut_input_power=PowerDbm(-7.5),
+        )
+
+        self.assertEqual(
+            [point.dbm for point in inputs.target_input_powers], [-10.0, -9.0, -8.0, -7.5]
+        )
+
+    def test_start_above_the_effective_limit_is_rejected(self):
+        with self.assertRaises(AmplifierInputError) as raised:
+            _inputs(
+                power_scan_schedule=self._schedule((-5.0, 1.0, 0.0)),
+                max_dut_input_power=PowerDbm(-6.0),
+            )
+
+        self.assertIn("有效上限", str(raised.exception))
+
+    def test_empty_schedule_is_rejected(self):
+        with self.assertRaises(AmplifierInputError):
+            _inputs(power_scan_schedule=PowerScanSchedule(plans=()))
+
+    def test_schedule_is_frozen_and_targets_are_read_only(self):
+        inputs = _inputs()
+
+        with self.assertRaises(FrozenInstanceError):
+            inputs.power_scan_schedule = self._schedule((-10.0, 1.0, -5.0))
+        with self.assertRaises(AttributeError):
+            inputs.target_input_powers = ()
 
 
 class RunConfigurationInputTests(unittest.TestCase):
@@ -591,9 +701,14 @@ class RunConfigurationInputTests(unittest.TestCase):
         inputs = AmplifierMeasurementInputs.from_run_configuration(self._configuration())
 
         self.assertEqual([item.ghz for item in inputs.frequencies], [1.0, 2.4])
-        self.assertEqual(inputs.input_power_sweep.start, PowerDbm(-20.0))
-        self.assertEqual(inputs.input_power_sweep.stop, PowerDbm(0.0))
-        self.assertEqual(inputs.input_power_sweep.step, Decibels(1.0))
+        plan = inputs.power_scan_schedule.plans[0]
+        self.assertEqual(plan.start, PowerDbm(-20.0))
+        self.assertEqual(plan.stop, PowerDbm(0.0))
+        self.assertEqual(plan.step, Decibels(1.0))
+        self.assertEqual(
+            inputs.target_input_powers,
+            tuple(PowerDbm(value) for value in range(-20, 1)),
+        )
         self.assertEqual(inputs.compression_target, Decibels(3.0))
         self.assertEqual(inputs.attenuator, Decibels(30.0))
         self.assertEqual(inputs.max_dut_input_power, PowerDbm(30.0))
@@ -609,6 +724,98 @@ class RunConfigurationInputTests(unittest.TestCase):
         )
         self.assertEqual(inputs.channel_settings[_route("PS1", "CH2")].voltage_v, 28.0)
         self.assertEqual(inputs.dut_supplies(), {"PS1": ("CH2", "CH1")})
+
+    def _with_plans(self, *plans):
+        """用 1.2 的 ``power_scan_plans`` 替换单段兼容标量。"""
+        from dataclasses import replace
+
+        from domain.configuration.models import PowerScanPlan
+
+        configuration = self._configuration()
+        return replace(
+            configuration,
+            test_plan=replace(
+                configuration.test_plan,
+                start_power=None,
+                stop_power=None,
+                power_step=None,
+                power_scan_plans=tuple(
+                    PowerScanPlan(start_power=start, step=step, stop_power=stop)
+                    for start, step, stop in plans
+                ),
+            ),
+        )
+
+    def test_multiple_power_scan_plans_are_converted_in_order(self):
+        configuration = self._with_plans(
+            (-20.0, 2.0, -14.0),
+            (-14.0, 1.0, -11.0),
+        )
+
+        inputs = AmplifierMeasurementInputs.from_run_configuration(configuration)
+
+        self.assertEqual(
+            [
+                (plan.start.dbm, plan.step.db, plan.stop.dbm)
+                for plan in inputs.power_scan_schedule.plans
+            ],
+            [(-20.0, 2.0, -14.0), (-14.0, 1.0, -11.0)],
+        )
+        self.assertEqual(
+            [point.dbm for point in inputs.target_input_powers],
+            [-20.0, -18.0, -16.0, -14.0, -13.0, -12.0, -11.0],
+        )
+
+    def test_missing_power_scan_plans_fails_before_any_device_action(self):
+        configuration = self._with_plans()
+
+        with self.assertRaises(AmplifierInputError) as raised:
+            AmplifierMeasurementInputs.from_run_configuration(configuration)
+
+        self.assertIn("power_scan_plans", str(raised.exception))
+
+    def test_non_numeric_plan_field_reports_its_index_and_field(self):
+        configuration = self._with_plans(("bad", 1.0, 0.0))
+
+        with self.assertRaises(AmplifierInputError) as raised:
+            AmplifierMeasurementInputs.from_run_configuration(configuration)
+
+        self.assertIn("signal_source.power_scan_plans[0].start_power", str(raised.exception))
+
+    def test_reversed_plan_range_reports_its_plan_index(self):
+        """单段参数关系错误也要带上计划下标，而不是只报“起始大于终止”。"""
+        configuration = self._with_plans((-20.0, 1.0, -25.0))
+
+        with self.assertRaises(AmplifierInputError) as raised:
+            AmplifierMeasurementInputs.from_run_configuration(configuration)
+
+        message = str(raised.exception)
+        self.assertIn("signal_source.power_scan_plans[0]", message)
+        self.assertIn("起始功率", message)
+
+    def test_non_positive_plan_step_reports_its_plan_index(self):
+        configuration = self._with_plans(
+            (-30.0, 1.0, -20.0),
+            (-20.0, 0.0, -10.0),
+        )
+
+        with self.assertRaises(AmplifierInputError) as raised:
+            AmplifierMeasurementInputs.from_run_configuration(configuration)
+
+        message = str(raised.exception)
+        self.assertIn("signal_source.power_scan_plans[1]", message)
+        self.assertIn("步进", message)
+
+    def test_gap_between_configured_plans_fails_before_any_device_action(self):
+        configuration = self._with_plans(
+            (-20.0, 1.0, -15.0),
+            (-14.0, 1.0, -10.0),
+        )
+
+        with self.assertRaises(AmplifierInputError) as raised:
+            AmplifierMeasurementInputs.from_run_configuration(configuration)
+
+        self.assertIn("空档", str(raised.exception))
 
     def test_unconfirmed_power_range_semantics_is_rejected(self):
         """旧配置未确认功率语义时，不能进入正式输入构造。"""
@@ -762,6 +969,7 @@ class AmplifierInputErrorTaxonomyTests(unittest.TestCase):
             "DrainChannel",
             "INPUT_POWER_REFERENCE",
             "PowerPlan",
+            "PowerScanSchedule",
             "PowerSweep",
             "SupplyChannel",
         ):

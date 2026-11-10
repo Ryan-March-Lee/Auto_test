@@ -172,6 +172,7 @@ def amplifier_inputs(
     start_power_dbm: float = -20.0,
     stop_power_dbm: float = -20.0,
     step_db: float = 1.0,
+    power_scan_plans: tuple[tuple[float, float, float], ...] | None = None,
     compression_db: float = 1.0,
     attenuator_db: float = 10.0,
     max_input_power_dbm: float = 100.0,
@@ -187,17 +188,39 @@ def amplifier_inputs(
     拼历史配置字典。默认值对应“1 GHz、-20 dBm 单点扫描、1 dB 压缩、驱动关闭”，
     供电按 ``supplies`` 的给定顺序形成上电计划。漏极默认取最后一条路由；需要验证
     “漏极不在最后/不在 CH1”时用 ``drain`` 显式指定（须属于 ``supplies``）。
+
+    ``power_scan_plans`` 按 ``(start, step, stop)`` 给出多段计划；省略时用
+    ``start_power_dbm`` / ``step_db`` / ``stop_power_dbm`` 合成一段。
     """
     from application.dto import (
         AmplifierMeasurementInputs,
         ChannelSetting,
         DrainChannel,
         PowerPlan,
+        PowerScanSchedule,
         PowerSweep,
         SupplyChannel,
     )
     from domain.measurement.values import Decibels, Frequency, PowerDbm
 
+    sweeps = (
+        tuple(
+            PowerSweep(
+                start=PowerDbm(start),
+                stop=PowerDbm(stop),
+                step=Decibels(step),
+            )
+            for start, step, stop in power_scan_plans
+        )
+        if power_scan_plans is not None
+        else (
+            PowerSweep(
+                start=PowerDbm(start_power_dbm),
+                stop=PowerDbm(stop_power_dbm),
+                step=Decibels(step_db),
+            ),
+        )
+    )
     routes = tuple(
         SupplyChannel(supply_id=supply_id, channel=channel)
         for supply_id, channel in supplies
@@ -213,11 +236,7 @@ def amplifier_inputs(
     }
     return AmplifierMeasurementInputs(
         frequencies=(Frequency.from_ghz(frequency_ghz),),
-        input_power_sweep=PowerSweep(
-            start=PowerDbm(start_power_dbm),
-            stop=PowerDbm(stop_power_dbm),
-            step=Decibels(step_db),
-        ),
+        power_scan_schedule=PowerScanSchedule(plans=sweeps),
         compression_target=Decibels(compression_db),
         attenuator=Decibels(attenuator_db),
         max_dut_input_power=PowerDbm(max_input_power_dbm),

@@ -176,6 +176,24 @@ class MeasurementLoopRegressionTests(unittest.TestCase):
         self.assertEqual(len(result["sweep_data"]["sg_power"]), 2)
         self.assertNotIn(("set_power", -1.0), operations)
 
+    def test_no_driver_mode_rejects_multi_plan_schedules_before_any_hardware_action(self):
+        """步骤 4.1 只迁移正式输入：无驱动反算（步骤 4.3）接入前，多段计划整体拒绝。
+
+        只跑第一段会让结果看起来像跑完了全部计划，因此这里选择在服务构造期失败；
+        该检查位于 ``perform_power_sweep`` 之前，不会产生任何仪器动作。
+        """
+        inputs = amplifier_inputs(
+            power_scan_plans=((-3.0, 1.0, -1.0), (-1.0, 1.0, 1.0)),
+            max_input_power_dbm=1000.0,
+        )
+        instrument = FakeMeasurementInstrument()
+
+        with self.assertRaises(AmplifierInputError) as raised:
+            make_service(instrument=instrument, inputs=inputs)
+
+        self.assertIn("单段", str(raised.exception))
+        self.assertEqual(instrument.operations, [])
+
 
 class DrainEfficiencyTests(unittest.TestCase):
     """步骤 10：效率只读用户指定漏极，不再汇总全部 DUT 通道。"""

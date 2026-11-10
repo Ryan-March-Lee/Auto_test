@@ -137,9 +137,11 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
             [item.ghz for item in use_case.inputs.frequencies], [1.0]
         )
         self.assertEqual(use_case.inputs.attenuator, Decibels.parse("10dB"))
-        self.assertEqual(use_case.inputs.input_power_sweep.start, PowerDbm(-20))
-        self.assertEqual(use_case.inputs.input_power_sweep.stop, PowerDbm(-20))
-        self.assertEqual(use_case.inputs.input_power_sweep.step, Decibels(1))
+        plan = use_case.inputs.power_scan_schedule.plans[0]
+        self.assertEqual(plan.start, PowerDbm(-20))
+        self.assertEqual(plan.stop, PowerDbm(-20))
+        self.assertEqual(plan.step, Decibels(1))
+        self.assertEqual(use_case.inputs.target_input_powers, (PowerDbm(-20),))
         self.assertEqual(
             use_case.inputs.dut_supplies(), {"PS1": ("CH2",)}
         )

@@ -17,8 +17,12 @@
 :class:`PowerScanSchedule`，以及三个纯计算入口：:func:`validate_power_scan_schedule`
 校验相邻计划首尾相接，:meth:`PowerSweep.points` 生成单段预览点，
 :func:`target_input_power_grid` 生成预览与测量共用的合并目标点。三者都不读取配置、
-不接触仪器。``PowerScanSchedule`` 目前是独立的计划集合值对象，尚未替换
-:class:`AmplifierMeasurementInputs` 的单段字段；正式测量链路的接入属于后续阶段。
+不接触仪器。:class:`AmplifierMeasurementInputs` 的正式功率扫描字段就是
+:class:`PowerScanSchedule`：构造期调用 :func:`target_input_power_grid` 生成并缓存
+最终目标点（:attr:`AmplifierMeasurementInputs.target_input_powers`），因此空档、
+重叠与 DUT 上限越界都在打开设备之前失败。目标点是**目标 DUT 输入功率**网格：测量
+链路按阶段四的后续步骤逐条改用这份点列（4.2 驱动映射、4.3 无驱动反算、4.4 驱动
+一致性校验），DTO 本身不假装某条链路已经接通。
 
 点位只由一处算法产出：单段点位（:meth:`PowerSweep.points`）与合并点位
 （:func:`target_input_power_grid`）共用 ``_step_lattice`` / ``_segment_points``，
@@ -45,7 +49,7 @@
 | 字段 | 类型（单位） | 来源 | 必填 | 非法值处理 |
 | --- | --- | --- | --- | --- |
 | `frequencies` | `tuple[Frequency, ...]`（内部 GHz） | 测试方案的频率列表 | 是，非空 | 空列表、重复频率、非 `Frequency` 值 → `AmplifierInputError` |
-| `input_power_sweep` | `PowerSweep`（起始/终止 dBm，步进 dB） | 测试方案的**主功放输入功率**扫描参数 | 是 | 起始大于终止、步进非正、非值对象 → `AmplifierInputError`（当前仍为单段，预览与测量已共用 `target_input_power_grid`；多段集合见 `PowerScanSchedule`，替换本字段属于阶段四） |
+| `power_scan_schedule` | `PowerScanSchedule`（有序多段 `PowerSweep`） | 测试方案的 `signal_source.power_scan_plans` | 是，至少一段 | 空集合、非 `PowerScanSchedule`、元素非法、相邻计划空档/重叠、首个目标点高于有效上限 → `AmplifierInputError`（构造期用 `target_input_power_grid` 生成并缓存 `target_input_powers`） |
 | `compression_target` | `Decibels`（dB） | 测试方案的压缩点要求（1/3/5 dB） | 是 | 不在 `AMPLIFIER_COMPRESSION_TARGETS_DB` 内 → `AmplifierInputError` |
 | `attenuator` | `Decibels`（dB，非负） | 测试方案的衰减器设定 | 是 | 负值、非值对象 → `AmplifierInputError` |
 | `max_dut_input_power` | `PowerDbm`（dBm） | 测试方案的 DUT 输入功率限制 | 是 | 非值对象 → `AmplifierInputError`（不再默认“不限制”） |
@@ -739,8 +743,11 @@ class PowerScanSchedule:
     - 空集合、非 ``list``/``tuple`` 容器和非法元素由本对象以
       :class:`AmplifierInputError` 拒绝，元素错误带下标。
 
-    相邻计划的衔接、DUT 上限与点位合并由后续纯计算入口负责（点位合并见
-    :func:`target_input_power_grid`）；构造期既不排序，也不补点，也不校验空档/重叠。
+    相邻计划的衔接、DUT 上限与点位合并不属于本对象的职责，也不在构造期执行：
+    连续性由 :func:`validate_power_scan_schedule` 判定，合并与上限截断由
+    :func:`target_input_power_grid` 完成。:class:`AmplifierMeasurementInputs` 在
+    构造期调用后者并把结果缓存为 ``target_input_powers``，所以“正式输入可执行”
+    由 DTO 保证，`PowerScanSchedule` 本身只保证计划集合的形状与元素类型。
 
     单段扫描允许 ``start == stop``（单点扫描）；多段计划的最小合法性只要求至少
     一段，而“多段”与“单段”由列表长度自然表达。对象不可变，测量过程中不会被 UI
@@ -771,6 +778,42 @@ def _as_power_scan_schedule(scan: Any) -> PowerScanSchedule:
         "功率扫描计划必须是 PowerScanSchedule（多段）或 PowerSweep（单段），"
         f"收到 {type(scan).__name__}"
     )
+
+
+def _scan_plan_number(plan: Any, field: str, index: int) -> float:
+    """读取 ``power_scan_plans[index].<field>`` 的原始数值并收敛为有限 float。
+
+    领域 ``TestPlan`` 已按配置校验报告过非法值，但正式输入边界不能依赖“上游一定
+    校验过”：这里对每个字段单独判定并带上计划下标与字段名，错误路径与配置校验
+    一致（``signal_source.power_scan_plans[N].<field>``），因此硬件动作前的失败
+    信息能直接定位到配置页的具体行。
+    """
+    path = f"signal_source.power_scan_plans[{index}].{field}"
+    value = getattr(plan, field, None)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise AmplifierInputError(
+            f"{path} 必须是有限数值，收到 {type(value).__name__}"
+        )
+    number = float(value)
+    if not math.isfinite(number):
+        raise AmplifierInputError(f"{path} 必须是有限数值，收到 {value!r}")
+    return number
+
+
+def _scan_plan_sweep(plan: Any, index: int) -> PowerSweep:
+    """把一段 ``PowerScanPlan`` 读成 :class:`PowerSweep`；错误指向具体计划下标。"""
+    start = PowerDbm(_scan_plan_number(plan, "start_power", index))
+    stop = PowerDbm(_scan_plan_number(plan, "stop_power", index))
+    step = Decibels(_scan_plan_number(plan, "step", index))
+    try:
+        return PowerSweep(start=start, stop=stop, step=step)
+    except AmplifierInputError as error:
+        # 单段参数关系错误（非正步长、起点大于终点）本身不带计划下标；补上
+        # ``signal_source.power_scan_plans[N]``，与配置校验报告的路径一致，硬件动作
+        # 前的失败信息才能直接定位到配置页的具体行。
+        raise AmplifierInputError(
+            f"signal_source.power_scan_plans[{index}] {error}"
+        ) from error
 
 
 def validate_power_scan_schedule(
@@ -912,8 +955,11 @@ class AmplifierMeasurementInputs:
     不需要 ``Mapping[str, Any]`` 作为正式配置类型。运行标识、仪器端口、阶段记录器与
     校准输入（线损/驱动映射）属于运行契约，不在这里表达。
 
-    ``input_power_sweep`` 表示**主功放（DUT）输入功率**的目标范围，不是信号源输出
-    功率；``driver_gain_estimate`` 是驱动功放的全局预估增益（dB），驱动关闭时允许为空。
+    ``power_scan_schedule`` 表示**主功放（DUT）输入功率**的有序多段计划，不是信号源
+    输出功率；列表顺序就是执行顺序，不做排序或折叠。构造期调用共享入口
+    :func:`target_input_power_grid` 生成 :attr:`target_input_powers`，最终目标点在
+    打开设备前就已确定：空档、重叠、DUT 上限越界与首点高于上限都在这里失败。
+    ``driver_gain_estimate`` 是驱动功放的全局预估增益（dB），驱动关闭时允许为空。
 
     DUT 供电由三项组成，职责互不重叠：
 
@@ -929,7 +975,7 @@ class AmplifierMeasurementInputs:
     """
 
     frequencies: tuple[Frequency, ...]
-    input_power_sweep: PowerSweep
+    power_scan_schedule: PowerScanSchedule
     compression_target: Decibels
     attenuator: Decibels
     max_dut_input_power: PowerDbm
@@ -942,7 +988,10 @@ class AmplifierMeasurementInputs:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "frequencies", self._frequencies(self.frequencies))
-        _require_value(self.input_power_sweep, PowerSweep, "主功放输入功率扫描参数")
+        schedule = _require_value(
+            self.power_scan_schedule, PowerScanSchedule, "DUT 功率扫描计划"
+        )
+        object.__setattr__(self, "power_scan_schedule", schedule)
         target = _require_value(self.compression_target, Decibels, "压缩目标")
         if target.db not in AMPLIFIER_COMPRESSION_TARGETS_DB:
             allowed = "、".join(f"{value}dB" for value in sorted(AMPLIFIER_COMPRESSION_TARGETS_DB))
@@ -952,7 +1001,16 @@ class AmplifierMeasurementInputs:
         attenuator = _require_value(self.attenuator, Decibels, "衰减器设定")
         if attenuator.db < 0:
             raise AmplifierInputError(f"衰减器设定不能为负值，收到 {attenuator.db}dB")
-        _require_value(self.max_dut_input_power, PowerDbm, "DUT 最大输入功率")
+        limit = _require_value(
+            self.max_dut_input_power, PowerDbm, "DUT 最大输入功率"
+        )
+        # 目标点唯一来源：共享纯计算入口按计划顺序合并各段、去除重复边界，并把 DUT
+        # 最大输入作为最终上限。构造期就生成，缺失/空档/重叠/越限在硬件动作前失败。
+        object.__setattr__(
+            self,
+            "_target_input_powers",
+            target_input_power_grid(schedule, limit),
+        )
         if not isinstance(self.driver_enabled, bool):
             raise AmplifierInputError(
                 f"驱动模式开关必须是布尔值，收到 {type(self.driver_enabled).__name__}"
@@ -982,6 +1040,20 @@ class AmplifierMeasurementInputs:
         # 属于主功放运行的校验（domain 规则 11），不在 DTO 里强制。
         drain.require_in_routes(sequence)
 
+    @property
+    def target_input_powers(self) -> tuple[PowerDbm, ...]:
+        """构造期生成的最终目标 DUT 输入功率点（升序、无重复、不超过上限）。
+
+        这是正式运行唯一的目标点来源：预览、驱动映射与测量循环应当消费同一份点列。
+        返回值是构造期缓存的元组，不是每次重新计算，因此测量过程中不会被 UI 状态或
+        配置改动影响，也不会因为服务自己补点/截断而与预览漂移。
+
+        阶段四尚未完成时，读取本属性不会自动让某条链路改用目标语义：无驱动分支在
+        步骤 4.3 之前仍以单段计划的点列设置信号源功率，驱动分支在 4.2/4.4 之前仍以
+        映射目标表为准。调用方需要显式决定使用哪一份数据，不能假定两者已经等价。
+        """
+        return self._target_input_powers
+
     @classmethod
     def from_run_configuration(cls, configuration: Any) -> "AmplifierMeasurementInputs":
         """从已冻结的运行配置构造正式输入（应用边界唯一转换入口）。
@@ -991,7 +1063,12 @@ class AmplifierMeasurementInputs:
         输入限制、通道参数与漏极，运行映射提供本机实际接线的有序 DUT 上电计划。
 
         非法或缺失字段统一收敛为 :class:`AmplifierInputError`，因此调用方可以在连接
-        任何仪器之前失败。计划与通道参数只接受 v1.1 的两段路由对象；1.0 的
+        任何仪器之前失败。功率扫描只读 1.2 的 ``power_scan_plans``（1.1 单段在
+        :class:`TestPlan` 读取时已合成一段），并按列表顺序构造 :class:`PowerScanSchedule`；
+        最终目标点在 DTO 构造期由共享入口生成，空档、重叠与越限不会拖到硬件动作阶段。
+        每段计划的字段错误都带 ``signal_source.power_scan_plans[N].<field>`` 路径，
+        段内的非正步长/起点大于终点也补上同一个计划下标，与配置校验报告的行号一致。
+        计划与通道参数只接受 v1.1 的两段路由对象；1.0 的
         ``dut_power_channels`` / 角色字段不会被用来推断顺序。
         """
         plan = getattr(configuration, "test_plan", None)
@@ -1006,23 +1083,24 @@ class AmplifierMeasurementInputs:
         if unconfirmed is not None:
             raise AmplifierInputError(unconfirmed)
         plans = tuple(getattr(plan, "power_scan_plans", ()) or ())
-        if len(plans) != 1:
-            # 多段计划的运行链路属于阶段四；在这里失败比“只跑第一段”安全。
+        if not plans:
             raise AmplifierInputError(
-                "主功放正式输入目前只支持单段 DUT 功率扫描计划；"
-                f"当前计划为 {len(plans)} 段，多段运行链路尚未接入"
+                "主功放运行配置缺少 DUT 功率扫描计划："
+                "signal_source.power_scan_plans 至少要有一段"
             )
-        sweep = plans[0]
+        # 1.2 的正式来源是计划列表；1.1 单段由 TestPlan 在读取时合成为一段计划，
+        # 因此这里只读 power_scan_plans，不再回退到 start_power / stop_power / step。
+        schedule = PowerScanSchedule(
+            plans=tuple(
+                _scan_plan_sweep(item, index) for index, item in enumerate(plans)
+            )
+        )
         try:
             return cls(
                 frequencies=tuple(
                     Frequency.from_ghz(value) for value in plan.frequencies
                 ),
-                input_power_sweep=PowerSweep(
-                    start=PowerDbm(sweep.start_power),
-                    stop=PowerDbm(sweep.stop_power),
-                    step=Decibels(sweep.step),
-                ),
+                power_scan_schedule=schedule,
                 compression_target=Decibels.parse(plan.compression_point),
                 attenuator=Decibels(plan.attenuator_value),
                 max_dut_input_power=PowerDbm(plan.max_input_power),

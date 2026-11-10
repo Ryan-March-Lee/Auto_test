@@ -880,6 +880,16 @@ class AmplifierMeasurementService(_Service):
         # 驱动模式只消费目标网格（目标 DUT 输入 -> 源功率 + 插值驱放输出）；
         # 原始曲线留在结果文档中供审计，不再参与主功放扫描。
         self.driver_input = driver_input
+        # 正式输入已经支持多段计划（步骤 4.1），但无驱动分支仍按单段计划的点列设置
+        # 信号源功率；把目标 DUT 输入功率按线损反算成源功率属于步骤 4.3。在反算接入
+        # 之前拒绝多段计划，避免只跑第一段却表现得像跑完了全部计划。构造期失败，
+        # 因此这里不会产生任何仪器动作。
+        if driver_input is None and len(inputs.power_scan_schedule.plans) != 1:
+            raise AmplifierInputError(
+                "无驱动模式目前只支持单段 DUT 功率扫描计划："
+                "多段计划的目标输入功率反算尚未接入正式测量（步骤 4.3），"
+                f"当前计划为 {len(inputs.power_scan_schedule.plans)} 段"
+            )
         self.attenuator_value = inputs.attenuator
         self.compression_value = inputs.compression_target
         self.configuration_snapshot = dict(configuration_snapshot or {})
@@ -932,12 +942,14 @@ class AmplifierMeasurementService(_Service):
         data = {"input_power_dut": [], "output_power_dut": [], "gain": [], "sg_power": [],
                 "voltages": [], "currents": [], "dc_power": [], "efficiency": []}
         # 驱动模式：正式扫描直接按目标网格执行，源功率和 DUT 输入功率都来自映射
-        # 结果，不再对原始曲线做二次插值。无驱动模式仍走现有源功率扫描路径
-        # （步骤 8 会把无驱动模式也切换为目标输入功率语义）。
+        # 结果，不再对原始曲线做二次插值。无驱动模式仍以单段计划（构造期已保证只有
+        # 一段）的点列作为信号源扫描点，逐点用 DUT 输入保护拦截越限；把目标 DUT 输入
+        # 功率按线损反算成源功率属于步骤 4.3，届时这里改读
+        # ``self.inputs.target_input_powers`` 并在 RF 输出前预检源功率范围。
         if self.driver_input is None:
             scan_points = tuple(
                 (point, None, None)
-                for point in self.inputs.input_power_sweep.points()
+                for point in self.inputs.power_scan_schedule.plans[0].points()
             )
         else:
             targets = sorted(

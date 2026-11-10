@@ -109,8 +109,9 @@ class OfflineCompletionTests(unittest.TestCase):
         }
         self.assertEqual(coordinator_imports["workers"], {"InstrumentWorker"})
 
-    def test_dut_protection_publishes_stop_and_does_not_raise_power(self):
-        events = _Events()
+    def test_dut_limit_truncates_targets_and_the_legacy_scan_still_protects(self):
+        """两层行为都要成立：DTO 构造期给出不越限的目标网格；无驱动分支在步骤 4.3
+        之前仍按单段计划逐点设置源功率，并由 DUT 输入保护在越限点前停止。"""
         instrument = _Instrument()
         inputs = amplifier_inputs(
             start_power_dbm=-3.0,
@@ -121,6 +122,11 @@ class OfflineCompletionTests(unittest.TestCase):
             max_input_power_dbm=-2.0,
             supplies=(("PS", "A"),),
         )
+
+        self.assertEqual(
+            [point.dbm for point in inputs.target_input_powers], [-3.0, -2.0]
+        )
+        events = _Events()
         service = AmplifierMeasurementService(
             inputs, instrument, {"cable_losses": {"1.0": {"cable1": 0, "cable2": 0, "cable4": 0}}},
             run_id="run-amplifier",
@@ -128,8 +134,17 @@ class OfflineCompletionTests(unittest.TestCase):
             event_sink=events, sleep_fn=lambda _: None,
         )
         service.perform_power_sweep(1.0)
-        self.assertTrue(any(isinstance(event, StoppedEvent) for event in events.items))
+
+        set_power_values = [
+            operation[1]
+            for operation in instrument.operations
+            if len(operation) == 2 and operation[0] == "set_power"
+        ]
+        self.assertEqual(set_power_values, [-40, -3.0, -2.0])
+        # 越限点（-1 dBm、0 dBm）在设置功率之前被保护拦住。
         self.assertNotIn(("set_power", -1), instrument.operations)
+        self.assertNotIn(("set_power", 0), instrument.operations)
+        self.assertTrue(any(isinstance(event, StoppedEvent) for event in events.items))
 
     def test_versioned_model_and_reports_are_round_trippable(self):
         result = AmplifierMeasurementResult(

@@ -811,15 +811,18 @@ def _read_sweeps(
     ``stop_power`` / ``step`` 只在读取边界包装成一段计划，随后草稿保存为新列表。
     两者同时出现说明文件存在两个来源，直接报结构冲突，不选择其中一个继续。
     列表元素保持原始顺序；非法元素按索引报告并跳过，剩下的合法段仍可编辑。
+
+    “计划字段存在”按键判断而不是按值：``power_scan_plans: null`` 表示计划缺失，
+    必须报告，不能退回旧标量分支把缺失掩盖成一份可用配置。
     """
     if value is None:
         return ()
     section = _mapping(value, "signal_source", issues)
     if not section:
         return ()
-    plans = section.get("power_scan_plans")
     scalar_keys = [key for key in LEGACY_POWER_SCAN_FIELDS if key in section]
-    if plans is not None:
+    if "power_scan_plans" in section:
+        plans = section.get("power_scan_plans")
         if scalar_keys:
             issues.append(
                 _issue(
@@ -859,6 +862,16 @@ def _read_sweeps(
                         "功率扫描计划必须是 {start_power, step, stop_power} 对象",
                     )
                 )
+                continue
+            missing = [
+                key for key in ("start_power", "step", "stop_power") if key not in item
+            ]
+            if missing:
+                # 缺键不是“数值缺失”：不报出来会让一段计划在没有提示的情况下消失。
+                for key in missing:
+                    issues.append(
+                        _issue(f"{path}.{key}", _CODE_INVALID_SWEEP, "缺少必需字段")
+                    )
                 continue
             start = _finite_number(item.get("start_power"), f"{path}.start_power", issues)
             step = _finite_number(item.get("step"), f"{path}.step", issues)

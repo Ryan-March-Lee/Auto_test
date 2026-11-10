@@ -186,7 +186,8 @@ class TestPlan:
     :class:`PowerScanPlan`，列表顺序就是执行顺序。``start_power`` / ``stop_power`` /
     ``power_step`` 只是**单段兼容属性**：从 1.1 标量形状读取时合成一段计划、从单段
     计划反推，供尚未迁移到多段集合的调用方使用；多段计划下它们保持 ``None``，
-    运行链路必须改用计划集合，不能把第一段当成全部。
+    运行链路必须改用计划集合，不能把第一段当成全部。计划列表与旧标量同时提供
+    （无论数值是否一致）都由 :func:`validate_test_plan` 拒绝，不选一个来源继续。
 
     正式语义仍是**主功放输入功率**范围与目标输入功率网格间隔，不是信号源输出功率。
     新保存的配置在 ``signal_source.power_reference`` 写入
@@ -206,6 +207,12 @@ class TestPlan:
     power_step: Optional[float] = None
     # 1.2 正式功率扫描计划；顺序即执行顺序，至少一段。
     power_scan_plans: Tuple[PowerScanPlan, ...] = ()
+    # 直接构造时“计划列表 + 旧标量”同时出现的标记（文档键名）。``None`` 表示尚未
+    # 判定，由 __post_init__ 固定下来；dataclasses.replace() 会原样带回，避免把
+    # 已由单段计划回填的兼容属性误判成两个来源。读取路径的同一冲突由 raw 检查报告。
+    _conflicting_scan_scalars: Optional[Tuple[str, ...]] = field(
+        default=None, compare=False, repr=False
+    )
     power_unit: str = "dBm"
     power_reference: Optional[str] = None
     compression_point: Optional[str] = None
@@ -288,14 +295,17 @@ class TestPlan:
     def __post_init__(self) -> None:
         """把两套扫描表示收敛成一个来源，并补齐单段兼容属性。
 
-        - 直接构造时只给标量（旧调用方/测试）→ 合成一段计划，``to_dict`` 因此总能
-          写出 1.2 需要的列表；这不是“猜测”，只是把单段形状显式化。
+        - 只给标量（旧调用方/测试）→ 合成一段计划，``to_dict`` 因此总能写出 1.2
+          需要的列表；这不是“猜测”，只是把单段形状显式化。
         - 只给计划（1.2 文档）且只有一段 → 用该段回填兼容属性，单段消费方继续可用；
           多段时兼容属性保持 ``None``，避免把“第一段”误当成全部。
+        - 计划列表与标量同时由调用方给出 → 记录冲突（:attr:`conflicting_scan_scalars`），
+          由校验拒绝；这里不替调用方挑一个来源，也不把标量当派生值覆盖。
         """
         plans = self.power_scan_plans
         if not isinstance(plans, tuple):
             plans = tuple(plans) if isinstance(plans, (list, tuple)) else ()
+        given_plans = bool(plans)
         if not plans and all(
             value is not None
             for value in (self.start_power, self.stop_power, self.power_step)
@@ -308,6 +318,24 @@ class TestPlan:
                 ),
             )
         object.__setattr__(self, "power_scan_plans", plans)
+        if self._conflicting_scan_scalars is None:
+            object.__setattr__(
+                self,
+                "_conflicting_scan_scalars",
+                (
+                    tuple(
+                        document_key
+                        for attribute, document_key in (
+                            ("start_power", "start_power"),
+                            ("stop_power", "stop_power"),
+                            ("power_step", "step"),
+                        )
+                        if getattr(self, attribute) is not None
+                    )
+                    if given_plans
+                    else ()
+                ),
+            )
         if len(plans) == 1:
             single = plans[0]
             for name, value in (
@@ -317,6 +345,16 @@ class TestPlan:
             ):
                 if getattr(self, name) is None:
                     object.__setattr__(self, name, value)
+
+    @property
+    def conflicting_scan_scalars(self) -> Tuple[str, ...]:
+        """计划列表与旧标量同时显式提供时，被提供的标量键（文档键名）。
+
+        正常读取的 1.1 标量与由单段计划回填的兼容属性都不算冲突。程序内直接构造
+        的冲突在这里报告；从文档读取的冲突优先按 ``raw`` 检查报告，两者都不接受
+        “一个来源读取、另一个来源继续运行”。
+        """
+        return self._conflicting_scan_scalars or ()
 
     def to_dict(self) -> Dict[str, Any]:
         """按版本写出正式测试方案。
@@ -1175,6 +1213,10 @@ def _validate_power_scan_plans(plan: TestPlan, error: Any) -> None:
     """
     raw_signal = _mapping_value(plan.raw.get("signal_source"))
     legacy_keys = [key for key in LEGACY_POWER_SCAN_FIELDS if key in raw_signal]
+    if not legacy_keys:
+        # 程序内直接构造的 TestPlan 没有 raw 文档，只能靠构造期记录的冲突；
+        # 两条路径的结论一致：不选择其中一个来源继续。
+        legacy_keys = list(plan.conflicting_scan_scalars)
     if legacy_keys:
         error(
             "signal_source",

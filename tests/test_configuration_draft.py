@@ -332,6 +332,38 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
         self.assertEqual(result.draft.sweeps, ())
         self.assertIsNone(result.draft.to_document()["signal_source"]["power_scan_plans"])
 
+    def test_explicit_null_plan_is_reported_instead_of_falling_back(self):
+        """显式 ``null`` 是计划缺失：不能退回旧标量，也不能伪造一段。"""
+        document = _document()
+        document["signal_source"] = {
+            "power_scan_plans": None,
+            "start_power": -38.0,
+            "stop_power": -16.0,
+            "step": 1.0,
+        }
+
+        result = ConfigurationDraft.from_document(document)
+
+        self.assertFalse(result.valid)
+        self.assertEqual(result.draft.sweeps, ())
+        self.assertIn(
+            "signal_source",
+            {issue.path for issue in result.issues},
+        )
+
+    def test_explicit_null_plan_alone_is_reported_too(self):
+        document = _document()
+        document["signal_source"] = {"power_scan_plans": None}
+
+        result = ConfigurationDraft.from_document(document)
+
+        self.assertFalse(result.valid)
+        self.assertEqual(result.draft.sweeps, ())
+        self.assertIn(
+            "signal_source.power_scan_plans",
+            {issue.path for issue in result.issues},
+        )
+
     def test_invalid_plan_element_reports_its_index(self):
         document = _document()
         document["signal_source"] = {
@@ -347,6 +379,25 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
             "signal_source.power_scan_plans[1]",
             {issue.path for issue in result.issues},
         )
+
+    def test_plan_missing_required_fields_reports_each_key(self):
+        """缺键必须在读取边界报出，不能在没有提示的情况下丢掉一段计划。"""
+        document = _document()
+        document["signal_source"] = {
+            "power_scan_plans": [
+                {"start_power": -38.0, "step": 1.0, "stop_power": -16.0},
+                {"start_power": -16.0},
+            ]
+        }
+
+        result = ConfigurationDraft.from_document(document)
+
+        self.assertFalse(result.valid)
+        paths = {issue.path for issue in result.issues}
+        self.assertIn("signal_source.power_scan_plans[1].step", paths)
+        self.assertIn("signal_source.power_scan_plans[1].stop_power", paths)
+        # 合法段仍然可编辑，非法段不进入草稿。
+        self.assertEqual(len(result.draft.sweeps), 1)
 
     def test_document_round_trip_keeps_current_key_shape(self):
         first = ConfigurationDraft.from_document(_document())

@@ -273,15 +273,17 @@ def _power_scan_projection(
     - 计划缺失/为空/不是列表：同样给出导入错误，不把空计划伪装成默认值。
 
     旧 1.1 文档的标量形状继续按三个字段读取，保证旧配置仍可打开与重新保存。
+    “计划缺失”按键判断：显式 ``power_scan_plans: null`` 是计划缺失，不能退回
+    旧标量分支掩盖它。
     """
-    plans = signal_source.get("power_scan_plans")
-    if plans is None:
+    if "power_scan_plans" not in signal_source:
         return (
             None,
             number_or_none(signal_source.get("start_power")),
             number_or_none(signal_source.get("stop_power")),
             number_or_none(signal_source.get("step")),
         )
+    plans = signal_source.get("power_scan_plans")
     if not isinstance(plans, list) or not plans:
         return ("配置的 DUT 功率扫描计划为空或格式不正确", None, None, None)
     starts = [

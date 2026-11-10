@@ -666,6 +666,25 @@ class PowerScanPlanValidationTests(unittest.TestCase):
 
         self.assertIn("signal_source", paths)
 
+    def test_explicit_null_plan_is_missing_not_a_scalar_fallback(self):
+        """显式 ``null`` 不能退回旧标量分支，也不能被补成一段可用计划。"""
+        for signal_source in (
+            {"power_scan_plans": None},
+            {
+                "power_scan_plans": None,
+                "start_power": -10.0,
+                "stop_power": 0.0,
+                "step": 1.0,
+            },
+        ):
+            with self.subTest(signal_source=signal_source):
+                config = self._with_plans()
+                config["signal_source"] = signal_source
+
+                paths = {issue.path for issue in validate_config(config).errors}
+
+                self.assertIn("signal_source.power_scan_plans", paths)
+
     def test_invalid_element_reports_its_index(self):
         config = self._with_plans((-10.0, 1.0, 0.0))
         config["signal_source"]["power_scan_plans"].append("not-a-plan")

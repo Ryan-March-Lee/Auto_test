@@ -818,9 +818,12 @@ def _validate_signal_source_scan(signal_source: Dict[str, Any], error: Any) -> N
     因为升级而打不开）。两者同时出现视为结构冲突，不选择其中一个继续。计划本身的
     数值、连续性与 DUT 上限判据与正式 ``TestPlan`` 共用同一个容差
     （``power_scan_boundary_tolerance``），避免页面和运行前校验给出不同结论。
+
+    “新字段存在”按**键是否存在**判断，不按值是否为 ``None``：显式写成
+    ``power_scan_plans: null`` 的文档表示计划缺失，不能被旧标量分支掩盖，
+    也不能在保存时被悄悄补成一段。
     """
-    plans = signal_source.get("power_scan_plans")
-    if plans is None:
+    if "power_scan_plans" not in signal_source:
         start = _scan_number(
             signal_source, "start_power", "signal_source.start_power", error
         )
@@ -832,13 +835,17 @@ def _validate_signal_source_scan(signal_source: Dict[str, Any], error: Any) -> N
             error("signal_source", "start_power 不能大于 stop_power")
         return
 
+    plans = signal_source.get("power_scan_plans")
     present = [key for key in LEGACY_POWER_SCAN_FIELDS if key in signal_source]
     if present:
         error(
             "signal_source",
             "1.2 的功率扫描只写 power_scan_plans；不能再写 " + "、".join(present),
         )
-    if not isinstance(plans, list) or not plans:
+    if not isinstance(plans, (list, tuple)):
+        error("signal_source.power_scan_plans", "必须是列表")
+        return
+    if not plans:
         error(
             "signal_source.power_scan_plans",
             "必须是非空列表：至少需要一段功率扫描计划",

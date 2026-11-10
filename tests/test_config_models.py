@@ -1,12 +1,14 @@
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from domain.configuration.models import (
     READABLE_SCHEMA_VERSIONS,
     REWRITABLE_SCHEMA_VERSIONS,
     SUPPORTED_SCHEMA_VERSION,
+    PowerScanPlan,
     RunConfiguration,
     RunResourceMapping,
     TestPlan,
@@ -460,6 +462,55 @@ class PowerScanPlanModelTests(unittest.TestCase):
             ),
             result.errors,
         )
+
+    def test_direct_construction_with_plans_and_scalars_is_rejected(self):
+        """程序内构造也不能让计划列表与旧标量并存，即使数值恰好一致。"""
+        single = PowerScanPlan(start_power=-10.0, step=1.0, stop_power=0.0)
+        for scalars in (
+            {"start_power": -10.0, "stop_power": 0.0, "power_step": 1.0},
+            {"start_power": -20.0, "stop_power": 0.0, "power_step": 1.0},
+        ):
+            with self.subTest(scalars=scalars):
+                plan = TestPlan(
+                    frequencies=[2.4],
+                    power_scan_plans=(single,),
+                    **scalars,
+                )
+
+                self.assertEqual(
+                    plan.conflicting_scan_scalars,
+                    ("start_power", "stop_power", "step"),
+                )
+                errors = validate_test_plan(plan).errors
+                self.assertTrue(
+                    any(
+                        issue.path == "signal_source"
+                        and "power_scan_plans" in issue.message
+                        for issue in errors
+                    ),
+                    errors,
+                )
+
+    def test_single_plan_fills_compatibility_scalars_without_a_conflict(self):
+        plan = TestPlan(
+            frequencies=[2.4],
+            power_scan_plans=(
+                PowerScanPlan(start_power=-10.0, step=1.0, stop_power=0.0),
+            ),
+        )
+
+        self.assertEqual(plan.start_power, -10.0)
+        self.assertEqual(plan.stop_power, 0.0)
+        self.assertEqual(plan.power_step, 1.0)
+        self.assertEqual(plan.conflicting_scan_scalars, ())
+
+    def test_replace_does_not_turn_derived_scalars_into_a_conflict(self):
+        """``dataclasses.replace`` 会带回派生标量；它们不是第二个来源。"""
+        plan = TestPlan.from_dict(_current_plan_with_plans((-10.0, 1.0, 0.0)))
+
+        replaced = replace(plan, frequencies=[2.4])
+
+        self.assertEqual(replaced.conflicting_scan_scalars, ())
 
     def test_missing_plans_are_reported_instead_of_invented(self):
         document = _current_plan_with_plans()

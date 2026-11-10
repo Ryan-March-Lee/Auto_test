@@ -532,6 +532,23 @@ class ConfigurationPageOwnershipTests(unittest.TestCase):
         self.assertEqual(form.power_step.value(), 0.5)
         self.assertIsNone(form.power_scan_import_error)
 
+    def test_explicit_null_plan_is_an_import_error_not_a_scalar_fallback(self):
+        form = FakeForm()
+
+        project_authoring_config(
+            form,
+            {
+                "signal_source": {
+                    "power_scan_plans": None,
+                    "start_power": -30.0,
+                    "stop_power": -5.0,
+                    "step": 0.5,
+                }
+            },
+        )
+
+        self.assertIsNotNone(form.power_scan_import_error)
+
     def test_multiple_plans_block_saving_instead_of_collapsing_to_one(self):
         form = FakeForm()
 

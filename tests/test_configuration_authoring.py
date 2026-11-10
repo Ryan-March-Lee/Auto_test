@@ -797,6 +797,15 @@ class ConfigurationAuthoringServiceTests(unittest.TestCase):
 
         self.assertEqual(caught.exception.path, "signal_source")
 
+    def test_null_plan_and_scalar_scan_fields_together_are_refused(self):
+        flat = _flat_config()
+        flat["signal_source"]["power_scan_plans"] = None
+
+        with self.assertRaises(ConfigurationAuthoringError) as caught:
+            author_official_configuration(flat)
+
+        self.assertEqual(caught.exception.path, "signal_source")
+
     def test_newer_schema_version_is_refused(self):
         flat = _flat_config()
         flat["schema_version"] = "2.0"

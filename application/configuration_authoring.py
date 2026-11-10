@@ -634,9 +634,8 @@ def _normalize_signal_source(values: dict[str, Any]) -> None:
     section = values.get("signal_source")
     if not isinstance(section, Mapping):
         return
-    plans = section.get("power_scan_plans")
     legacy = [key for key in LEGACY_POWER_SCAN_FIELDS if key in section]
-    if plans is not None:
+    if "power_scan_plans" in section:
         if legacy:
             raise ConfigurationAuthoringError(
                 "signal_source 同时包含 power_scan_plans 与 "

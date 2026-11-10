@@ -14,6 +14,7 @@ from presentation.qt.measurement_state import (
     MeasurementKind,
     MeasurementStatus,
 )
+from presentation.qt.theme import MEASUREMENT_LEFT_PANEL_MIN_WIDTH
 
 
 class Signal:
@@ -290,7 +291,8 @@ class DriverMappingPageTests(unittest.TestCase):
         self.assertEqual(titles, ["测量控制"])
         # 接线说明只保留连接图按钮，按钮归入测量控制。
         self.assertEqual(page.show_driver_diagram_btn.parent().title(), "测量控制")
-        self.assertLessEqual(page.control_panel.width(), 430)
+        # 左栏宽度取 theme 里的共用常量，与另两个测量页保持一致。
+        self.assertEqual(page.control_panel.width(), MEASUREMENT_LEFT_PANEL_MIN_WIDTH)
         self.assertLess(
             page.control_panel.x() + page.control_panel.width(),
             page.driver_plot_widget.x(),

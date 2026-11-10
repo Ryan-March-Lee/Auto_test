@@ -703,6 +703,14 @@ class PowerScanStageGateTests(unittest.TestCase):
             errors,
         )
 
+    def test_driver_mapping_accepts_a_continuous_multi_segment_plan(self):
+        """阶段门禁只拒绝非法计划；连续的多段计划可以进入驱动映射。"""
+        errors = validate_driver_mapping_configuration(
+            self._configuration((-38.0, 1.0, -10.0), (-10.0, 0.5, -2.0))
+        ).errors
+
+        self.assertEqual(errors, [])
+
     def test_driver_mapping_requires_a_finite_dut_limit(self):
         """上限缺失或非法时不能跳过越限判据，交给同一套结构化校验报告。"""
         for value in (None, "5", True, float("nan"), float("inf"), float("-inf")):

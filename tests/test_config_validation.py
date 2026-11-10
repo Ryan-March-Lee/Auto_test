@@ -626,6 +626,7 @@ class PowerScanPlanValidationTests(unittest.TestCase):
 
     def _with_plans(self, *plans):
         config = copy.deepcopy(self.base_config)
+        config["schema_version"] = "1.2"
         config["signal_source"] = {
             "power_scan_plans": [
                 {"start_power": start, "step": step, "stop_power": stop}
@@ -633,6 +634,69 @@ class PowerScanPlanValidationTests(unittest.TestCase):
             ]
         }
         return config
+
+    def test_1_1_scalar_scan_remains_readable(self):
+        """旧文件仍按标量形状打开：升级只发生在显式保存，不改写只读输入。"""
+        self.assertEqual(self.base_config["schema_version"], "1.1")
+        self.assertNotIn("power_scan_plans", self.base_config["signal_source"])
+        self.assertNotIn("power_reference", self.base_config["signal_source"])
+
+        result = validate_config(self.base_config)
+
+        self.assertTrue(result.valid, result.errors)
+        self.assertFalse(
+            any(
+                issue.path.startswith("signal_source")
+                for issue in result.errors
+            ),
+            result.errors,
+        )
+        # 缺少语义标记只提示确认，不能按历史数值猜测功率含义。
+        self.assertTrue(
+            any(
+                issue.level == "warning"
+                and issue.path == "signal_source.power_reference"
+                for issue in result.warnings
+            ),
+            result.warnings,
+        )
+
+    def test_1_2_multi_plan_document_is_valid(self):
+        """1.2 的多段计划文档可以通过编辑段校验。"""
+        result = validate_config(
+            self._with_plans((-38.0, 1.0, -10.0), (-10.0, 0.25, -2.0))
+        )
+
+        self.assertTrue(result.valid, result.errors)
+
+    def test_power_reference_marker_warns_when_missing_and_rejects_unknown_values(self):
+        """缺少语义标记只提示确认；填了无法识别的标记必须按字段报错。"""
+        missing = self._with_plans((-10.0, 1.0, 0.0))
+        missing_warnings = validate_config(missing).warnings
+
+        self.assertTrue(
+            any(
+                issue.level == "warning"
+                and issue.path == "signal_source.power_reference"
+                for issue in missing_warnings
+            ),
+            missing_warnings,
+        )
+
+        for value in ("source_output", "", 1):
+            with self.subTest(value=value):
+                config = self._with_plans((-10.0, 1.0, 0.0))
+                config["signal_source"]["power_reference"] = value
+
+                errors = validate_config(config).errors
+
+                self.assertTrue(
+                    any(
+                        issue.path == "signal_source.power_reference"
+                        for issue in errors
+                    ),
+                    errors,
+                )
 
     def test_continuous_plans_are_valid(self):
         result = validate_config(self._with_plans((-10.0, 1.0, 0.0), (0.0, 0.5, 5.0)))

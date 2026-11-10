@@ -310,6 +310,59 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
         self.assertIsNone(result.draft.sweep)
         self.assertEqual(result.draft.to_document()["signal_source"]["power_scan_plans"], plans)
 
+    def test_complete_1_1_scalar_scan_is_read_as_one_plan(self):
+        """1.1 的完整标量形状读取为一段计划，保存时改写成 1.2 计划列表。"""
+        document = _document()
+        document["schema_version"] = "1.1"
+
+        result = ConfigurationDraft.from_document(document)
+
+        self.assertTrue(result.valid, result.messages())
+        self.assertEqual(
+            result.draft.sweeps,
+            (
+                PowerSweep(
+                    start=PowerDbm(-38.0),
+                    stop=PowerDbm(-16.0),
+                    step=Decibels(1.0),
+                ),
+            ),
+        )
+        self.assertEqual(result.draft.sweep, result.draft.sweeps[0])
+        written = result.draft.to_document()["signal_source"]
+        self.assertEqual(
+            written["power_scan_plans"],
+            [{"start_power": -38.0, "step": 1.0, "stop_power": -16.0}],
+        )
+        self.assertEqual(written["power_reference"], "dut_input")
+        for key in ("start_power", "stop_power", "step"):
+            self.assertNotIn(key, written)
+
+    def test_multi_plan_save_keeps_order_and_power_reference(self):
+        """1.2 多段保存只写计划列表，顺序与语义标记原样保留。"""
+        document = _document()
+        document["schema_version"] = "1.2"
+        plans = [
+            {"start_power": -38.0, "step": 1.0, "stop_power": -16.0},
+            {"start_power": -16.0, "step": 0.5, "stop_power": -8.0},
+        ]
+        document["signal_source"] = {
+            "power_scan_plans": plans,
+            "power_reference": "dut_input",
+        }
+
+        result = ConfigurationDraft.from_document(document)
+
+        self.assertTrue(result.valid, result.messages())
+        written_document = result.draft.to_document()
+        written = written_document["signal_source"]
+        self.assertEqual(written["power_scan_plans"], plans)
+        self.assertEqual(written["power_reference"], "dut_input")
+        for key in ("start_power", "stop_power", "step"):
+            self.assertNotIn(key, written)
+        # 版本属于文件元数据，由配置编写服务补齐；草稿不能自行写另一个版本。
+        self.assertNotIn("schema_version", written_document)
+
     def test_plan_and_scalar_scan_fields_together_are_reported(self):
         document = _document()
         document["signal_source"]["power_scan_plans"] = [

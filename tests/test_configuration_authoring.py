@@ -24,7 +24,7 @@ from application.configuration_draft import (
     DeviceBindingDraft,
     DeviceBindingsDraft,
 )
-from domain.configuration.models import validate_run_configuration
+from domain.configuration.models import validate_run_configuration, validate_test_plan
 
 ROOT = Path(__file__).resolve().parents[1]
 GOLDEN_FIXTURE = (
@@ -785,6 +785,45 @@ class ConfigurationAuthoringServiceTests(unittest.TestCase):
             document["test_plan"]["signal_source"]["power_scan_plans"], plans
         )
         self.assertEqual(document["signal_source"]["power_scan_plans"], plans)
+
+    def test_saved_multi_plan_document_is_valid_and_reads_back_in_order(self):
+        """保存后的 1.2 文档通过正式方案校验，并能按原顺序读回草稿。"""
+        flat = _flat_config()
+        plans = [
+            {"start_power": -38.0, "step": 1.0, "stop_power": -10.0},
+            {"start_power": -10.0, "step": 0.25, "stop_power": -2.0},
+        ]
+        flat["signal_source"] = {"power_scan_plans": plans}
+
+        document = author_official_configuration(flat)
+
+        self.assertEqual(document["schema_version"], OFFICIAL_SCHEMA_VERSION)
+        self.assertEqual(
+            document["test_plan"]["schema_version"], OFFICIAL_SCHEMA_VERSION
+        )
+        validation = validate_test_plan(document["test_plan"])
+        self.assertTrue(validation.valid, validation.errors)
+        # 正式段直接由保存结果携带，不允许重新退回旧标量。
+        self.assertEqual(
+            document["test_plan"]["signal_source"]["power_scan_plans"], plans
+        )
+        for key in ("start_power", "stop_power", "step"):
+            self.assertNotIn(key, document["test_plan"]["signal_source"])
+
+        reread = ConfigurationDraft.from_document(document)
+        self.assertTrue(reread.valid, reread.messages())
+        self.assertEqual(
+            [
+                {
+                    "start_power": plan.start.dbm,
+                    "step": plan.step.db,
+                    "stop_power": plan.stop.dbm,
+                }
+                for plan in reread.draft.sweeps
+            ],
+            plans,
+        )
+        self.assertEqual(reread.draft.power_reference, "dut_input")
 
     def test_invalid_plan_elements_are_passed_through_for_formal_validation(self):
         """非对象元素不能被改写成空计划对象：正式校验要按索引报告原始结构错误。"""

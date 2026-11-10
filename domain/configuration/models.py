@@ -939,6 +939,9 @@ def validate_cable_loss_configuration(configuration: RunConfiguration) -> Config
     线损测量只使用信号源、频谱仪和衰减器，不应被
     功放测试的供电通道或驱动功放映射阻塞。完整功放运行仍使用
     ``validate_run_configuration``。
+
+    本函数只定义线损阶段的最小契约；生产创建运行仍统一走完整运行校验
+    （单一运行契约），因此这里不校验功率扫描计划不代表运行链路允许缺失计划。
     """
     errors: List[ConfigIssue] = []
     error = lambda path, message: errors.append(ConfigIssue("error", path, message))
@@ -967,6 +970,13 @@ def validate_driver_mapping_configuration(configuration: RunConfiguration) -> Co
     驱动映射只测量信号源到频谱仪之间的 RF 链路。驱动功放可能由
     自带电源供电，因此不能把 DUT 供电通道或驱动功放电源分配作为本
     测量的必填项；驱动功放计划为空即表示自带供电，本系统不控制其电源。
+
+    功率扫描是本阶段的最小必需项：目标网格由计划与 DUT 最大输入共同生成，
+    所以计划本身（连续性、步长）和上限字段必须在这里就可判定，不能等到
+    服务构造或长扫到一半才失败。线损阶段不使用目标网格，不做这项要求。
+
+    本函数只定义驱动映射阶段的最小契约；生产创建运行在冻结快照前还会执行
+    :func:`validate_run_configuration` 的完整校验。
     """
     errors: List[ConfigIssue] = []
     error = lambda path, message: errors.append(ConfigIssue("error", path, message))
@@ -978,6 +988,8 @@ def validate_driver_mapping_configuration(configuration: RunConfiguration) -> Co
     if not plan.frequencies:
         error("frequencies.values", "必须是非空列表")
     _validate_power_scan(plan, error)
+    # 目标网格把最后一段终点与该上限取较小值；上限非数值时不能静默跳过越限判据。
+    _number(plan.max_input_power, "dut.max_input_power", error)
     _number(plan.attenuator_value, "attenuator.value", error, non_negative=True)
 
     for name in ("signal_generator", "spectrum_analyzer"):

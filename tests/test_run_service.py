@@ -320,6 +320,43 @@ class CreateRunSnapshotTests(unittest.TestCase):
             )
         self.assertFalse((self.repository.root / RUN_ID).exists())
 
+    def test_invalid_power_scan_plan_is_rejected_before_the_run_directory_exists(self):
+        """阶段专用校验通过不代表能创建运行：完整校验在冻结快照前再次执行。"""
+        base = _valid_configuration()
+        document = base.test_plan.to_dict()
+        document["signal_source"] = {
+            "power_scan_plans": [
+                {"start_power": -38.0, "step": 1.0, "stop_power": -10.0},
+                {"start_power": -9.0, "step": 0.5, "stop_power": -2.0},
+            ],
+            "unit": "dBm",
+            "power_reference": "dut_input",
+        }
+        configuration = RunConfiguration(
+            TestPlan.from_dict(document), base.run_mapping
+        )
+        self.assertIn(
+            "signal_source.power_scan_plans[1]",
+            {issue.path for issue in validate_run_configuration(configuration).errors},
+        )
+        # 即使调用方把“阶段专用校验通过”当成 loaded.valid，创建运行仍会完整校验，
+        # 硬件动作前不会留下任何运行目录。
+        stage_only = ConfigurationLoadResult(
+            configuration, ConfigValidationResult(errors=[], warnings=[])
+        )
+
+        with self.assertRaisesRegex(ValueError, "完整运行配置校验失败"):
+            create_run_snapshot(
+                stage_only,
+                run_repository=self.repository,
+                run_id=RUN_ID,
+                hardware_config=_gui_config(),
+                now=CREATED_AT,
+            )
+
+        self.assertFalse((self.repository.root / RUN_ID).exists())
+        self.assertEqual(self.repository.list_run_ids(), ())
+
     def test_snapshot_is_immutable_after_gui_config_is_modified_and_saved(self):
         config_path = self.root / "config.json"
         config_path.write_text(json.dumps(_gui_config(start_power=-10.0)), encoding="utf-8")

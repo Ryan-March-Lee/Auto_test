@@ -830,6 +830,71 @@ class ConfigurationAuthoringServiceTests(unittest.TestCase):
         self.assertIn("signal_source.power_scan_plans[1].step", paths)
         self.assertIn("signal_source.power_scan_plans[1].stop_power", paths)
 
+    def test_authoring_validation_reports_plan_gaps_overlaps_and_the_dut_limit(self):
+        """正式校验边界必须把计划问题按段报告，保存不能只做结构搬运。"""
+        cases = (
+            (
+                [
+                    {"start_power": -38.0, "step": 1.0, "stop_power": -10.0},
+                    {"start_power": -9.0, "step": 0.5, "stop_power": -2.0},
+                ],
+                "signal_source.power_scan_plans[1]",
+                "空档",
+            ),
+            (
+                [
+                    {"start_power": -38.0, "step": 1.0, "stop_power": -10.0},
+                    {"start_power": -11.0, "step": 0.5, "stop_power": -2.0},
+                ],
+                "signal_source.power_scan_plans[1]",
+                "重叠",
+            ),
+            (
+                [{"start_power": 31.0, "step": 1.0, "stop_power": 32.0}],
+                "signal_source.power_scan_plans[0].start_power",
+                "高于有效上限",
+            ),
+        )
+        for plans, path, keyword in cases:
+            with self.subTest(path=path, keyword=keyword):
+                flat = _flat_config()
+                flat["signal_source"] = {"power_scan_plans": plans}
+
+                result = ConfigurationAuthoringService().validate_document(
+                    ConfigurationEditingDocument.from_mapping(flat)
+                )
+
+                self.assertTrue(
+                    any(
+                        issue.path == path and keyword in issue.message
+                        for issue in result.errors
+                    ),
+                    [f"{issue.path}: {issue.message}" for issue in result.errors],
+                )
+
+    def test_authoring_validation_accepts_floating_point_noise_at_a_shared_boundary(self):
+        """同一容差在正式校验边界也生效：1e-13 的表述误差不是空档。"""
+        flat = _flat_config()
+        flat["signal_source"] = {
+            "power_scan_plans": [
+                {"start_power": -10.0, "step": 1.0, "stop_power": 0.0},
+                {"start_power": 1e-13, "step": 0.5, "stop_power": 5.0},
+            ]
+        }
+
+        result = ConfigurationAuthoringService().validate_document(
+            ConfigurationEditingDocument.from_mapping(flat)
+        )
+
+        self.assertFalse(
+            [
+                issue
+                for issue in result.errors
+                if "空档" in issue.message or "重叠" in issue.message
+            ],
+            [f"{issue.path}: {issue.message}" for issue in result.errors],
+        )
+
     def test_plan_and_scalar_scan_fields_together_are_refused(self):
         flat = _flat_config()
         flat["signal_source"]["power_scan_plans"] = [

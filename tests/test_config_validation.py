@@ -656,6 +656,35 @@ class PowerScanPlanValidationTests(unittest.TestCase):
                     [f"{issue.path}: {issue.message}" for issue in result.errors],
                 )
 
+    def test_boundary_tolerance_matches_the_formal_plan_rule(self):
+        """页面编辑段与正式 TestPlan 使用同一容差：噪声不误报，真实差值按段报告。"""
+        result = validate_config(
+            self._with_plans((-10.0, 1.0, 0.0), (1e-13, 0.5, 5.0))
+        )
+        self.assertFalse(
+            [
+                issue
+                for issue in result.errors
+                if "空档" in issue.message or "重叠" in issue.message
+            ],
+            result.errors,
+        )
+
+        for offset, keyword in ((1e-9, "空档"), (-1e-9, "重叠")):
+            with self.subTest(keyword=keyword):
+                result = validate_config(
+                    self._with_plans((-10.0, 1.0, 0.0), (offset, 0.5, 5.0))
+                )
+                issues = [
+                    issue
+                    for issue in result.errors
+                    if issue.path == "signal_source.power_scan_plans[1]"
+                ]
+                self.assertTrue(
+                    any(keyword in issue.message for issue in issues),
+                    [f"{issue.path}: {issue.message}" for issue in result.errors],
+                )
+
     def test_scalar_and_plan_fields_together_are_an_error(self):
         config = self._with_plans((-10.0, 1.0, 0.0))
         config["signal_source"].update(

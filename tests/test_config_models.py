@@ -585,6 +585,35 @@ class PowerScanPlanModelTests(unittest.TestCase):
 
         self.assertIn("signal_source.power_scan_plans[0].start_power", paths)
 
+    def test_boundary_tolerance_is_shared_with_the_point_generator(self):
+        """浮点表述误差不能造出空档/重叠；真实差值必须按后一段路径报告。"""
+        noise = 1e-13
+        continuous = _current_plan_with_plans(
+            (-10.0, 1.0, 0.0), (noise, 0.5, 5.0)
+        )
+        boundary_errors = [
+            issue
+            for issue in validate_test_plan(continuous).errors
+            if "空档" in issue.message or "重叠" in issue.message
+        ]
+        self.assertFalse(boundary_errors)
+
+        for offset, keyword in ((1e-9, "空档"), (-1e-9, "重叠")):
+            with self.subTest(keyword=keyword):
+                document = _current_plan_with_plans(
+                    (-10.0, 1.0, 0.0), (offset, 0.5, 5.0)
+                )
+                errors = validate_test_plan(document).errors
+
+                self.assertTrue(
+                    any(
+                        issue.path == "signal_source.power_scan_plans[1]"
+                        and keyword in issue.message
+                        for issue in errors
+                    ),
+                    errors,
+                )
+
     def test_multi_segment_configuration_saves_but_is_not_runnable_yet(self):
         plan = TestPlan.from_dict(
             _current_plan_with_plans((-38.0, 1.0, -10.0), (-10.0, 0.5, -2.0))
@@ -606,6 +635,119 @@ class PowerScanPlanModelTests(unittest.TestCase):
                 for issue in runnable.errors
             ),
             runnable.errors,
+        )
+
+
+_UNSET = object()
+
+
+class PowerScanStageGateTests(unittest.TestCase):
+    """步骤 2.4：每个运行阶段只承担自己的最小功率扫描校验。
+
+    驱动映射与完整主功放都要在硬件动作前拒绝非法计划；线损测量不使用目标
+    网格，不能因为功率计划缺失或待完善而被无关阻塞。
+    """
+
+    def _configuration(self, *plans, max_input_power=_UNSET):
+        document = _current_plan_with_plans(*plans)
+        if max_input_power is not _UNSET:
+            document["dut"]["max_input_power"] = max_input_power
+        return RunConfiguration(
+            TestPlan.from_dict(document),
+            RunResourceMapping.from_dict(complete_mapping()),
+        )
+
+    def test_driver_mapping_rejects_invalid_plans_before_hardware(self):
+        cases = (
+            (
+                ((-38.0, 1.0, -10.0), (-9.0, 0.5, -2.0)),
+                "signal_source.power_scan_plans[1]",
+                "空档",
+            ),
+            (
+                ((-38.0, 1.0, -10.0), (-11.0, 0.5, -2.0)),
+                "signal_source.power_scan_plans[1]",
+                "重叠",
+            ),
+            (
+                ((-10.0, 0.0, 0.0),),
+                "signal_source.power_scan_plans[0].step",
+                "大于 0",
+            ),
+        )
+        for plans, path, keyword in cases:
+            with self.subTest(path=path, keyword=keyword):
+                errors = validate_driver_mapping_configuration(
+                    self._configuration(*plans)
+                ).errors
+
+                self.assertTrue(
+                    any(
+                        issue.path == path and keyword in issue.message
+                        for issue in errors
+                    ),
+                    errors,
+                )
+
+    def test_driver_mapping_rejects_start_above_the_dut_limit(self):
+        errors = validate_driver_mapping_configuration(
+            self._configuration((8.0, 1.0, 20.0), max_input_power=5.0)
+        ).errors
+
+        self.assertTrue(
+            any(
+                issue.path == "signal_source.power_scan_plans[0].start_power"
+                and "高于有效上限" in issue.message
+                for issue in errors
+            ),
+            errors,
+        )
+
+    def test_driver_mapping_requires_a_finite_dut_limit(self):
+        """上限缺失或非法时不能跳过越限判据，交给同一套结构化校验报告。"""
+        for value in (None, "5", True, float("nan"), float("inf"), float("-inf")):
+            with self.subTest(value=value):
+                errors = validate_driver_mapping_configuration(
+                    self._configuration((-10.0, 1.0, 0.0), max_input_power=value)
+                ).errors
+
+                self.assertIn(
+                    "dut.max_input_power",
+                    {issue.path for issue in errors},
+                    errors,
+                )
+
+    def test_cable_loss_ignores_missing_or_invalid_power_scan_plans(self):
+        for signal_source in (
+            {},
+            {"power_scan_plans": None},
+            {"power_scan_plans": [{"start_power": "bad"}]},
+            {"power_scan_plans": []},
+        ):
+            with self.subTest(signal_source=signal_source):
+                document = complete_current_plan()
+                document["signal_source"] = signal_source
+                configuration = RunConfiguration(
+                    TestPlan.from_dict(document),
+                    RunResourceMapping.from_dict(complete_mapping()),
+                )
+
+                result = validate_cable_loss_configuration(configuration)
+
+                self.assertTrue(result.valid, result.errors)
+
+    def test_full_run_rejects_invalid_plans_before_hardware(self):
+        errors = validate_run_configuration(
+            self._configuration((-38.0, 1.0, -10.0), (-9.0, 0.5, -2.0))
+        ).errors
+
+        self.assertTrue(
+            any(
+                issue.path == "signal_source.power_scan_plans[1]"
+                and "空档" in issue.message
+                for issue in errors
+            ),
+            errors,
         )
 
 

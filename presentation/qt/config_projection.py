@@ -18,9 +18,9 @@
   哪个通道给哪个器件上电”的唯一来源；
 - 电源候选（计划列表的可选项）由页面按设备绑定与电源声明的通道生成，投影不挑选电源、
   不补默认值；引用了未绑定电源的路由保留在计划里，由正式校验报告；
-- 功率扫描：``signal_source.power_scan_plans`` 的单段映射到起始/终止/步长三个输入框；
-  多段在页面只有一行编辑器时只展示首段起点与末段终点，并在
-  ``power_scan_import_error`` 上留下错误以阻止保存，绝不静默折叠成一段；
+- 功率扫描：页面提供 ``apply_power_scan_plans`` 时把 ``signal_source.power_scan_plans``
+  按原顺序重建为动态行；旧替身没有该入口时仍把单段映射到起始/终止/步长三个控件，
+  多段只展示首段起点与末段终点并留下 ``power_scan_import_error``，绝不静默折叠；
 - 失败必须可识别：非 JSON 对象输入抛出 :class:`ConfigBackfillError`，不会被静默当作
   回填成功；缺失或类型不正确的字段落到明确默认值，绝不残留上一次运行的显示状态。
 
@@ -265,11 +265,12 @@ def _power_scan_projection(
 ) -> tuple[str | None, float | None, float | None, float | None]:
     """把配置里的功率扫描投影成单行控件的 ``(错误, 起始, 终止, 步长)``。
 
-    1.2 文档的扫描来源是 ``power_scan_plans``；当前页面只有一行编辑器，因此：
+    1.2 文档的扫描来源是 ``power_scan_plans``。真实页面通过
+    ``apply_power_scan_plans`` 按行重建；本函数只服务没有动态行入口的旧替身：
 
     - 单段计划：正常回填三个控件，保存时会按控件读数重写这一段；
     - 多段计划：控件只用于展示首段起点与末段终点，并在页面上留下错误，禁止保存
-      ——静默折叠成一段会丢掉用户已确认的后面几段（动态计划编辑器属于阶段三）；
+      ——静默折叠成一段会丢掉用户已确认的后面几段；
     - 计划缺失/为空/不是列表：同样给出导入错误，不把空计划伪装成默认值。
 
     旧 1.1 文档的标量形状继续按三个字段读取，保证旧配置仍可打开与重新保存。
@@ -321,15 +322,20 @@ def _apply_test_parameter_widgets(widgets: Any, config: Mapping[str, Any]) -> No
         apply_frequency_fields(widgets, config.get("test_frequencies"))
     signal_source = config.get("signal_source")
     signal_source = signal_source if isinstance(signal_source, dict) else {}
-    scan_error, start, stop, step = _power_scan_projection(signal_source)
-    widgets.power_scan_import_error = scan_error
-    for widget, value in (
-        (widgets.start_power, start),
-        (widgets.stop_power, stop),
-        (widgets.power_step, step),
-    ):
-        if value is not None:
-            widget.setValue(value)
+    apply_scan_plans = getattr(widgets, "apply_power_scan_plans", None)
+    if callable(apply_scan_plans):
+        # 动态计划编辑器自己按行重建；结构错误由它返回，投影只负责放进页面状态。
+        widgets.power_scan_import_error = apply_scan_plans(signal_source)
+    else:
+        scan_error, start, stop, step = _power_scan_projection(signal_source)
+        widgets.power_scan_import_error = scan_error
+        for widget, value in (
+            (widgets.start_power, start),
+            (widgets.stop_power, stop),
+            (widgets.power_step, step),
+        ):
+            if value is not None:
+                widget.setValue(value)
     compression = config.get("compression_point")
     compression = compression if isinstance(compression, dict) else {}
     set_combo(widgets.compression_combo, compression.get("type"))
@@ -407,6 +413,7 @@ __all__ = [
     "apply_frequency_fields",
     "bool_or_default",
     "driver_gain_text",
+    "number_or_none",
     "project_authoring_config",
     "project_power_config",
     "reset_control_widgets",

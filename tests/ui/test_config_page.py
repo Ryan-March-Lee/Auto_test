@@ -3,10 +3,18 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QCoreApplication, QEvent
 from PySide6.QtWidgets import QApplication, QLabel
 
 from application.device_binding import ApplyDeviceSelectionRequest
 from presentation.qt.test_configuration_page import TestConfigurationPage
+
+
+def _destroy_page(page):
+    """按离屏用例的收尾规则销毁顶层页面，避免控件在后续用例中累积。"""
+    page.close()
+    page.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
 
 
 def apply_devices(page, assignments):
@@ -26,6 +34,7 @@ class ConfigurationPageTests(unittest.TestCase):
         config.update(extra)
         page = TestConfigurationPage(config)
         page.show()
+        self.addCleanup(_destroy_page, page)
         self.app.processEvents()
         return page
 
@@ -60,17 +69,137 @@ class ConfigurationPageTests(unittest.TestCase):
         page.set_test_mode(True)
         self.assertEqual(changes[-1], True)
 
-    def test_power_labels_describe_main_amplifier_input_power(self):
-        """步骤 3：起止功率与步长都表示主功放输入功率，不再是信号源输出功率。"""
+    def test_power_labels_describe_dut_input_power_plans(self):
+        """步骤 3.2：功率扫描改为按段编辑，标签仍明确是 DUT 输入功率。"""
         page = self.make_page()
 
         texts = {label.text() for label in page.findChildren(QLabel)}
 
-        self.assertIn("起始主功放输入功率 (dBm)", texts)
-        self.assertIn("结束主功放输入功率 (dBm)", texts)
-        self.assertIn("输入功率步长 (dB)", texts)
+        self.assertIn("DUT功率扫描计划", texts)
+        self.assertIn("起始功率 (dBm)", texts)
+        self.assertIn("步长 (dB)", texts)
+        self.assertIn("终止功率 (dBm)", texts)
         self.assertIn("驱动功放预估增益 (dB)", texts)
-        self.assertIn("主功放输入功率", page.start_power.toolTip())
+        self.assertIn("DUT 输入功率", page.start_power.toolTip())
+
+    def test_empty_config_starts_with_one_default_power_scan_plan(self):
+        page = self.make_page()
+
+        self.assertEqual(len(page.power_scan_plan_rows), 1)
+        row = page.power_scan_plan_rows[0]
+        self.assertEqual(row.values(), (-38.0, 1.0, -16.0))
+        self.assertEqual(row.number(), 1)
+        self.assertFalse(
+            row.delete_button.isEnabled(), "至少保留一行，不能把唯一的计划删掉"
+        )
+        self.assertFalse(page.remove_power_scan_plan(row))
+        self.assertEqual(len(page.power_scan_plan_rows), 1)
+
+    def test_add_power_scan_plan_continues_from_the_previous_stop(self):
+        page = self.make_page()
+        first = page.power_scan_plan_rows[0]
+        first.set_values(-38.0, 1.0, -10.0)
+
+        second = page.add_power_scan_plan()
+
+        # 新段起点接续上一段终点，步长沿用，终点先等于起点：不凭空生成业务范围。
+        self.assertEqual(second.values(), (-10.0, 1.0, -10.0))
+        self.assertEqual([row.number() for row in page.power_scan_plan_rows], [1, 2])
+        self.assertTrue(second.delete_button.isEnabled())
+
+        third = page.add_power_scan_plan()
+        self.assertEqual(third.values(), (-10.0, 1.0, -10.0))
+        self.assertEqual(
+            [row.number() for row in page.power_scan_plan_rows], [1, 2, 3]
+        )
+
+    def test_deleting_a_middle_plan_renumbers_and_keeps_the_other_rows(self):
+        page = self.make_page()
+        first = page.power_scan_plan_rows[0]
+        first.set_values(-38.0, 1.0, -10.0)
+        second = page.add_power_scan_plan()
+        second.set_values(-10.0, 0.25, -2.0)
+        third = page.add_power_scan_plan()
+        third.set_values(-2.0, 0.1, 0.0)
+
+        self.assertTrue(page.remove_power_scan_plan(second))
+
+        self.assertEqual(
+            [row.values() for row in page.power_scan_plan_rows],
+            [(-38.0, 1.0, -10.0), (-2.0, 0.1, 0.0)],
+        )
+        self.assertEqual([row.number() for row in page.power_scan_plan_rows], [1, 2])
+        self.assertEqual(
+            page.build_config()["signal_source"]["power_scan_plans"],
+            [
+                {"start_power": -38.0, "step": 1.0, "stop_power": -10.0},
+                {"start_power": -2.0, "step": 0.1, "stop_power": 0.0},
+            ],
+        )
+
+    def test_add_button_appends_plans(self):
+        page = self.make_page()
+
+        page.add_power_scan_plan_btn.click()
+
+        self.assertEqual(len(page.power_scan_plan_rows), 2)
+        self.assertEqual(
+            [row.number() for row in page.power_scan_plan_rows], [1, 2]
+        )
+
+    def test_apply_config_restores_plans_in_order(self):
+        page = self.make_page()
+        plans = [
+            {"start_power": -38.0, "step": 1.0, "stop_power": -10.0},
+            {"start_power": -10.0, "step": 0.25, "stop_power": -2.0},
+        ]
+
+        page.apply_config(
+            {"test_frequencies": [1.0], "signal_source": {"power_scan_plans": plans}}
+        )
+
+        self.assertEqual(
+            [row.values() for row in page.power_scan_plan_rows],
+            [(-38.0, 1.0, -10.0), (-10.0, 0.25, -2.0)],
+        )
+        self.assertEqual([row.number() for row in page.power_scan_plan_rows], [1, 2])
+        self.assertIsNone(page.power_scan_import_error)
+        self.assertEqual(
+            page.build_config()["signal_source"]["power_scan_plans"], plans
+        )
+
+    def test_old_scalar_config_backfills_one_row_and_saves_as_plans(self):
+        page = self.make_page()
+
+        page.apply_config(
+            {
+                "test_frequencies": [1.0],
+                "signal_source": {
+                    "start_power": -20.0,
+                    "stop_power": -5.0,
+                    "step": 0.5,
+                },
+            }
+        )
+
+        self.assertEqual(len(page.power_scan_plan_rows), 1)
+        self.assertEqual(page.power_scan_plan_rows[0].values(), (-20.0, 0.5, -5.0))
+        self.assertEqual(
+            page.build_config()["signal_source"]["power_scan_plans"],
+            [{"start_power": -20.0, "step": 0.5, "stop_power": -5.0}],
+        )
+
+    def test_apply_empty_config_clears_rows_and_restores_one_default_plan(self):
+        page = self.make_page()
+        page.add_power_scan_plan()
+        page.add_power_scan_plan()
+        self.assertEqual(len(page.power_scan_plan_rows), 3)
+
+        page.apply_config({})
+
+        self.assertEqual(len(page.power_scan_plan_rows), 1)
+        self.assertEqual(page.power_scan_plan_rows[0].values(), (-38.0, 1.0, -16.0))
+        self.assertFalse(page.power_scan_plan_rows[0].delete_button.isEnabled())
 
     def test_driver_gain_control_follows_the_driver_mode(self):
         page = self.make_page()
@@ -395,19 +524,21 @@ class ConfigurationPageTests(unittest.TestCase):
         self.assertEqual(result["dut_config"]["power_supply_count"], 3)
 
     def test_numeric_fields_are_plain_text_inputs_without_steppers(self):
-        """本页 7 个数值框都是纯文本框：没有步进按钮，也没有 stepUp/stepDown。"""
+        """频率、计划行与 DUT 上限的数值框都是纯文本框：没有步进按钮。"""
         from PySide6.QtWidgets import QLineEdit
 
         page = self.make_page()
-        for widget in (
+        row = page.power_scan_plan_rows[0]
+        widgets = [
             page.freq_start,
             page.freq_stop,
             page.freq_step,
-            page.start_power,
-            page.stop_power,
-            page.power_step,
+            row.start_power,
+            row.step,
+            row.stop_power,
             page.max_input_power,
-        ):
+        ]
+        for widget in widgets:
             self.assertIsInstance(widget, QLineEdit)
             self.assertFalse(hasattr(widget, "stepUp"))
             self.assertFalse(hasattr(widget, "stepDown"))
@@ -548,6 +679,7 @@ class ConfigurationPageViewModelTests(unittest.TestCase):
         config.update(extra)
         page = TestConfigurationPage(config)
         page.show()
+        self.addCleanup(_destroy_page, page)
         self.app.processEvents()
         return page
 

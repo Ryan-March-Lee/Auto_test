@@ -291,6 +291,39 @@ class ConfigFormState:
         instruments["power_supplies"] = supplies
         return {"instruments": instruments}
 
+    def power_scan_plans(self) -> list[dict]:
+        """按页面行列表读出功率扫描计划，顺序即执行顺序。
+
+        动态编辑器把每行 ``(起始, 步长, 终止)`` 作为一段；没有行列表的旧替身仍按三个
+        单计划控件读数。旧替身携带多段计划时保留原列表，不把已确认的段折叠成一段。
+        """
+        rows = getattr(self.widgets, "power_scan_plan_rows", None)
+        if rows is not None:
+            plans = []
+            for row in rows:
+                start, step, stop = row.values()
+                plans.append(
+                    {
+                        "start_power": start,
+                        "step": step,
+                        "stop_power": stop,
+                    }
+                )
+            if plans:
+                return plans
+        existing_source = _dict_copy(self.config.get("signal_source"))
+        existing_plans = existing_source.get("power_scan_plans")
+        if isinstance(existing_plans, list) and len(existing_plans) > 1:
+            return copy.deepcopy(existing_plans)
+        w = self.widgets
+        return [
+            {
+                "start_power": self._value(w.start_power),
+                "step": self._value(w.power_step),
+                "stop_power": self._value(w.stop_power),
+            }
+        ]
+
     def read_test_parameters(self) -> dict:
         w = self.widgets
         result = {}
@@ -302,21 +335,7 @@ class ConfigFormState:
             else:
                 result["test_frequencies"] = list(frequencies)
         existing_source = _dict_copy(self.config.get("signal_source"))
-        existing_plans = existing_source.get("power_scan_plans")
-        if isinstance(existing_plans, list) and len(existing_plans) > 1:
-            # 页面只有一行编辑器：保留已确认的多段计划，不把它折叠成当前这一行。
-            # 保存由 ``power_scan_import_error`` 阻止，等动态计划编辑器接入后再编辑。
-            signal_source = {"power_scan_plans": copy.deepcopy(existing_plans)}
-        else:
-            signal_source = {
-                "power_scan_plans": [
-                    {
-                        "start_power": self._value(w.start_power),
-                        "step": self._value(w.power_step),
-                        "stop_power": self._value(w.stop_power),
-                    }
-                ]
-            }
+        signal_source = {"power_scan_plans": self.power_scan_plans()}
         # 功率语义标记不是页面可编辑字段：基线里有就原样保留（新配置），没有也保持缺失
         # （旧配置）。是否写入新语义只由保存边界决定，不能在每次读数时悄悄改写。
         if "power_reference" in existing_source:

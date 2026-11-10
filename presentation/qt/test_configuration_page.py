@@ -82,10 +82,9 @@ from .config_projection import (
     apply_frequency_fields,
     bool_or_default,
     driver_gain_text,
+    number_or_none,
 )
 from .config_page_widgets import (
-    POWER_RANGE_DBM,
-    POWER_STEP_RANGE_DB,
     build_action_bar,
     combo_box,
     number_field,
@@ -98,6 +97,7 @@ from .frequency_sweep import (
 )
 from .instrument_discovery_panel import role_label
 from .pages import PageControllerBindingMixin
+from .power_sweep_plan_row import PowerSweepPlanRow
 from .theme import PAGE_CONTENT_MAX_WIDTH, set_button_variant, set_tone
 
 __all__ = [
@@ -143,8 +143,11 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         # 频率扫描控件与旧配置的只读展示状态：非等步长列表会在这里留下错误，页面禁止
         # 保存，直到用户重新输入合法的起始/结束/步长/增补。
         self.frequency_import_error: str | None = None
-        # 功率扫描的只读展示状态：配置含多段计划时页面只有一行编辑器，保存会被阻止，
-        # 避免把用户已确认的其它段折叠成一段（动态计划编辑器属于阶段三）。
+        # 功率扫描计划的动态编辑器状态：列表顺序就是执行顺序，页面负责新增、删除、
+        # 编号与布局；计划是否连续、点位如何生成仍由 application/domain 校验。
+        self.power_scan_plan_rows: list[PowerSweepPlanRow] = []
+        # 计划结构本身无法读出时（空列表、非对象元素等）留下的用户错误；正常行编辑
+        # 会清除它。多段计划的连续性错误由正式校验按索引报告。
         self.power_scan_import_error: str | None = None
         # 页面业务状态由 application 的视图模型持有（步骤 6）：测试参数、设备绑定、运行
         # 状态与 dirty 都在那里；设备选择的业务规则仍只在 DeviceBindingService（步骤 5）。
@@ -252,18 +255,6 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         self.freq_preview.setProperty("role", "note")
         self.freq_preview.setWordWrap(True)
         self.freq_preview.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self.start_power = number_field(test.get("start_power", DEFAULT_SIGNAL_SOURCE["start_power"]), *POWER_RANGE_DBM)
-        self.start_power.setToolTip(
-            "主功放输入功率扫描起点（dBm），不是信号源输出功率；"
-            "无驱动时按 cable1 损耗反算信号源设定"
-        )
-        self.stop_power = number_field(test.get("stop_power", DEFAULT_SIGNAL_SOURCE["stop_power"]), *POWER_RANGE_DBM)
-        self.stop_power.setToolTip(
-            "主功放输入功率扫描终点（dBm）；与 DUT 最大输入功率取较小值，"
-            "限制点不在步进网格上时作为最后一点补入"
-        )
-        self.power_step = number_field(test.get("step", DEFAULT_SIGNAL_SOURCE["step"]), *POWER_STEP_RANGE_DB)
-        self.power_step.setToolTip("目标主功放输入功率网格的步进（dB）")
         # 驱动功放预估增益是测试配置里的单一全局值（dB）。空文本表示尚未填写；
         # 增益的业务校验（有限数值、驱动模式下必填）由配置 DTO 承担，页面不推算。
         self.driver_gain = QLineEdit(DEFAULT_DRIVER_GAIN_ESTIMATE)
@@ -308,10 +299,8 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         frequency_row.addStretch(1)
         form.addLayout(frequency_row, 0, 0, 1, 4)
         form.addWidget(self.freq_preview, 1, 0, 1, 4)
-        parameter_rows = (("起始主功放输入功率 (dBm)", self.start_power),
-                          ("结束主功放输入功率 (dBm)", self.stop_power),
-                          ("输入功率步长 (dB)", self.power_step),
-                          ("驱动功放预估增益 (dB)", self.driver_gain),
+        first_parameter_row = self._build_power_scan_plan_editor(form, 2, test)
+        parameter_rows = (("驱动功放预估增益 (dB)", self.driver_gain),
                           ("压缩点", self.compression_combo), ("衰减器", self.attenuator_combo),
                           ("DUT最大输入功率 (dBm)", self.max_input_power), ("PA单元数量", self.pa_unit_count_combo))
         for offset, (label, widget) in enumerate(parameter_rows):
@@ -321,14 +310,173 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
             if widget is self.driver_gain:
                 # 驱动关闭时连同标签一起禁用，已填写的值仍保留在控件里。
                 self.driver_gain_label = field_label
-            form.addWidget(field_label, row + 2, column * 2)
-            form.addWidget(widget, row + 2, column * 2 + 1)
+            form.addWidget(field_label, row + first_parameter_row, column * 2)
+            form.addWidget(widget, row + first_parameter_row, column * 2 + 1)
         self._apply_driver_gain_state()
         page_column.addWidget(params)
         # 运行入口紧随测试参数，保存与返回放在页面底部固定操作栏。
         self._build_run_widgets(page_column)
         page_column.addStretch(1)
         root.addWidget(self._build_action_bar())
+
+    # -- DUT 功率扫描计划编辑器 ---------------------------------------------
+    @staticmethod
+    def _default_power_scan_values() -> tuple[float, float, float]:
+        """空配置的一行计划：``(起始, 步长, 终止)``，与页面原有默认扫描一致。"""
+        return (
+            float(DEFAULT_SIGNAL_SOURCE["start_power"]),
+            float(DEFAULT_SIGNAL_SOURCE["step"]),
+            float(DEFAULT_SIGNAL_SOURCE["stop_power"]),
+        )
+
+    @classmethod
+    def _power_scan_plan_values(
+        cls, signal_source
+    ) -> tuple[list[tuple[float, float, float]], str | None]:
+        """把配置里的功率扫描段读成有序行值，并返回结构错误（若有）。
+
+        1.2 只认 ``power_scan_plans``；旧 1.1 的标量仍包装为一行，保证旧配置能打开再
+        保存。结构不可读时给出一行默认值并留下错误，页面的保存会被阻止；合法的多段
+        计划按原顺序逐行展示，不排序、不折叠。
+        """
+        default = cls._default_power_scan_values()
+        if not isinstance(signal_source, dict):
+            return [default], None
+        if "power_scan_plans" not in signal_source:
+            start = number_or_none(signal_source.get("start_power"))
+            step = number_or_none(signal_source.get("step"))
+            stop = number_or_none(signal_source.get("stop_power"))
+            return [
+                (
+                    default[0] if start is None else start,
+                    default[1] if step is None else step,
+                    default[2] if stop is None else stop,
+                )
+            ], None
+        plans = signal_source.get("power_scan_plans")
+        if not isinstance(plans, list) or not plans:
+            return [default], "配置的 DUT 功率扫描计划为空或格式不正确"
+        values: list[tuple[float, float, float]] = []
+        for item in plans:
+            if not isinstance(item, dict):
+                return [default], "配置的 DUT 功率扫描计划格式不正确"
+            start = number_or_none(item.get("start_power"))
+            step = number_or_none(item.get("step"))
+            stop = number_or_none(item.get("stop_power"))
+            if start is None or step is None or stop is None:
+                return [default], "配置的 DUT 功率扫描计划格式不正确"
+            values.append((start, step, stop))
+        return values, None
+
+    def _build_power_scan_plan_editor(self, form, row: int, signal_source) -> int:
+        """在测试参数组里建立计划标题、加号按钮和行容器，返回下一参数行号。"""
+        header = QHBoxLayout()
+        header.setSpacing(8)
+        self.power_scan_plan_title = QLabel("DUT功率扫描计划")
+        self.power_scan_plan_title.setProperty("role", "section")
+        header.addWidget(self.power_scan_plan_title)
+        header.addStretch(1)
+        self.add_power_scan_plan_btn = QPushButton("+ 添加计划")
+        self.add_power_scan_plan_btn.setObjectName("addPowerScanPlanButton")
+        self.add_power_scan_plan_btn.setToolTip(
+            "在当前计划后追加一段；起点默认接续上一段终点，步长沿用上一段"
+        )
+        set_button_variant(self.add_power_scan_plan_btn, "secondary")
+        header.addWidget(self.add_power_scan_plan_btn)
+        form.addLayout(header, row, 0, 1, 4)
+
+        self.power_scan_plan_container = QWidget()
+        self.power_scan_plan_container.setObjectName("powerScanPlanContainer")
+        self.power_scan_plan_layout = QVBoxLayout(self.power_scan_plan_container)
+        self.power_scan_plan_layout.setContentsMargins(0, 0, 0, 0)
+        self.power_scan_plan_layout.setSpacing(6)
+        form.addWidget(self.power_scan_plan_container, row + 1, 0, 1, 4)
+
+        plans, error = self._power_scan_plan_values(signal_source)
+        self._replace_power_scan_plan_rows(plans)
+        self.power_scan_import_error = error
+        return row + 2
+
+    def apply_power_scan_plans(self, signal_source) -> str | None:
+        """把配置里的扫描段重建为行；返回结构错误，供回填投影写入页面状态。"""
+        plans, error = self._power_scan_plan_values(signal_source)
+        self._replace_power_scan_plan_rows(plans)
+        return error
+
+    def add_power_scan_plan(self) -> PowerSweepPlanRow:
+        """追加一段计划：起点取上一行终点，步长沿用，终点先等于起点。"""
+        rows = self.power_scan_plan_rows
+        if rows:
+            _, step, stop = rows[-1].values()
+            values = (stop, step, stop)
+        else:
+            values = self._default_power_scan_values()
+        row = self._append_power_scan_plan_row(*values)
+        self._refresh_power_scan_plan_rows()
+        self.power_scan_import_error = None
+        return row
+
+    def remove_power_scan_plan(self, row: PowerSweepPlanRow) -> bool:
+        """删除一行；只剩一行时拒绝删除并返回 ``False``。"""
+        if len(self.power_scan_plan_rows) <= 1 or row not in self.power_scan_plan_rows:
+            return False
+        self.power_scan_plan_rows.remove(row)
+        self.power_scan_plan_layout.removeWidget(row)
+        row.setParent(None)
+        row.deleteLater()
+        self._refresh_power_scan_plan_rows()
+        self.power_scan_import_error = None
+        return True
+
+    def _append_power_scan_plan_row(
+        self, start_power: float, step: float, stop_power: float
+    ) -> PowerSweepPlanRow:
+        row = PowerSweepPlanRow(
+            start_power,
+            step,
+            stop_power,
+            number=len(self.power_scan_plan_rows) + 1,
+            parent=self.power_scan_plan_container,
+        )
+        row.remove_requested.connect(self.remove_power_scan_plan)
+        row.values_changed.connect(self._on_power_scan_plan_changed)
+        self.power_scan_plan_layout.addWidget(row)
+        self.power_scan_plan_rows.append(row)
+        return row
+
+    def _replace_power_scan_plan_rows(self, plans) -> None:
+        for row in list(self.power_scan_plan_rows):
+            self.power_scan_plan_layout.removeWidget(row)
+            row.setParent(None)
+            row.deleteLater()
+        self.power_scan_plan_rows.clear()
+        for values in plans or [self._default_power_scan_values()]:
+            self._append_power_scan_plan_row(*values)
+        self._refresh_power_scan_plan_rows()
+
+    def _refresh_power_scan_plan_rows(self) -> None:
+        """刷新编号；只剩一行时禁用删除，保证列表至少保留一段。"""
+        removable = len(self.power_scan_plan_rows) > 1
+        for number, row in enumerate(self.power_scan_plan_rows, 1):
+            row.set_number(number)
+            row.delete_button.setEnabled(removable)
+
+    def _on_power_scan_plan_changed(self, *_args) -> None:
+        # 行内容已被用户重写：结构导入错误不再适用；连续性由正式校验按行报错。
+        self.power_scan_import_error = None
+
+    #: 单行兼容读数：仍指向第一段计划，供尚未迁移到行列表的调用方与测试使用。
+    @property
+    def start_power(self):
+        return self.power_scan_plan_rows[0].start_power
+
+    @property
+    def stop_power(self):
+        return self.power_scan_plan_rows[0].stop_power
+
+    @property
+    def power_step(self):
+        return self.power_scan_plan_rows[0].step
 
     def _build_action_bar(self):
         """页面底部固定操作栏：回到仪表配置、保存当前配置或返回欢迎页。"""
@@ -451,6 +599,7 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         self.load_run_btn.clicked.connect(self.request_load_run)
         self.return_welcome_btn.clicked.connect(self.return_welcome_requested.emit)
         self.previous_step_btn.clicked.connect(self.connection_step_requested.emit)
+        self.add_power_scan_plan_btn.clicked.connect(self.add_power_scan_plan)
         for widget in (self.freq_start, self.freq_stop, self.freq_step):
             widget.valueChanged.connect(self._on_frequency_changed)
         self.freq_extra.textChanged.connect(self._on_frequency_changed)

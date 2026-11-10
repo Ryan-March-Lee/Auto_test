@@ -18,7 +18,7 @@ import math
 from dataclasses import dataclass
 from datetime import datetime
 from types import MappingProxyType
-from typing import Any, Mapping, Protocol
+from typing import Any, Iterable, Mapping, Protocol
 
 from application.dto import MeasurementResult, normalize_frequency_key
 from application.dto.run_history import (
@@ -155,10 +155,10 @@ def artifact_status_text(status: ArtifactStatus) -> str:
 
 @dataclass(frozen=True)
 class RunHistoryRow:
-    """历史运行列表的一行：展示文本 + “能否重新生成”的结构化事实。
+    """历史运行列表的一行：展示文本 + “能否重新生成/删除”的结构化事实。
 
     视图模型只把 DTO 转成文案，不读取 manifest、不判断文件是否存在：``can_regenerate``
-    直接来自 :class:`application.dto.run_history.RunHistorySummary`。
+    与 ``can_delete`` 直接来自 :class:`application.dto.run_history.RunHistorySummary`。
     """
 
     run_id: str
@@ -174,6 +174,9 @@ class RunHistoryRow:
     # 真正的路径解析由应用层的位置入口完成。
     can_open_directory: bool = False
     can_open_report: bool = False
+    # 删除只跟随“不是进行中”：终态、损坏与结构不完整的运行都允许用户清理；
+    # 进行中的运行目录可能仍在写入，页面与应用层都不允许删除。
+    can_delete: bool = True
 
     @classmethod
     def from_summary(cls, summary: RunHistorySummary) -> "RunHistoryRow":
@@ -192,6 +195,7 @@ class RunHistoryRow:
             can_regenerate=summary.can_regenerate,
             can_open_directory=summary.browsable,
             can_open_report=_completed_report_available(summary),
+            can_delete=summary.run_status is not RunStatus.RUNNING,
         )
 
     @property
@@ -352,6 +356,9 @@ class HistoryViewModel:
         # 历史运行摘要来源是可选依赖：可视化页只需要结果列表，历史管理页两者都要。
         self.run_source = runs
         self._run_rows: tuple[RunHistoryRow, ...] = ()
+        # 运行表格支持多选：``_selected_run_indices`` 是删除动作的完整选择，
+        # ``_selected_run_index`` 只是其中“当前行”，供打开/重新生成等单运行动作使用。
+        self._selected_run_indices: tuple[int, ...] = ()
         self._selected_run_index: int | None = None
 
     # -- 列表 ---------------------------------------------------------------
@@ -410,18 +417,26 @@ class HistoryViewModel:
         return self._run_rows
 
     def reload_runs(self) -> tuple[RunHistoryRow, ...]:
-        """重新读取历史运行摘要；选中运行已不存在时清空选择。"""
+        """重新读取历史运行摘要；选中运行已不存在时清空选择。
+
+        选择按**运行标识**而不是旧行号保留：刷新期间运行可能被删除或重新排序，
+        按索引保留会把选择悄悄挪到另一条运行上。
+        """
         if self.run_source is None:
             raise RuntimeError("未配置历史运行摘要来源，无法读取运行列表")
+        selected_ids = {row.run_id for row in self.selected_runs}
         self._run_rows = tuple(
             RunHistoryRow.from_summary(summary)
             for summary in self.run_source.list_runs()
         )
-        if (
-            self._selected_run_index is not None
-            and not self.run_at(self._selected_run_index)
-        ):
-            self._selected_run_index = None
+        self._selected_run_indices = tuple(
+            index
+            for index, row in enumerate(self._run_rows)
+            if row.run_id in selected_ids
+        )
+        self._selected_run_index = (
+            self._selected_run_indices[0] if self._selected_run_indices else None
+        )
         return self._run_rows
 
     def reset_runs(self) -> None:
@@ -431,6 +446,7 @@ class HistoryViewModel:
         做可用性判定，出现“表格里看不到这次运行，另存为却按它放行/拒绝”的分裂。
         """
         self._run_rows = ()
+        self._selected_run_indices = ()
         self._selected_run_index = None
 
     def run_row(self, run_id: str | None) -> RunHistoryRow | None:
@@ -454,15 +470,50 @@ class HistoryViewModel:
             return self._run_rows[index]
         return None
 
+    def select_runs(
+        self, indices: Iterable[int] | None
+    ) -> tuple[RunHistoryRow, ...]:
+        """选中多行运行；非法索引与重复索引会被忽略，空输入清空选择。"""
+        normalized: list[int] = []
+        if indices is None or isinstance(indices, (str, bytes)):
+            indices = ()
+        for index in indices:
+            if index in normalized or self.run_at(index) is None:
+                continue
+            normalized.append(index)
+        self._selected_run_indices = tuple(normalized)
+        self._selected_run_index = normalized[0] if normalized else None
+        return self.selected_runs
+
     def select_run(self, index: int | None) -> RunHistoryRow | None:
-        """选中一个运行；非法或空行索引会清空选择。"""
+        """推进单个“当前运行”；非法或空行索引会清空选择。
+
+        打开目录/重新生成只作用于一条运行。如果该行已经在多选集合里，只更新当前行，
+        不破坏用户为删除而做的多选；否则把选择收敛为这一行。
+        """
         row = self.run_at(index)
-        self._selected_run_index = None if row is None else index
+        if row is None:
+            self.select_runs(())
+            return None
+        if index not in self._selected_run_indices:
+            self.select_runs((index,))
+        self._selected_run_index = index
         return row
+
+    @property
+    def selected_run_indices(self) -> tuple[int, ...]:
+        """当前运行表格的多选行索引（按表格顺序）。"""
+        return self._selected_run_indices
 
     @property
     def selected_run_index(self) -> int | None:
         return self._selected_run_index
+
+    @property
+    def selected_runs(self) -> tuple[RunHistoryRow, ...]:
+        """当前多选的运行摘要；删除动作只认这一份选择。"""
+        rows = (self.run_at(index) for index in self._selected_run_indices)
+        return tuple(row for row in rows if row is not None)
 
     @property
     def selected_run(self) -> RunHistoryRow | None:

@@ -20,6 +20,7 @@ from infrastructure.gui_data_service import (
 )
 from infrastructure.persistence.artifact_generator import ArchiveArtifactGenerator
 from infrastructure.persistence.instrument_registry import InstrumentRegistry
+from infrastructure.persistence.run_deletion import FileRunDeletion
 from infrastructure.persistence.run_history_repository import FileRunHistoryRepository
 from infrastructure.persistence.run_repository import RunRepository
 
@@ -50,6 +51,8 @@ def build_gui_data_service(
         runs=runs,
         generator=ArchiveArtifactGenerator(runs),
     )
+    # 删除是独立的写入口：只读历史仓储不获得写权限，页面也不能直接删目录。
+    deletion = FileRunDeletion(runs=runs)
     return GuiDataService(
         JsonConfigurationAdapter(config_path or paths),
         query,
@@ -59,6 +62,8 @@ def build_gui_data_service(
             archival=archival,
             # 同一运行目录仓储同时提供只读位置：历史页的“打开运行目录/报告”不自行拼路径。
             locations=run_history,
+            # 用户明确发起的删除：整目录删除，进行中的运行由用例与适配器双重拒绝。
+            deletions=deletion,
         ),
     )
 

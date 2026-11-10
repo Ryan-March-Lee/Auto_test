@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Mapping, Protocol
+from typing import Any, Iterable, Mapping, Protocol
 
 from application.dto.archival import ArchivalOutcome
 from application.dto.export_requests import ExportOutcome, ExportRequest
 from application.dto.measurement_results import MeasurementResult
+from application.dto.run_deletion import RunDeletionOutcome
 from application.dto.run_history import RunHistorySummary
 from domain.run.models import ArtifactKind
 
@@ -120,8 +121,21 @@ class RunLocationPort(Protocol):
         ...
 
 
+class RunDeletionPort(Protocol):
+    """运行目录的写入口：只删除已登记的单个运行目录。
+
+    历史浏览与导出端口保持只读；删除能力单独注入，避免查询路径获得写权限。
+    实现必须拒绝符号链接/目录联接、确认目标位于运行根目录内，并拒绝删除仍在
+    运行的运行目录。
+    """
+
+    def delete_run(self, run_id: str) -> None:
+        """删除 ``run_id`` 对应的整个运行目录；目录不存在时按幂等无操作处理。"""
+        ...
+
+
 class RunHistoryServicePort(Protocol):
-    """历史运行管理的应用用例入口（查询 + 失败产物重新生成 + 位置定位）。"""
+    """历史运行管理的应用用例入口（查询 + 重新生成 + 位置定位 + 删除）。"""
 
     def list_runs(self) -> tuple[RunHistorySummary, ...]:
         """返回历史运行摘要列表。"""
@@ -131,6 +145,15 @@ class RunHistoryServicePort(Protocol):
         """重新生成已登记运行中失败的交付产物，写回原运行目录。
 
         只接受历史列表中的 ``run_id``；运行不可用、没有失败产物或归档失败时抛出
+        ``application.run_history_service.RunHistoryRequestError``。
+        """
+        ...
+
+    def delete_runs(self, run_ids: Iterable[str]) -> RunDeletionOutcome:
+        """删除历史运行目录；只接受历史列表中的运行标识。
+
+        进行中的运行、未知运行与删除失败按 ``RunDeletionFailure`` 逐项返回，不中断
+        同一批次的其它运行；空列表或非法输入抛出
         ``application.run_history_service.RunHistoryRequestError``。
         """
         ...

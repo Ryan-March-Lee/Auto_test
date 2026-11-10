@@ -629,6 +629,68 @@ class RunHistoryViewModelTests(unittest.TestCase):
         self.assertIsNone(view_model.selected_run_index)
         self.assertIsNone(view_model.select_run(5))
 
+    def test_multiple_runs_can_be_selected_for_deletion(self):
+        view_model = self._view_model(
+            [_summary(), _summary(run_id=OTHER_RUN_ID)]
+        )
+        view_model.reload_runs()
+
+        rows = view_model.select_runs([0, 1, 1, 9])
+
+        self.assertEqual([row.run_id for row in rows], [RUN_ID, OTHER_RUN_ID])
+        self.assertEqual(view_model.selected_run_indices, (0, 1))
+        self.assertEqual(view_model.selected_run_index, 0)
+        self.assertEqual(
+            [row.run_id for row in view_model.selected_runs],
+            [RUN_ID, OTHER_RUN_ID],
+        )
+
+    def test_reload_keeps_selection_by_run_identity(self):
+        """刷新时运行重新排序，选择不能按旧行号悄悄挪到另一条运行上。"""
+        old = _summary()
+        later = _summary(run_id=OTHER_RUN_ID)
+        source = StaticStatusPort([old, later])
+        view_model = HistoryViewModel(runs=source)
+        view_model.reload_runs()
+        view_model.select_runs([0])
+        self.assertEqual(view_model.selected_run.run_id, RUN_ID)
+
+        source.summaries = [later, old]
+        view_model.reload_runs()
+
+        self.assertEqual(
+            [row.run_id for row in view_model.selected_runs], [RUN_ID]
+        )
+
+    def test_selected_runs_are_dropped_when_the_run_disappears(self):
+        view_model = self._view_model(
+            [_summary(), _summary(run_id=OTHER_RUN_ID)]
+        )
+        view_model.reload_runs()
+        view_model.select_runs([0, 1])
+
+        view_model.run_source.summaries = (
+            _summary(run_id=OTHER_RUN_ID),
+        )
+        view_model.reload_runs()
+
+        self.assertEqual(
+            [row.run_id for row in view_model.selected_runs], [OTHER_RUN_ID]
+        )
+
+    def test_reset_runs_clears_all_selected_runs(self):
+        view_model = self._view_model(
+            [_summary(), _summary(run_id=OTHER_RUN_ID)]
+        )
+        view_model.reload_runs()
+        view_model.select_runs([0, 1])
+
+        view_model.reset_runs()
+
+        self.assertEqual(view_model.selected_runs, ())
+        self.assertEqual(view_model.selected_run_indices, ())
+        self.assertIsNone(view_model.selected_run)
+
     def test_reload_runs_requires_a_summary_source(self):
         class EmptyQuery:
             def list_results(self):

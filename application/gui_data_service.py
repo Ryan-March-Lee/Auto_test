@@ -12,7 +12,8 @@ lifecycle belong to infrastructure adapters.
 
 历史运行管理只有一个入口：``run_history``（
 :class:`application.run_history_service.RunHistoryService`）。它提供运行/阶段/产物
-状态列表与“重新生成失败产物”，页面不读 manifest、不解析运行目录。
+状态列表、“重新生成失败产物”和用户明确发起的“删除历史运行”，页面不读 manifest、
+不解析运行目录，也不能直接删除目录。
 """
 
 from __future__ import annotations

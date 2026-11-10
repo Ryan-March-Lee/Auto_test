@@ -525,7 +525,15 @@ class ProductionDependencyTests(unittest.TestCase):
             ROOT / "presentation" / "qt" / "run_history_page.py",
         )
         forbidden_imports = ("infrastructure", "result_storage", "json_result_repository")
-        forbidden_calls = {"open", "glob", "stat", "unlink", "copy2", "mkdir"}
+        forbidden_calls = {
+            "open",
+            "glob",
+            "stat",
+            "unlink",
+            "copy2",
+            "mkdir",
+            "rmtree",
+        }
         violations = []
         for source in sources:
             tree = _tree(source)

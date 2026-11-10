@@ -20,9 +20,10 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QAbstractItemView
+from PySide6.QtCore import QItemSelection, QItemSelectionModel, Qt
+from PySide6.QtWidgets import QAbstractItemView, QMessageBox
 
+from application.dto.run_deletion import RunDeletionFailure, RunDeletionOutcome
 from application.dto.run_history import (
     RunArchiveState,
     RunArtifactSummary,
@@ -44,6 +45,7 @@ from presentation.qt.run_history_page import RunHistoryPage, RunHistoryPageState
 ROOT = Path(__file__).resolve().parents[2]
 PAGE_SOURCE = ROOT / "presentation" / "qt" / "run_history_page.py"
 RUN_ID = "20261028T010203Z_abcdef12"
+OTHER_RUN_ID = "20261027T010203Z_abcdef12"
 CREATED_AT = datetime(2026, 10, 28, 1, 2, 3, tzinfo=timezone.utc)
 
 # 每次状态变化只允许经由这两个方法写控件状态：``_build_ui`` 是一次性结构配置，
@@ -60,6 +62,7 @@ _DYNAMIC_STATE_WIDGETS = frozenset(
         "self.regenerate_button",
         "self.open_run_dir_button",
         "self.open_report_button",
+        "self.delete_runs_button",
     }
 )
 
@@ -78,7 +81,11 @@ class _StaticRuns:
 
 
 def _summary(
-    *, can_regenerate: bool = True, report_completed: bool = False
+    *,
+    can_regenerate: bool = True,
+    report_completed: bool = False,
+    run_id: str = RUN_ID,
+    run_status: RunStatus = RunStatus.COMPLETED,
 ) -> RunHistorySummary:
     artifacts = ()
     if can_regenerate:
@@ -101,10 +108,10 @@ def _summary(
             ),
         )
     return RunHistorySummary(
-        run_id=RUN_ID,
+        run_id=run_id,
         created_at=CREATED_AT,
         state=RunArchiveState.USABLE,
-        run_status=RunStatus.COMPLETED,
+        run_status=run_status,
         stages=(
             RunStageSummary(
                 STAGE_AMPLIFIER, StageStatus.COMPLETED, AMPLIFIER_RESULT_PATH
@@ -114,8 +121,19 @@ def _summary(
     )
 
 
-def _run_row(*, can_regenerate: bool = True) -> RunHistoryRow:
-    return RunHistoryRow.from_summary(_summary(can_regenerate=can_regenerate))
+def _run_row(
+    *,
+    can_regenerate: bool = True,
+    run_id: str = RUN_ID,
+    run_status: RunStatus = RunStatus.COMPLETED,
+) -> RunHistoryRow:
+    return RunHistoryRow.from_summary(
+        _summary(
+            can_regenerate=can_regenerate,
+            run_id=run_id,
+            run_status=run_status,
+        )
+    )
 
 
 def _page(*, summaries=(), runs=None, log_callback=None) -> RunHistoryPage:
@@ -124,6 +142,54 @@ def _page(*, summaries=(), runs=None, log_callback=None) -> RunHistoryPage:
             runs=_StaticRuns(summaries) if runs is None else runs
         ),
         log_callback=log_callback,
+    )
+
+
+class _FakeRunService:
+    """历史运行服务替身：记录删除批次，并让摘要来源同步移除已删除运行。"""
+
+    def __init__(self, source, *, outcomes=None):
+        self.source = source
+        self.outcomes = dict(outcomes or {})
+        self.batches = []
+
+    def regenerate_failed_artifacts(self, run_id):
+        raise AssertionError("删除用例不应触发重新生成")
+
+    def delete_runs(self, run_ids):
+        ids = tuple(run_ids)
+        self.batches.append(ids)
+        outcome = self.outcomes.get(
+            ids, RunDeletionOutcome(deleted_run_ids=ids)
+        )
+        self.source.summaries = tuple(
+            summary
+            for summary in self.source.summaries
+            if summary.run_id not in outcome.deleted_run_ids
+        )
+        return outcome
+
+
+def _page_with_service(summaries, *, outcomes=None):
+    source = _StaticRuns(summaries)
+    service = _FakeRunService(source, outcomes=outcomes)
+    page = RunHistoryPage(
+        history=HistoryViewModel(runs=source), run_service=service
+    )
+    return page, service, source
+
+
+def _select_rows(page, *rows: int) -> None:
+    """在运行表格里选中指定行（ExtendedSelection）。"""
+    model = page.run_table.model()
+    selection = QItemSelection()
+    for row in rows:
+        selection.select(
+            model.index(row, 0),
+            model.index(row, page.run_table.columnCount() - 1),
+        )
+    page.run_table.selectionModel().select(
+        selection, QItemSelectionModel.ClearAndSelect
     )
 
 
@@ -210,6 +276,30 @@ class RunHistoryPageStateTests(unittest.TestCase):
         )
         self.assertTrue(no_report.can_open_directory)
         self.assertFalse(no_report.can_open_report)
+
+    def test_delete_follows_all_selected_runs(self):
+        terminal = _run_row()
+        running = _run_row(run_id=OTHER_RUN_ID, run_status=RunStatus.RUNNING)
+        state = RunHistoryPageState(
+            selected_run=running, selected_runs=(terminal, running)
+        )
+
+        self.assertTrue(state.can_delete)
+        self.assertEqual(state.deletable_runs, (terminal,))
+
+        only_running = RunHistoryPageState(
+            selected_run=running, selected_runs=(running,)
+        )
+        self.assertFalse(only_running.can_delete)
+        self.assertEqual(only_running.deletable_runs, ())
+
+    def test_selected_runs_cannot_repeat(self):
+        row = _run_row()
+
+        with self.assertRaises(ValueError):
+            RunHistoryPageState(selected_runs=(row, row))
+        with self.assertRaises(TypeError):
+            RunHistoryPageState(selected_runs=[row])
 
 
 class RunHistoryPageRenderingTests(unittest.TestCase):
@@ -367,6 +457,121 @@ class RunHistoryPageRenderingTests(unittest.TestCase):
             },
             set(_DYNAMIC_STATE_WIDGETS),
         )
+
+
+class RunHistoryDeletionPageTests(unittest.TestCase):
+    """历史运行页的删除按钮：多选、确认与逐项结果。"""
+
+    @classmethod
+    def setUpClass(cls):
+        from PySide6.QtWidgets import QApplication
+
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_delete_button_is_disabled_until_a_deletable_run_is_selected(self):
+        page, _service, _source = _page_with_service([_summary()])
+
+        self.assertFalse(page.delete_runs_button.isEnabled())
+
+        _select_rows(page, 0)
+
+        self.assertTrue(page.delete_runs_button.isEnabled())
+
+    def test_multi_selection_deletes_all_terminal_runs(self):
+        page, service, _source = _page_with_service(
+            [_summary(run_id=RUN_ID), _summary(run_id=OTHER_RUN_ID)]
+        )
+        _select_rows(page, 0, 1)
+
+        with patch(
+            "presentation.qt.run_history_page.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ), patch(
+            "presentation.qt.run_history_page.QMessageBox.information"
+        ) as information:
+            self.assertTrue(page.delete_selected_runs())
+
+        self.assertEqual(service.batches, [(RUN_ID, OTHER_RUN_ID)])
+        self.assertEqual(page.run_table.rowCount(), 0)
+        message = information.call_args.args[2]
+        self.assertIn(RUN_ID, message)
+        self.assertIn(OTHER_RUN_ID, message)
+
+    def test_running_runs_are_kept_out_of_the_delete_batch(self):
+        page, service, _source = _page_with_service(
+            [
+                _summary(run_id=RUN_ID),
+                _summary(run_id=OTHER_RUN_ID, run_status=RunStatus.RUNNING),
+            ]
+        )
+        _select_rows(page, 0, 1)
+
+        with patch(
+            "presentation.qt.run_history_page.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ) as question, patch(
+            "presentation.qt.run_history_page.QMessageBox.information"
+        ) as information:
+            self.assertTrue(page.delete_selected_runs())
+
+        self.assertEqual(service.batches, [(RUN_ID,)])
+        self.assertIn("正在进行中", question.call_args.args[2])
+        self.assertIn(f"进行中未删除: {OTHER_RUN_ID}", information.call_args.args[2])
+
+    def test_only_running_selection_keeps_delete_disabled(self):
+        page, service, _source = _page_with_service(
+            [_summary(run_status=RunStatus.RUNNING)]
+        )
+        _select_rows(page, 0)
+
+        self.assertFalse(page.delete_runs_button.isEnabled())
+        with patch(
+            "presentation.qt.run_history_page.QMessageBox.warning"
+        ) as warning:
+            self.assertFalse(page.delete_selected_runs())
+
+        self.assertEqual(service.batches, [])
+        self.assertIn("正在进行中", warning.call_args.args[2])
+
+    def test_cancelled_confirmation_does_not_delete(self):
+        page, service, _source = _page_with_service([_summary()])
+        _select_rows(page, 0)
+
+        with patch(
+            "presentation.qt.run_history_page.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.No,
+        ):
+            self.assertFalse(page.delete_selected_runs())
+
+        self.assertEqual(service.batches, [])
+
+    def test_missing_deletion_service_keeps_the_button_disabled(self):
+        page = _page(summaries=[_summary()])
+        _select_rows(page, 0)
+
+        self.assertFalse(page.delete_runs_button.isEnabled())
+        with patch(
+            "presentation.qt.run_history_page.QMessageBox.warning"
+        ) as warning:
+            self.assertFalse(page.delete_selected_runs())
+
+        self.assertIn("未装配", warning.call_args.args[2])
+
+    def test_deletion_message_reports_each_failed_run(self):
+        failure = RunDeletionFailure(OTHER_RUN_ID, "运行正在进行中，不能删除")
+        outcome = RunDeletionOutcome((RUN_ID,), (failure,))
+
+        message = RunHistoryPage._deletion_message(
+            outcome, (_run_row(run_id=OTHER_RUN_ID, run_status=RunStatus.RUNNING),)
+        )
+
+        self.assertIn(f"已删除运行: {RUN_ID}", message)
+        self.assertIn(f"运行 {OTHER_RUN_ID} 未删除", message)
+        self.assertIn("进行中未删除", message)
+
+    def test_deletion_message_rejects_non_dto_outcomes(self):
+        with self.assertRaises(TypeError):
+            RunHistoryPage._deletion_message(object())
 
 
 if __name__ == "__main__":

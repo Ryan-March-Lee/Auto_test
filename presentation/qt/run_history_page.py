@@ -4,8 +4,9 @@
 **历史管理**，页面类名、路由与模块名都不再沿用“导出页”语义：
 
 - 页面只列出历史运行，并显示每次运行的阶段进度、正式结果数与交付产物状态；
-- 页面动作只保留运行级维护：对失败产物执行“重新生成”（写回原运行目录）。历史结果
-  列表与结果的另存为都属于“查看结果”的动作，已移到数据可视化页（见
+- 页面动作只保留运行级维护：对失败产物执行“重新生成”（写回原运行目录），以及删除
+  用户明确选中的历史运行（整目录删除，进行中的运行不允许删除）。历史结果列表与结果
+  的另存为都属于“查看结果”的动作，已移到数据可视化页（见
   ``visualization_page``）。
 
 页面职责边界：
@@ -14,8 +15,10 @@
   不读 manifest、不拼接运行目录路径，也不判断文件是否存在。
 - 重新生成走应用层的 ``RunHistoryServicePort``：页面只传“已列出的运行标识”，不传阶段、
   不传路径；应用层决定用哪个阶段重试，并把产物写回受控位置。
-- 用户可见文案属于本页面：应用层返回结构化结果（``ArchivalOutcome``），页面据此生成
-  日志与对话框文本。
+- 删除同样只传“已列出的运行标识”：页面对多选行做确认与文案，目录边界、进行中复核与
+  实际删除由应用层和删除适配器完成，页面不调用任何文件系统删除接口。
+- 用户可见文案属于本页面：应用层返回结构化结果（``ArchivalOutcome`` /
+  ``RunDeletionOutcome``），页面据此生成日志与对话框文本。
 - 页面可见状态只有一个渲染入口：刷新、选中变化与读取失败都只更新表格数据，再由
   ``render_state()`` 按只读的 ``RunHistoryPageState`` 一次渲染空表说明与按钮可用性。
 """
@@ -28,6 +31,7 @@ from typing import Any, Callable
 from PySide6.QtCore import QSignalBlocker, Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -41,6 +45,7 @@ from PySide6.QtWidgets import (
 )
 
 from application.dto.archival import ArchivalOutcome
+from application.dto.run_deletion import RunDeletionOutcome
 from application.ports.gui_data_service import (
     GuiDataService,
     RunHistoryServicePort,
@@ -64,13 +69,14 @@ class RunHistoryPageState:
 
     页面不再在刷新、选中与读取失败分支里各自调用 ``setVisible`` / ``setEnabled``：
     这些分支只更新运行表格的数据，再交给 :meth:`RunHistoryPage.render_state` 一次渲染。
-    状态对象因此只保留驱动外观所需的事实（行数与当前选中的运行），行内展示文本、
-    “能否重新生成”与“能否打开目录/报告”仍由视图模型给出。以后增加淡入、禁用或
+    状态对象因此只保留驱动外观所需的事实（行数、当前运行与多选运行），行内展示文本、
+    “能否重新生成/删除”与“能否打开目录/报告”仍由视图模型给出。以后增加淡入、禁用或
     局部过渡时只改渲染入口，不需要追踪每个回调。
     """
 
     run_count: int = 0
     selected_run: RunHistoryRow | None = None
+    selected_runs: tuple[RunHistoryRow, ...] = ()
 
     def __post_init__(self) -> None:
         value = self.run_count
@@ -80,6 +86,13 @@ class RunHistoryPageState:
             self.selected_run, RunHistoryRow
         ):
             raise TypeError("selected_run 必须是 RunHistoryRow 或 None")
+        if not isinstance(self.selected_runs, tuple):
+            raise TypeError("selected_runs 必须是 RunHistoryRow 元组")
+        if not all(isinstance(row, RunHistoryRow) for row in self.selected_runs):
+            raise TypeError("selected_runs 中的每项必须是 RunHistoryRow")
+        run_ids = [row.run_id for row in self.selected_runs]
+        if len(set(run_ids)) != len(run_ids):
+            raise ValueError("selected_runs 不能包含重复的运行")
 
     @property
     def run_list_empty(self) -> bool:
@@ -101,9 +114,19 @@ class RunHistoryPageState:
         """选中的运行是否已生成可打开的测试报告。"""
         return self.selected_run is not None and self.selected_run.can_open_report
 
+    @property
+    def deletable_runs(self) -> tuple[RunHistoryRow, ...]:
+        """多选运行中允许删除的部分（进行中的运行不在其中）。"""
+        return tuple(row for row in self.selected_runs if row.can_delete)
+
+    @property
+    def can_delete(self) -> bool:
+        """多选里是否至少有一条非进行中的运行可以删除。"""
+        return bool(self.deletable_runs)
+
 
 class RunHistoryPage(QWidget):
-    """历史运行页：运行与产物状态、失败产物重新生成。"""
+    """历史运行页：运行与产物状态、失败产物重新生成、删除选中的运行。"""
 
     def __init__(
         self,
@@ -140,6 +163,7 @@ class RunHistoryPage(QWidget):
         self.run_table.verticalHeader().setVisible(False)
         self.run_table.setAlternatingRowColors(True)
         self.run_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.run_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         # 历史运行是只读展示面板：用户只能选择、查看与打开位置，不能就地改写词条。
         self.run_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.run_table.setMinimumHeight(140)
@@ -159,6 +183,10 @@ class RunHistoryPage(QWidget):
         set_button_variant(self.open_report_button, "secondary")
         self.open_report_button.clicked.connect(self.open_test_report)
         run_actions.addWidget(self.open_report_button)
+        self.delete_runs_button = QPushButton("删除选中的运行")
+        set_button_variant(self.delete_runs_button, "danger")
+        self.delete_runs_button.clicked.connect(self.delete_selected_runs)
+        run_actions.addWidget(self.delete_runs_button)
         run_actions.addStretch(1)
         run_refresh_button = QPushButton("刷新历史运行")
         set_button_variant(run_refresh_button, "secondary")
@@ -214,6 +242,8 @@ class RunHistoryPage(QWidget):
             raise TypeError("页面渲染必须使用 RunHistoryPageState")
         self.run_empty_hint.setVisible(state.run_list_empty)
         self.regenerate_button.setEnabled(state.can_regenerate)
+        deletion_ready = self._deletion_service_ready()
+        self.delete_runs_button.setEnabled(state.can_delete and deletion_ready)
         location_ready = self._location_service_ready()
         self.open_run_dir_button.setEnabled(state.can_open_directory and location_ready)
         self.open_report_button.setEnabled(state.can_open_report and location_ready)
@@ -225,15 +255,29 @@ class RunHistoryPage(QWidget):
             getattr(self.run_service, "run_directory", None)
         ) and callable(getattr(self.run_service, "artifact_location", None))
 
+    def _deletion_service_ready(self) -> bool:
+        """历史运行服务是否装配了删除入口；没有时只禁用删除动作，不影响列表。"""
+        return self.run_service is not None and callable(
+            getattr(self.run_service, "delete_runs", None)
+        )
+
     def _sync_run_selection(self) -> None:
-        """把运行表格的当前行写回视图模型；空表或越界行会清空选择。"""
-        self.history.select_run(self.run_table.currentRow())
+        """把运行表格的多选写回视图模型；空表或越界行会清空选择。"""
+        selection = self.run_table.selectionModel()
+        indexes = () if selection is None else selection.selectedRows()
+        self.history.select_runs(index.row() for index in indexes)
+        # 单运行动作（打开/重新生成）跟随当前行：只有当前行确实在多选里时才推进，
+        # 避免把用户为删除而做的多选收敛掉。
+        current = self.run_table.currentRow()
+        if current in self.history.selected_run_indices:
+            self.history.select_run(current)
 
     def _snapshot_state(self) -> RunHistoryPageState:
         """从当前表格与视图模型推出可见状态快照，本身不修改任何状态。"""
         return RunHistoryPageState(
             run_count=self.run_table.rowCount(),
             selected_run=self.history.selected_run,
+            selected_runs=self.history.selected_runs,
         )
 
     # -- 列表 ---------------------------------------------------------------
@@ -380,6 +424,96 @@ class RunHistoryPage(QWidget):
             else:
                 parts.append(f"{label} 不适用")
         return f"运行 {outcome.run_id} 的交付产物：" + "；".join(parts)
+
+    # -- 删除历史运行 ---------------------------------------------------------
+
+    def delete_selected_runs(self) -> bool:
+        """删除多选中的历史运行（整目录删除，进行中的运行不在可删范围）。
+
+        页面只负责：确认多选、生成用户文案、调用应用层删除用例并刷新列表。
+        运行标识核对、进行中复核与目录边界都由应用层与删除适配器完成。
+        """
+        rows = self.history.selected_runs
+        if not rows:
+            QMessageBox.warning(self, "删除历史运行", "请先选择要删除的历史运行")
+            return False
+        deletable = tuple(row for row in rows if row.can_delete)
+        blocked = tuple(row for row in rows if not row.can_delete)
+        if not deletable:
+            QMessageBox.warning(
+                self,
+                "无法删除",
+                "选中的运行正在进行中，不能删除；请等待运行结束后再试",
+            )
+            return False
+        if not self._deletion_service_ready():
+            QMessageBox.warning(self, "无法删除", "未装配历史运行删除入口")
+            return False
+        if not self._confirm_deletion(deletable, blocked):
+            return False
+        try:
+            outcome = self.run_service.delete_runs(
+                [row.run_id for row in deletable]
+            )
+        except (OSError, ValueError, RuntimeError) as error:
+            self.log_callback(f"删除历史运行失败: {error}")
+            QMessageBox.warning(self, "删除失败", str(error))
+            return False
+        message = self._deletion_message(outcome, blocked)
+        self.log_callback(message)
+        if outcome.has_failures:
+            QMessageBox.warning(self, "删除结果", message)
+        else:
+            QMessageBox.information(self, "删除结果", message)
+        self.refresh()
+        return True
+
+    def _confirm_deletion(
+        self,
+        deletable: tuple[RunHistoryRow, ...],
+        blocked: tuple[RunHistoryRow, ...],
+    ) -> bool:
+        """删除前的普通确认框：列出将删除的运行与不会删除的进行中运行。"""
+        lines = ["将永久删除以下运行及其全部结果与交付产物："]
+        lines.extend(
+            f"- {row.run_id}（{row.created_text}，{row.status_text}）"
+            for row in deletable
+        )
+        if blocked:
+            lines.append("")
+            lines.append("以下运行正在进行中，不会删除：")
+            lines.extend(f"- {row.run_id}" for row in blocked)
+        lines.append("")
+        lines.append("此操作不可恢复，是否继续？")
+        answer = QMessageBox.question(
+            self,
+            "删除历史运行",
+            "\n".join(lines),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
+    @staticmethod
+    def _deletion_message(
+        outcome: RunDeletionOutcome,
+        blocked: tuple[RunHistoryRow, ...] = (),
+    ) -> str:
+        """把结构化删除结果写成用户可见文案。"""
+        if not isinstance(outcome, RunDeletionOutcome):
+            raise TypeError("历史运行服务必须返回 RunDeletionOutcome")
+        parts = []
+        if outcome.deleted_run_ids:
+            parts.append("已删除运行: " + "、".join(outcome.deleted_run_ids))
+        for failure in outcome.failures:
+            parts.append(f"运行 {failure.run_id} 未删除: {failure.reason}")
+        if blocked:
+            parts.append(
+                "进行中未删除: " + "、".join(row.run_id for row in blocked)
+            )
+        if not parts:
+            parts.append("没有删除任何运行")
+        return "；".join(parts)
 
 
 def _fit_columns(table: QTableWidget, *, stretch_column: int) -> None:

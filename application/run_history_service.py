@@ -1,31 +1,46 @@
 """历史运行管理的应用用例（重构计划步骤 7）。
 
-把“导出页面”收敛成“历史运行/结果管理”后，页面需要两件事：
+把“导出页面”收敛成“历史运行/结果管理”后，页面需要三件事：
 
 1. **列出历史运行及其阶段/产物状态**：事实来自 :class:`RunArchiveStatusPort`
    （只读 manifest 与运行目录），页面不接触路径，也不判断文件是否存在；
 2. **重新生成失败的交付产物**：复用 :class:`application.archival_service.
    ResultArchivalService` 的 ``retry_failed=True`` 入口，把产物写回**原运行目录**的
    受控路径，而不是另存副本（另存副本走 :class:`application.export_service.
-   ResultExportUseCase`）。
+   ResultExportUseCase`）；
+3. **删除用户选中的历史运行**：整目录删除，只接受历史列表中的运行标识；进行中的
+   运行明确拒绝，未知运行与单个删除失败按运行逐项返回，不影响同批次的其它运行。
 
 边界：
 
 - 重新生成只接受历史列表中的 ``run_id``：用例自己重新列一遍运行摘要并核对，页面无法
   用任意字符串触发归档；阶段取自已登记产物所属的阶段，不接受调用方指定。
+- 删除同样先核对历史列表，并额外依赖独立的 :class:`RunDeletionPort`：历史浏览、
+  导出与位置端口仍是只读的，删除能力不能从查询对象上“顺手”获得。
 - 用例不读文件、不拼路径、不生成页面文案：产物路径与失败原因都在
-  :class:`application.dto.archival.ArchivalOutcome` 里，措辞由界面层生成。
-- 运行不可用、没有失败产物、未装配归档服务或归档契约失败，统一抛出
+  :class:`application.dto.archival.ArchivalOutcome` 里，措辞由界面层生成；删除的
+  逐项失败原因由删除端口给出，页面负责展示。
+- 运行不可用、没有失败产物、未装配归档/删除服务或归档契约失败，统一抛出
   :class:`RunHistoryRequestError`；其它异常（端口实现缺陷）不在这里兜底。
 """
 
 from __future__ import annotations
 
+import logging
+from typing import Any, Iterable
+
 from application.archival_service import ResultArchivalService
 from application.dto.archival import ArchivalOutcome, ArchivalRequest
+from application.dto.run_deletion import RunDeletionFailure, RunDeletionOutcome
 from application.dto.run_history import RunHistorySummary
-from application.ports.gui_data_service import RunArchiveStatusPort, RunLocationPort
-from domain.run.models import ArtifactKind
+from application.ports.gui_data_service import (
+    RunArchiveStatusPort,
+    RunDeletionPort,
+    RunLocationPort,
+)
+from domain.run.models import ArtifactKind, RunStatus
+
+logger = logging.getLogger("pa_auto_test." + __name__)
 
 
 class RunHistoryRequestError(ValueError):
@@ -33,7 +48,7 @@ class RunHistoryRequestError(ValueError):
 
 
 class RunHistoryService:
-    """历史运行查询与失败产物重新生成的用例入口。"""
+    """历史运行查询、失败产物重新生成与用户删除的用例入口。"""
 
     def __init__(
         self,
@@ -41,6 +56,7 @@ class RunHistoryService:
         statuses: RunArchiveStatusPort,
         archival: ResultArchivalService | None = None,
         locations: RunLocationPort | None = None,
+        deletions: RunDeletionPort | None = None,
     ) -> None:
         if not callable(getattr(statuses, "list_run_summaries", None)):
             raise TypeError("历史运行服务需要状态端口提供 list_run_summaries()")
@@ -53,9 +69,14 @@ class RunHistoryService:
             raise TypeError(
                 "历史运行服务的位置入口必须提供 run_directory() 与 artifact_location()"
             )
+        if deletions is not None and not callable(
+            getattr(deletions, "delete_run", None)
+        ):
+            raise TypeError("历史运行服务的删除入口必须提供 delete_run(run_id)")
         self.statuses = statuses
         self.archival = archival
         self.locations = locations
+        self.deletions = deletions
 
     # -- 查询 ---------------------------------------------------------------
 
@@ -94,6 +115,45 @@ class RunHistoryService:
             raise RunHistoryRequestError(
                 f"运行 {summary.run_id} 的产物重新生成失败: {error}"
             ) from error
+
+    # -- 删除 ---------------------------------------------------------------
+
+    def delete_runs(self, run_ids: Iterable[str]) -> RunDeletionOutcome:
+        """删除选中的历史运行目录。
+
+        ``run_ids`` 必须是历史列表中已登记的运行标识：用例先重新列出摘要并核对，
+        页面无法用任意字符串触发目录删除。进行中的运行、未知运行与单个删除失败
+        按 :class:`RunDeletionFailure` 逐项返回，**不中断**同一批次的其它运行。
+        """
+        normalized = _unique_run_ids(run_ids)
+        if self.deletions is None:
+            raise RunHistoryRequestError("未装配运行删除入口，无法删除历史运行")
+        summaries = {summary.run_id: summary for summary in self.list_runs()}
+        deleted: list[str] = []
+        failures: list[RunDeletionFailure] = []
+        for run_id in normalized:
+            summary = summaries.get(run_id)
+            if summary is None:
+                failures.append(
+                    RunDeletionFailure(run_id, "运行不在历史列表中")
+                )
+                continue
+            if summary.run_status is RunStatus.RUNNING:
+                failures.append(
+                    RunDeletionFailure(run_id, "运行正在进行中，不能删除")
+                )
+                continue
+            try:
+                self.deletions.delete_run(run_id)
+            except (OSError, ValueError) as error:
+                logger.warning("删除历史运行 %s 失败: %s", run_id, error)
+                failures.append(
+                    RunDeletionFailure(run_id, f"删除运行目录失败: {error}")
+                )
+            else:
+                logger.info("已删除历史运行 %s", run_id)
+                deleted.append(run_id)
+        return RunDeletionOutcome(tuple(deleted), tuple(failures))
 
     # -- 位置定位 -----------------------------------------------------------
 
@@ -140,6 +200,27 @@ class RunHistoryService:
                 )
             return summary
         raise RunHistoryRequestError(f"运行不在历史列表中: {run_id}")
+
+
+def _unique_run_ids(value: Any) -> tuple[str, ...]:
+    """把调用方输入规范成去重后的运行标识序列；结构非法时直接拒绝。"""
+    if isinstance(value, (str, bytes)):
+        raise RunHistoryRequestError(
+            "删除历史运行必须传入运行标识列表，而不是单个字符串"
+        )
+    try:
+        candidates = tuple(value)
+    except TypeError as error:
+        raise RunHistoryRequestError("删除历史运行必须传入运行标识列表") from error
+    if not candidates:
+        raise RunHistoryRequestError("删除历史运行必须至少指定一个运行标识")
+    unique: list[str] = []
+    for run_id in candidates:
+        if not isinstance(run_id, str) or not run_id.strip():
+            raise RunHistoryRequestError(f"运行标识不合法: {run_id!r}")
+        if run_id not in unique:
+            unique.append(run_id)
+    return tuple(unique)
 
 
 __all__ = ["RunHistoryRequestError", "RunHistoryService"]

@@ -786,6 +786,50 @@ class ConfigurationAuthoringServiceTests(unittest.TestCase):
         )
         self.assertEqual(document["signal_source"]["power_scan_plans"], plans)
 
+    def test_invalid_plan_elements_are_passed_through_for_formal_validation(self):
+        """非对象元素不能被改写成空计划对象：正式校验要按索引报告原始结构错误。"""
+        flat = _flat_config()
+        flat["signal_source"] = {"power_scan_plans": ["not-a-plan"]}
+
+        document = author_official_configuration(flat)
+
+        self.assertEqual(
+            document["test_plan"]["signal_source"]["power_scan_plans"],
+            ["not-a-plan"],
+        )
+        self.assertEqual(
+            document["signal_source"]["power_scan_plans"], ["not-a-plan"]
+        )
+
+    def test_plan_items_keep_unknown_fields_and_missing_keys(self):
+        """计划条目原样透传：未知字段与缺键都由正式校验按索引报告。"""
+        plan_with_unknown_field = {
+            "start_power": -10.0,
+            "step": 1.0,
+            "stop_power": 0.0,
+            "unit": "dBm",
+        }
+        incomplete_plan = {"start_power": -10.0}
+        flat = _flat_config()
+        flat["signal_source"] = {
+            "power_scan_plans": [plan_with_unknown_field, incomplete_plan]
+        }
+
+        document = author_official_configuration(flat)
+
+        self.assertEqual(
+            document["test_plan"]["signal_source"]["power_scan_plans"],
+            [plan_with_unknown_field, incomplete_plan],
+        )
+
+        result = ConfigurationAuthoringService().validate_document(
+            ConfigurationEditingDocument.from_mapping(flat)
+        )
+        paths = {issue.path for issue in result.errors}
+        self.assertIn("signal_source.power_scan_plans[0]", paths)
+        self.assertIn("signal_source.power_scan_plans[1].step", paths)
+        self.assertIn("signal_source.power_scan_plans[1].stop_power", paths)
+
     def test_plan_and_scalar_scan_fields_together_are_refused(self):
         flat = _flat_config()
         flat["signal_source"]["power_scan_plans"] = [

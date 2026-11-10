@@ -21,7 +21,9 @@ from application.configuration_view_model import (
     ConfigurationViewState,
     ConfigurationViewModel,
 )
+from application.configuration_draft import ConfigurationDraft
 from application.device_binding import ApplyDeviceSelectionRequest
+from application.dto.amplifier_inputs import PowerSweep
 from domain.measurement.values import Decibels, Frequency, PowerDbm
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -294,6 +296,60 @@ class ConfigurationTestParametersTests(unittest.TestCase):
             ConfigurationTestParameters(dut_supply_count=True)
         with self.assertRaises(TypeError):
             ConfigurationTestParameters(driver_enabled="yes")  # type: ignore[arg-type]
+
+    def test_from_draft_keeps_every_power_scan_plan(self):
+        """快照必须携带完整计划集合，不能只留下单段兼容属性。"""
+        draft = ConfigurationDraft(
+            sweeps=(
+                PowerSweep(
+                    start=PowerDbm(-38.0),
+                    stop=PowerDbm(-10.0),
+                    step=Decibels(1.0),
+                ),
+                PowerSweep(
+                    start=PowerDbm(-10.0),
+                    stop=PowerDbm(-2.0),
+                    step=Decibels(0.25),
+                ),
+            )
+        )
+
+        parameters = ConfigurationTestParameters.from_draft(draft)
+
+        self.assertEqual(parameters.sweeps, draft.sweeps)
+        # 多段计划没有单段兼容值，避免调用方把第一段当成全部。
+        self.assertIsNone(parameters.sweep)
+
+    def test_single_plan_keeps_the_compatibility_property(self):
+        sweep = PowerSweep(
+            start=PowerDbm(-30.0), stop=PowerDbm(-5.0), step=Decibels(0.5)
+        )
+
+        parameters = ConfigurationTestParameters(sweeps=(sweep,))
+
+        self.assertEqual(parameters.sweeps, (sweep,))
+        self.assertEqual(parameters.sweep, sweep)
+
+    def test_update_keeps_multiple_plans_instead_of_collapsing_to_one(self):
+        """回写测试参数不能把多段计划替换成空计划，也不能触发单段/多段冲突。"""
+        document = _config()
+        document["signal_source"] = {
+            "power_scan_plans": [
+                {"start_power": -38.0, "step": 1.0, "stop_power": -10.0},
+                {"start_power": -10.0, "step": 0.25, "stop_power": -2.0},
+            ]
+        }
+        view = _loaded(document)
+
+        state = view.update_test_parameters(
+            ConfigurationTestParameters.from_draft(view.draft)
+        )
+
+        self.assertEqual(len(state.draft.sweeps), 2)
+        self.assertIsNone(state.draft.sweep)
+        self.assertEqual(
+            [item.start.dbm for item in state.draft.sweeps], [-38.0, -10.0]
+        )
 
     def test_update_replaces_only_the_test_parameters_section(self):
         view = _loaded()

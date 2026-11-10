@@ -189,7 +189,8 @@ class ConfigurationTestParameters:
     """
 
     frequencies: tuple[Frequency, ...] = ()
-    sweep: PowerSweep | None = None
+    # 1.2 的功率扫描计划集合：唯一来源，顺序即执行顺序；空元组表示没有读到计划。
+    sweeps: tuple[PowerSweep, ...] = ()
     compression_target: Decibels | None = None
     attenuator: Decibels | None = None
     max_dut_input_power: PowerDbm | None = None
@@ -202,7 +203,7 @@ class ConfigurationTestParameters:
         # 参数的草稿：字段非法时它按同一规则抛 TypeError / ValueError，视图模型不再判断。
         ConfigurationDraft(
             frequencies=self.frequencies,
-            sweep=self.sweep,
+            sweeps=self.sweeps,
             compression_target=self.compression_target,
             attenuator=self.attenuator,
             max_dut_input_power=self.max_dut_input_power,
@@ -210,6 +211,15 @@ class ConfigurationTestParameters:
             driver_gain_estimate=self.driver_gain_estimate,
             dut_supply_count=self.dut_supply_count,
         )
+
+    @property
+    def sweep(self) -> PowerSweep | None:
+        """单段兼容读数：只有一段计划时返回该段，多段或没有计划时返回 ``None``。
+
+        新代码读写 :attr:`sweeps`。这个属性只为尚未迁移到多段的调用方保留，避免它们
+        把“第一段”误当成全部计划；多段计划在这里返回 ``None``，不会被静默截断。
+        """
+        return self.sweeps[0] if len(self.sweeps) == 1 else None
 
     @classmethod
     def from_draft(cls, draft: ConfigurationDraft) -> "ConfigurationTestParameters":
@@ -220,7 +230,7 @@ class ConfigurationTestParameters:
             )
         return cls(
             frequencies=draft.frequencies,
-            sweep=draft.sweep,
+            sweeps=draft.sweeps,
             compression_target=draft.compression_target,
             attenuator=draft.attenuator,
             max_dut_input_power=draft.max_dut_input_power,
@@ -242,10 +252,15 @@ class ConfigurationTestParameters:
         return cls.from_draft(result.draft), result.validation
 
     def fields(self) -> dict[str, Any]:
-        """返回可直接交给 :func:`dataclasses.replace` 的字段映射。"""
+        """返回可直接交给 :func:`dataclasses.replace` 的字段映射。
+
+        ``sweep`` 显式写成 ``None``：草稿里的单段兼容属性可能是上一份配置的回填值，
+        只替换 ``sweeps`` 会让它和新集合同时出现而触发“两个来源”的冲突检查。
+        """
         return {
             "frequencies": self.frequencies,
-            "sweep": self.sweep,
+            "sweep": None,
+            "sweeps": self.sweeps,
             "compression_target": self.compression_target,
             "attenuator": self.attenuator,
             "max_dut_input_power": self.max_dut_input_power,

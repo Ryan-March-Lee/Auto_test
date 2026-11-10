@@ -604,23 +604,15 @@ def _normalized_section(value: Any, section: str) -> Any:
 def _scan_plan_documents(value: Any) -> Any:
     """正式 ``test_plan`` 的功率扫描：只输出 ``power_scan_plans`` 列表。
 
-    值原样透传（不做截断、补点或默认段），结构/数值问题交给正式校验按索引报告；
-    缺失计划写 ``None`` 而不是伪造一段，避免把坏配置掩盖成“能用”。
+    值原样透传（不做截断、补点、补键或默认段）：对象条目只复制成普通字典，未知字段
+    保留，非对象元素原样保留；结构/数值问题交给正式校验按索引报告。把它们改写成
+    ``{start_power: None, step: None, stop_power: None}`` 会让“未知字段”“元素不是对象”
+    这类结构错误在正式校验前消失。缺失计划写 ``None`` 而不是伪造一段，避免把坏配置
+    掩盖成“能用”。
     """
     if not isinstance(value, (list, tuple)):
         return None
-    return [
-        {
-            "start_power": (
-                item.get("start_power") if isinstance(item, Mapping) else None
-            ),
-            "step": item.get("step") if isinstance(item, Mapping) else None,
-            "stop_power": (
-                item.get("stop_power") if isinstance(item, Mapping) else None
-            ),
-        }
-        for item in value
-    ]
+    return [dict(item) if isinstance(item, Mapping) else item for item in value]
 
 
 def _normalize_signal_source(values: dict[str, Any]) -> None:

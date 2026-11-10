@@ -399,6 +399,71 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
         # 合法段仍然可编辑，非法段不进入草稿。
         self.assertEqual(len(result.draft.sweeps), 1)
 
+    def test_plan_item_reports_missing_and_invalid_fields_together(self):
+        """一段计划的结构问题要一次报全，不能因为先发现缺键就跳过已存在字段。"""
+        document = _document()
+        document["signal_source"] = {
+            "power_scan_plans": [{"start_power": "bad"}]
+        }
+
+        result = ConfigurationDraft.from_document(document)
+
+        self.assertFalse(result.valid)
+        paths = {issue.path for issue in result.issues}
+        self.assertIn("signal_source.power_scan_plans[0].start_power", paths)
+        self.assertIn("signal_source.power_scan_plans[0].step", paths)
+        self.assertIn("signal_source.power_scan_plans[0].stop_power", paths)
+        self.assertEqual(result.draft.sweeps, ())
+
+    def test_plan_item_with_null_value_is_reported(self):
+        """键存在但值为 ``null`` 同样是结构错误，不能被当成“字段没提供”。"""
+        document = _document()
+        document["signal_source"] = {
+            "power_scan_plans": [
+                {"start_power": None, "step": 1.0, "stop_power": -16.0}
+            ]
+        }
+
+        result = ConfigurationDraft.from_document(document)
+
+        self.assertFalse(result.valid)
+        self.assertIn(
+            "signal_source.power_scan_plans[0].start_power",
+            {issue.path for issue in result.issues},
+        )
+        self.assertEqual(result.draft.sweeps, ())
+
+    def test_partial_legacy_scan_reports_the_missing_fields(self):
+        """旧标量是三字段整体形状：缺一个就不是完整计划，不能静默返回空扫描。"""
+        document = _document()
+        document["signal_source"] = {"start_power": -38.0, "step": 1.0}
+
+        result = ConfigurationDraft.from_document(document)
+
+        self.assertFalse(result.valid)
+        self.assertIn(
+            "signal_source.stop_power",
+            {issue.path for issue in result.issues},
+        )
+        self.assertEqual(result.draft.sweeps, ())
+
+    def test_legacy_scan_with_null_value_is_reported(self):
+        document = _document()
+        document["signal_source"] = {
+            "start_power": -38.0,
+            "stop_power": -16.0,
+            "step": None,
+        }
+
+        result = ConfigurationDraft.from_document(document)
+
+        self.assertFalse(result.valid)
+        self.assertIn(
+            "signal_source.step",
+            {issue.path for issue in result.issues},
+        )
+        self.assertEqual(result.draft.sweeps, ())
+
     def test_document_round_trip_keeps_current_key_shape(self):
         first = ConfigurationDraft.from_document(_document())
         document = first.draft.to_document()

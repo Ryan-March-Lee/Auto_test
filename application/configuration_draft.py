@@ -802,6 +802,52 @@ def _read_frequencies(
     return tuple(frequencies)
 
 
+def _read_plan_numbers(
+    values: Mapping[str, Any], path: str, issues: list[ValidationIssue]
+) -> dict[str, float] | None:
+    """读取一段功率扫描的三个数值；缺键与非法值逐个报告。
+
+    三个字段都是必需字段：缺键不是“可选字段缺失”，显式 ``null`` 也不是“有限数值”。
+    两者都不能让一段计划在没有提示的情况下从草稿里消失；已存在的字段仍逐个检查，
+    让用户一次看到这一段的全部问题，而不是修一个再发现一个。
+    """
+    numbers: dict[str, float] = {}
+    for key in ("start_power", "step", "stop_power"):
+        field_path = f"{path}.{key}"
+        if key not in values:
+            issues.append(_issue(field_path, _CODE_INVALID_SWEEP, "缺少必需字段"))
+            continue
+        raw = values.get(key)
+        if raw is None:
+            # ``_finite_number`` 把 None 当成“字段未提供”静默返回；这里字段已经存在，
+            # 值却是 null，必须显式报错。
+            issues.append(_issue(field_path, _CODE_INVALID_NUMBER, "必须是有限数值"))
+            continue
+        number = _finite_number(raw, field_path, issues)
+        if number is None:
+            continue
+        numbers[key] = number
+    return numbers if len(numbers) == 3 else None
+
+
+def _read_sweep(
+    values: Mapping[str, Any], path: str, issues: list[ValidationIssue]
+) -> PowerSweep | None:
+    """读取一段功率扫描；结构或数值无效时返回 ``None``，不产出半段计划。"""
+    numbers = _read_plan_numbers(values, path, issues)
+    if numbers is None:
+        return None
+    try:
+        return PowerSweep(
+            start=PowerDbm(numbers["start_power"]),
+            stop=PowerDbm(numbers["stop_power"]),
+            step=Decibels(numbers["step"]),
+        )
+    except (TypeError, ValueError) as error:
+        issues.append(_issue(path, _CODE_INVALID_SWEEP, str(error)))
+        return None
+
+
 def _read_sweeps(
     value: Any, issues: list[ValidationIssue]
 ) -> tuple[PowerSweep, ...]:
@@ -863,46 +909,16 @@ def _read_sweeps(
                     )
                 )
                 continue
-            missing = [
-                key for key in ("start_power", "step", "stop_power") if key not in item
-            ]
-            if missing:
-                # 缺键不是“数值缺失”：不报出来会让一段计划在没有提示的情况下消失。
-                for key in missing:
-                    issues.append(
-                        _issue(f"{path}.{key}", _CODE_INVALID_SWEEP, "缺少必需字段")
-                    )
-                continue
-            start = _finite_number(item.get("start_power"), f"{path}.start_power", issues)
-            step = _finite_number(item.get("step"), f"{path}.step", issues)
-            stop = _finite_number(item.get("stop_power"), f"{path}.stop_power", issues)
-            if start is None or step is None or stop is None:
-                continue
-            try:
-                sweeps.append(
-                    PowerSweep(
-                        start=PowerDbm(start), stop=PowerDbm(stop), step=Decibels(step)
-                    )
-                )
-            except (TypeError, ValueError) as error:
-                issues.append(_issue(path, _CODE_INVALID_SWEEP, str(error)))
+            sweep = _read_sweep(item, path, issues)
+            if sweep is not None:
+                sweeps.append(sweep)
         return tuple(sweeps)
     if not scalar_keys:
         return ()
-    start = _finite_number(section.get("start_power"), "signal_source.start_power", issues)
-    stop = _finite_number(section.get("stop_power"), "signal_source.stop_power", issues)
-    step = _finite_number(section.get("step"), "signal_source.step", issues)
-    if start is None or stop is None or step is None:
-        return ()
-    try:
-        return (
-            PowerSweep(
-                start=PowerDbm(start), stop=PowerDbm(stop), step=Decibels(step)
-            ),
-        )
-    except (TypeError, ValueError) as error:
-        issues.append(_issue("signal_source", _CODE_INVALID_SWEEP, str(error)))
-        return ()
+    # 旧标量是三字段整体形状：缺一个就不是完整计划，同样在读取边界报告，
+    # 不能因为另外两个字段存在就静默返回空扫描。
+    sweep = _read_sweep(section, "signal_source", issues)
+    return (sweep,) if sweep is not None else ()
 
 
 def _read_power_reference(

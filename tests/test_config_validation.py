@@ -345,10 +345,11 @@ class OfficialConfigFileValidationTests(unittest.TestCase):
         self.assertTrue(result.valid, result.errors)
 
     def test_shipped_fixture_uses_only_the_current_1_2_format(self):
-        """步骤 5.4：随仓库交付的样例只写 1.2，旧标量只出现在兼容测试的内联文档里。
+        """步骤 5.4：这份随仓库交付的配置样例只写 1.2。
 
-        样例同时展示“粗扫 + 细扫”两段，因此不能退化成单段；三段版本号必须一致，
-        否则文件级校验会按混合文档处理。
+        旧标量只保留在兼容测试的内联文档与专门的 1.1 迁移输入样例里，不再作为“当前
+        样例”交付。样例同时展示“粗扫 + 细扫”两段，因此不能退化成单段；三段版本号必须
+        一致，否则文件级校验会按混合文档处理。
         """
         self.assertEqual(self.base_config["schema_version"], "1.2")
         self.assertEqual(self.base_config["test_plan"]["schema_version"], "1.2")

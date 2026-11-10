@@ -127,6 +127,51 @@ class RunArtifactSummary:
             raise ValueError("只有 completed 产物才可能报告文件缺失")
 
 
+class ResultReportState(str, Enum):
+    """一条历史结果能否打开它所属运行的最终报告。"""
+
+    AVAILABLE = "available"
+    NOT_APPLICABLE = "not_applicable"
+    MISSING = "missing"
+    UNAVAILABLE = "unavailable"
+
+
+@dataclass(frozen=True)
+class ResultReportLocation:
+    """按历史结果定位归档报告的结构化结果。
+
+    页面只消费状态与位置：``AVAILABLE`` 时 ``location`` 必须是可打开的非空位置；
+    其它状态由 ``reason`` 说明原因，页面据此生成用户文案。
+    """
+
+    result_id: str
+    state: ResultReportState
+    location: str | None = None
+    reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.result_id, str) or not self.result_id.strip():
+            raise ValueError("结果报告定位必须携带结果标识")
+        state = (
+            self.state
+            if isinstance(self.state, ResultReportState)
+            else ResultReportState(self.state)
+        )
+        object.__setattr__(self, "state", state)
+        if self.location is not None and (
+            not isinstance(self.location, str) or not self.location.strip()
+        ):
+            raise ValueError("报告位置必须是非空字符串或 None")
+        if self.reason is not None and (
+            not isinstance(self.reason, str) or not self.reason.strip()
+        ):
+            raise ValueError("报告不可用原因必须是非空字符串或 None")
+        if state is ResultReportState.AVAILABLE and self.location is None:
+            raise ValueError("可用的报告定位必须给出位置")
+        if state is not ResultReportState.AVAILABLE and self.location is not None:
+            raise ValueError("不可用的报告定位不能携带位置")
+
+
 @dataclass(frozen=True)
 class RunHistorySummary:
     """一次历史运行的只读摘要：运行状态、阶段与交付产物状态。
@@ -245,6 +290,8 @@ def _artifacts(value: Any) -> tuple[RunArtifactSummary, ...]:
 
 
 __all__ = [
+    "ResultReportLocation",
+    "ResultReportState",
     "RunArchiveState",
     "RunArtifactSummary",
     "RunHistorySummary",

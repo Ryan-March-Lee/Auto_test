@@ -1,4 +1,4 @@
-"""历史结果加载、频率浏览与“另存为”入口。
+"""历史结果加载、频率浏览、最终报告查看与“另存为”入口。
 
 页面只渲染控件并把用户动作转发出去：
 
@@ -6,6 +6,9 @@
   不访问文件路径；加载时通过“选择历史结果”对话框列出可选结果（见
   ``history_result_dialog``）；
 - 绘图数据由视图模型一次性从正式结果 DTO 的显式属性构建；
+- “打开测试报告”只针对**当前已加载结果**：页面把结果标识交给
+  ``RunHistoryServicePort.report_for_result()``，由应用层定位同一次运行归档的最终
+  报告，页面不解析结果标识、不判断产物类型；
 - “另存为”只针对**当前已加载结果**：页面把结果标识交给
   ``ResultExportServicePort`` 执行 ``ExportRequest``（JSON / CSV / 测试报告由菜单选择），
   不再自己调用报告服务，也不再在未加载结果时回退到“最新结果”。
@@ -15,7 +18,8 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
@@ -35,7 +39,11 @@ from application.dto.export_requests import (
     ExportOutcome,
     ExportRequest,
 )
-from application.ports.gui_data_service import ResultExportServicePort
+from application.dto.run_history import ResultReportLocation, ResultReportState
+from application.ports.gui_data_service import (
+    ResultExportServicePort,
+    RunHistoryServicePort,
+)
 from .history_result_dialog import HistoryResultDialog
 from .history_view_model import (
     HistoryViewModel,
@@ -55,6 +63,10 @@ _SAVE_AS_ACTIONS = (
     ("CSV…", ExportFormat.CSV),
     ("测试报告…", ExportFormat.REPORT),
 )
+_REPORT_HINT_UNLOADED = "请先加载一条历史结果"
+_REPORT_HINT_READY = "打开这次运行归档的最终报告"
+_REPORT_HINT_NO_SERVICE = "未装配历史运行服务，无法打开测试报告"
+_REPORT_HINT_NO_REPORT = "当前结果没有可打开的最终报告"
 
 __all__ = [
     "VisualizationPage",
@@ -96,6 +108,7 @@ class VisualizationPage(QWidget):
         history: HistoryViewModel,
         chooser: Callable[[], Any] | None = None,
         export_service: ResultExportServicePort | None = None,
+        run_history_service: RunHistoryServicePort | None = None,
         log_callback: Callable[[str], Any] | None = None,
         parent=None,
     ):
@@ -105,10 +118,17 @@ class VisualizationPage(QWidget):
             getattr(export_service, "execute", None)
         ):
             raise TypeError("导出必须走导出用例的 execute(request)")
+        if run_history_service is not None and not callable(
+            getattr(run_history_service, "report_for_result", None)
+        ):
+            raise TypeError(
+                "打开测试报告必须走历史运行服务的 report_for_result(result_id)"
+            )
         super().__init__(parent)
         self.history = history
         self.chooser = chooser
         self.export_service = export_service
+        self.run_history_service = run_history_service
         self.log_callback = log_callback or (lambda _message: None)
         self._build_ui()
 
@@ -169,6 +189,14 @@ class VisualizationPage(QWidget):
         set_button_variant(self.load_data_btn, "primary")
         self.load_data_btn.clicked.connect(lambda _checked=False: self.load_test_data())
         toolbar.addWidget(self.load_data_btn)
+        self.open_report_button = QPushButton("打开测试报告")
+        set_button_variant(self.open_report_button, "secondary")
+        self.open_report_button.setToolTip(_REPORT_HINT_UNLOADED)
+        self.open_report_button.setEnabled(False)
+        self.open_report_button.clicked.connect(
+            lambda _checked=False: self.open_test_report()
+        )
+        toolbar.addWidget(self.open_report_button)
         self.save_as_button = QPushButton("另存为…")
         set_button_variant(self.save_as_button, "secondary")
         self.save_as_button.setToolTip(
@@ -204,8 +232,8 @@ class VisualizationPage(QWidget):
         control_layout.addLayout(toolbar)
 
         self.hint_label = QLabel(
-            "结果与报告在测试完成时自动归档；这里只浏览历史结果，"
-            "“另存为…”仅针对当前已加载结果。"
+            "结果与报告在测试完成时自动归档；这里可以加载历史结果动态查看、"
+            "打开归档的最终报告，或用“另存为…”获取 JSON / CSV / 报告副本。"
         )
         self.hint_label.setProperty("role", "hint")
         self.hint_label.setWordWrap(True)
@@ -215,8 +243,36 @@ class VisualizationPage(QWidget):
         self.data_plot_widget = RealTimePlotWidget()
         layout.addWidget(self.data_plot_widget, 1)
 
+    def on_activated(self):
+        """页面可见时重新校验报告可用性：报告可能在历史运行页重新生成。"""
+        self._refresh_report_button()
+
     def _log(self, message: str):
         self.log_callback(message)
+
+    def _refresh_report_button(self) -> ResultReportLocation | None:
+        """按当前已加载结果刷新“打开测试报告”：页面只消费应用层状态。"""
+        loaded = self.history.loaded
+        self.open_report_button.setEnabled(False)
+        if loaded is None:
+            self.open_report_button.setToolTip(_REPORT_HINT_UNLOADED)
+            return None
+        if self.run_history_service is None:
+            self.open_report_button.setToolTip(_REPORT_HINT_NO_SERVICE)
+            return None
+        try:
+            report = self.run_history_service.report_for_result(loaded.result_id)
+        except (OSError, ValueError, RuntimeError) as error:
+            self.open_report_button.setToolTip(f"无法定位测试报告: {error}")
+            return None
+        if report.state is ResultReportState.AVAILABLE and report.location:
+            self.open_report_button.setEnabled(True)
+            self.open_report_button.setToolTip(_REPORT_HINT_READY)
+        else:
+            self.open_report_button.setToolTip(
+                report.reason or _REPORT_HINT_NO_REPORT
+            )
+        return report
 
     def _set_empty_state(self, message: str):
         self.history.clear()
@@ -227,6 +283,8 @@ class VisualizationPage(QWidget):
         self.freq_prev_btn.setEnabled(False)
         self.freq_next_btn.setEnabled(False)
         self.save_as_button.setEnabled(False)
+        self.open_report_button.setEnabled(False)
+        self.open_report_button.setToolTip(_REPORT_HINT_UNLOADED)
 
     # -- 用户动作 -----------------------------------------------------------
 
@@ -240,6 +298,7 @@ class VisualizationPage(QWidget):
             self.update_frequency_display()
             self.display_current_frequency_data()
             self.save_as_button.setEnabled(True)
+            self._refresh_report_button()
             self._log(
                 f"已加载{view.label}数据: {view.filename}（结果 {view.result_id}）"
             )
@@ -261,6 +320,41 @@ class VisualizationPage(QWidget):
         if dialog.exec() != QDialog.Accepted:
             return None
         return dialog.loaded_result
+
+    def open_test_report(self) -> bool:
+        """打开当前加载结果所属运行归档的最终测试报告。
+
+        点击时重新向应用层定位一次，避免报告在别处被删除后仍按旧状态打开；页面不解析
+        结果标识、不判断文件类型，也不拼接报告路径。
+        """
+        loaded = self.history.loaded
+        if loaded is None:
+            QMessageBox.warning(self, "打开测试报告", _REPORT_HINT_UNLOADED)
+            return False
+        if self.run_history_service is None:
+            QMessageBox.warning(self, "打开测试报告", _REPORT_HINT_NO_SERVICE)
+            return False
+        try:
+            report = self.run_history_service.report_for_result(loaded.result_id)
+        except (OSError, ValueError, RuntimeError) as error:
+            self._log(f"无法定位测试报告: {error}")
+            QMessageBox.warning(self, "无法打开", f"无法定位测试报告: {error}")
+            self._refresh_report_button()
+            return False
+        if report.state is not ResultReportState.AVAILABLE or not report.location:
+            message = report.reason or _REPORT_HINT_NO_REPORT
+            self._log(f"无法打开测试报告: {message}")
+            QMessageBox.warning(self, "无法打开", message)
+            self._refresh_report_button()
+            return False
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(report.location)):
+            self._log(f"系统无法打开测试报告: {report.location}")
+            QMessageBox.warning(
+                self, "无法打开", f"系统无法打开测试报告: {report.location}"
+            )
+            return False
+        self._log(f"已打开测试报告: {report.location}")
+        return True
 
     def update_frequency_display(self):
         frequency = self.history.current_frequency

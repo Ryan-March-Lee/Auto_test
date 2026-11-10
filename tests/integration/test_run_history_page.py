@@ -34,12 +34,14 @@ from application.dto.archival import (
     ArchivedArtifact,
 )
 from application.dto.run_history import (
+    ResultReportState,
     RunArchiveState,
     RunArtifactSummary,
     RunHistorySummary,
     RunStageSummary,
 )
-from application.ports.gui_data_service import ResultFileDto
+from application.dto import measurement_result_from_document
+from application.ports.gui_data_service import LoadedResultDto, ResultFileDto
 from application.ports.result_artifacts import ArtifactGenerationError
 from application.run_history_service import RunHistoryRequestError, RunHistoryService
 from application.run_stages import RunStageRecorder
@@ -54,12 +56,14 @@ from domain.run.models import (
     StageStatus,
 )
 from infrastructure.filesystem.paths import PathService
+from infrastructure.gui_data_service import ResultQueryAdapter
 from infrastructure.persistence import artifact_generator
 from infrastructure.persistence.artifact_generator import ArchiveArtifactGenerator
 from infrastructure.persistence.run_history_repository import FileRunHistoryRepository
 from infrastructure.persistence.run_repository import RunRepository
 from presentation.qt.run_history_page import RunHistoryPage
 from presentation.qt.history_view_model import HistoryViewModel, RunHistoryRow
+from presentation.qt.visualization_page import VisualizationPage
 
 
 RUN_ID = "20261028T010203Z_abcdef12"
@@ -379,6 +383,157 @@ class RunHistoryServiceTests(unittest.TestCase):
             RunHistoryService(statuses=object())
         with self.assertRaises(TypeError):
             RunHistoryService(statuses=StaticStatusPort([]), archival=object())
+
+
+class StaticResultsPort:
+    """固定返回一条历史结果及其已加载 DTO 的查询替身。"""
+
+    def __init__(self, rows=(), loaded=None):
+        self.rows = tuple(rows)
+        self.loaded = dict(loaded or {})
+
+    def list_results(self):
+        return list(self.rows)
+
+    def load(self, result_id):
+        if result_id not in self.loaded:
+            raise FileNotFoundError(result_id)
+        return self.loaded[result_id]
+
+
+class StaticLocationPort:
+    """记录产物定位调用的位置端口替身。"""
+
+    def __init__(self, target=None):
+        self.target = target
+        self.calls = []
+
+    def run_directory(self, run_id):
+        return f"/runs/{run_id}"
+
+    def artifact_location(self, run_id, kind, *, source_result=None):
+        self.calls.append((run_id, kind, source_result))
+        return self.target
+
+
+class ResultReportLocationTests(unittest.TestCase):
+    """按已加载结果定位归档报告：页面只消费结构化状态。"""
+
+    def _row(self, result_id, filename, source_result):
+        return ResultFileDto(
+            result_id=result_id,
+            filename=filename,
+            file_type="功放测试",
+            modified_at=CREATED_AT,
+            run_id=RUN_ID,
+            source_result=source_result,
+        )
+
+    def _amplifier(self):
+        return LoadedResultDto(
+            f"run::{RUN_ID}::{AMPLIFIER_RESULT_PATH}",
+            "amplifier_measurement.json",
+            measurement_result_from_document(_amplifier_payload()),
+            run_id=RUN_ID,
+            source_result=AMPLIFIER_RESULT_PATH,
+        )
+
+    def _cable_loss(self):
+        return LoadedResultDto(
+            f"run::{RUN_ID}::inputs/cable_loss.json",
+            "cable_loss.json",
+            measurement_result_from_document(
+                {
+                    "run_id": RUN_ID,
+                    "measurement_type": "cable_loss",
+                    "status": "completed",
+                    "cable_losses": {"1.0": {"cable1": 1.0}},
+                }
+            ),
+            run_id=RUN_ID,
+            source_result="inputs/cable_loss.json",
+        )
+
+    def test_amplifier_result_locates_the_matching_archived_report(self):
+        loaded = self._amplifier()
+        location = StaticLocationPort("/runs/report/artifacts/amplifier_report.html")
+        service = RunHistoryService(
+            statuses=StaticStatusPort([_summary()]),
+            locations=location,
+            results=StaticResultsPort(
+                [self._row(loaded.result_id, loaded.filename, loaded.source_result)],
+                {loaded.result_id: loaded},
+            ),
+        )
+
+        report = service.report_for_result(loaded.result_id)
+
+        self.assertIs(report.state, ResultReportState.AVAILABLE)
+        self.assertEqual(report.location, location.target)
+        self.assertEqual(
+            location.calls, [(RUN_ID, ArtifactKind.REPORT, AMPLIFIER_RESULT_PATH)]
+        )
+
+    def test_non_amplifier_result_is_not_applicable_and_does_not_look_up_a_report(self):
+        loaded = self._cable_loss()
+        location = StaticLocationPort("/runs/report/artifacts/amplifier_report.html")
+        service = RunHistoryService(
+            statuses=StaticStatusPort([_summary()]),
+            locations=location,
+            results=StaticResultsPort(
+                [self._row(loaded.result_id, loaded.filename, loaded.source_result)],
+                {loaded.result_id: loaded},
+            ),
+        )
+
+        report = service.report_for_result(loaded.result_id)
+
+        self.assertIs(report.state, ResultReportState.NOT_APPLICABLE)
+        self.assertIsNone(report.location)
+        self.assertIn("主功放", report.reason)
+        self.assertEqual(location.calls, [])
+
+    def test_missing_archived_report_is_a_user_visible_state(self):
+        loaded = self._amplifier()
+        service = RunHistoryService(
+            statuses=StaticStatusPort([_summary()]),
+            locations=StaticLocationPort(None),
+            results=StaticResultsPort(
+                [self._row(loaded.result_id, loaded.filename, loaded.source_result)],
+                {loaded.result_id: loaded},
+            ),
+        )
+
+        report = service.report_for_result(loaded.result_id)
+
+        self.assertIs(report.state, ResultReportState.MISSING)
+        self.assertIsNone(report.location)
+        self.assertIn("另存为", report.reason)
+
+    def test_unknown_result_is_rejected(self):
+        service = RunHistoryService(
+            statuses=StaticStatusPort([_summary()]),
+            locations=StaticLocationPort("/runs/report.html"),
+            results=StaticResultsPort(),
+        )
+
+        with self.assertRaisesRegex(RunHistoryRequestError, "不在历史列表中"):
+            service.report_for_result("run::missing::results/amplifier_measurement.json")
+
+    def test_missing_location_port_is_reported_as_unavailable(self):
+        loaded = self._amplifier()
+        service = RunHistoryService(
+            statuses=StaticStatusPort([_summary()]),
+            results=StaticResultsPort(
+                [self._row(loaded.result_id, loaded.filename, loaded.source_result)],
+                {loaded.result_id: loaded},
+            ),
+        )
+
+        report = service.report_for_result(loaded.result_id)
+
+        self.assertIs(report.state, ResultReportState.UNAVAILABLE)
+        self.assertIn("位置入口", report.reason)
 
 
 # -- 基础设施：manifest 摘要 ----------------------------------------------
@@ -841,36 +996,83 @@ class RunHistoryPageTests(unittest.TestCase):
         page.run_table.setCurrentCell(0, 0)
         self.assertTrue(page.regenerate_button.isEnabled())
 
-    def test_page_opens_the_selected_run_directory_and_report(self):
-        """历史页承接“打开运行目录/报告”：页面只消费应用层给出的位置。"""
+    def test_page_opens_the_selected_run_directory(self):
+        """历史页只承接“打开运行目录”：报告查看已移到数据可视化页。"""
         self._complete_amplifier_run()
         self._archive(ArchiveArtifactGenerator(self.runs))
         page = self._page()
         page.run_table.setCurrentCell(0, 0)
 
         self.assertTrue(page.open_run_dir_button.isEnabled())
-        self.assertTrue(page.open_report_button.isEnabled())
+        self.assertFalse(hasattr(page, "open_report_button"))
+        self.assertFalse(hasattr(page, "open_test_report"))
         with patch(
             "presentation.qt.run_history_page.QDesktopServices.openUrl",
             return_value=True,
         ) as open_url:
             self.assertTrue(page.open_run_directory())
-            self.assertTrue(page.open_test_report())
 
         opened = [Path(call.args[0].toLocalFile()) for call in open_url.call_args_list]
-        run_directory = self.runs.layout(RUN_ID).run_directory
-        self.assertEqual(opened[0], run_directory)
-        self.assertEqual(opened[1], run_directory / "artifacts" / "amplifier_report.html")
+        self.assertEqual(opened, [self.runs.layout(RUN_ID).run_directory])
 
-    def test_page_without_report_disables_the_report_action(self):
-        self._complete_cable_loss_run()
-        page = self._page()
-        page.run_table.setCurrentCell(0, 0)
+    def test_artifact_location_matches_the_requested_source_result(self):
+        """同一运行有多份产物时，按来源结果精确匹配而不是取第一份。"""
+        self._complete_amplifier_run()
+        self._archive(ArchiveArtifactGenerator(self.runs))
+        report_path = (
+            self.runs.layout(RUN_ID).run_directory
+            / "artifacts"
+            / "amplifier_report.html"
+        )
 
-        self.assertTrue(page.open_run_dir_button.isEnabled())
-        self.assertFalse(page.open_report_button.isEnabled())
-        self.assertFalse(page.open_test_report())
-        self.warning_dialog.assert_called_once()
+        self.assertEqual(
+            self.history.artifact_location(
+                RUN_ID,
+                ArtifactKind.REPORT,
+                source_result=AMPLIFIER_RESULT_PATH,
+            ),
+            str(report_path),
+        )
+        self.assertIsNone(
+            self.history.artifact_location(
+                RUN_ID,
+                ArtifactKind.REPORT,
+                source_result="results/other.json",
+            )
+        )
+
+    def test_visualization_page_opens_the_report_archived_for_the_loaded_result(self):
+        """数据可视化页按已加载结果打开同一次运行的归档报告。"""
+        self._complete_amplifier_run()
+        self._archive(ArchiveArtifactGenerator(self.runs))
+        query = ResultQueryAdapter(self.paths, run_history=self.history)
+        service = RunHistoryService(
+            statuses=self.history,
+            locations=self.history,
+            results=query,
+        )
+        loaded = query.load(query.list_results()[0].result_id)
+        page = VisualizationPage(
+            history=HistoryViewModel(query),
+            chooser=lambda: loaded,
+            run_history_service=service,
+            log_callback=lambda _message: None,
+        )
+
+        self.assertTrue(page.load_test_data())
+        self.assertTrue(page.open_report_button.isEnabled())
+        with patch(
+            "presentation.qt.visualization_page.QDesktopServices.openUrl",
+            return_value=True,
+        ) as open_url:
+            self.assertTrue(page.open_test_report())
+
+        self.assertEqual(
+            Path(open_url.call_args.args[0].toLocalFile()),
+            self.runs.layout(RUN_ID).run_directory
+            / "artifacts"
+            / "amplifier_report.html",
+        )
 
     def test_refresh_updates_the_run_table_after_measurement(self):
         """测量完成后调用一次 refresh()，运行表要更新到最新状态。"""

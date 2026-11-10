@@ -61,7 +61,6 @@ _DYNAMIC_STATE_WIDGETS = frozenset(
         "self.run_empty_hint",
         "self.regenerate_button",
         "self.open_run_dir_button",
-        "self.open_report_button",
         "self.delete_runs_button",
     }
 )
@@ -83,7 +82,6 @@ class _StaticRuns:
 def _summary(
     *,
     can_regenerate: bool = True,
-    report_completed: bool = False,
     run_id: str = RUN_ID,
     run_status: RunStatus = RunStatus.COMPLETED,
 ) -> RunHistorySummary:
@@ -96,15 +94,6 @@ def _summary(
                 source_result=AMPLIFIER_RESULT_PATH,
                 stage=STAGE_AMPLIFIER,
                 error="磁盘已满",
-            ),
-        )
-    if report_completed:
-        artifacts = artifacts + (
-            RunArtifactSummary(
-                ArtifactKind.REPORT,
-                ArtifactStatus.COMPLETED,
-                source_result=AMPLIFIER_RESULT_PATH,
-                stage=STAGE_AMPLIFIER,
             ),
         )
     return RunHistorySummary(
@@ -262,20 +251,12 @@ class RunHistoryPageStateTests(unittest.TestCase):
             .can_regenerate
         )
 
-    def test_open_actions_follow_the_selected_run(self):
-        row = RunHistoryRow.from_summary(
-            _summary(can_regenerate=False, report_completed=True)
-        )
-        state = RunHistoryPageState(selected_run=row)
-
-        self.assertTrue(state.can_open_directory)
-        self.assertTrue(state.can_open_report)
-
-        no_report = RunHistoryPageState(
+    def test_open_directory_follows_the_selected_run(self):
+        state = RunHistoryPageState(
             selected_run=RunHistoryRow.from_summary(_summary(can_regenerate=False))
         )
-        self.assertTrue(no_report.can_open_directory)
-        self.assertFalse(no_report.can_open_report)
+
+        self.assertTrue(state.can_open_directory)
 
     def test_delete_follows_all_selected_runs(self):
         terminal = _run_row()
@@ -317,7 +298,6 @@ class RunHistoryPageRenderingTests(unittest.TestCase):
         self.assertFalse(page.run_empty_hint.isHidden())
         self.assertFalse(page.regenerate_button.isEnabled())
         self.assertFalse(page.open_run_dir_button.isEnabled())
-        self.assertFalse(page.open_report_button.isEnabled())
 
     def test_run_table_is_a_read_only_display_panel(self):
         page = _page(summaries=[_summary()])

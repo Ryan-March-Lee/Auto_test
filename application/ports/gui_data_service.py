@@ -10,7 +10,7 @@ from application.dto.archival import ArchivalOutcome
 from application.dto.export_requests import ExportOutcome, ExportRequest
 from application.dto.measurement_results import MeasurementResult
 from application.dto.run_deletion import RunDeletionOutcome
-from application.dto.run_history import RunHistorySummary
+from application.dto.run_history import ResultReportLocation, RunHistorySummary
 from domain.run.models import ArtifactKind
 
 
@@ -26,6 +26,9 @@ class ResultFileDto:
     modified_at: datetime
     source: str = RESULT_SOURCE_RUN
     run_id: str | None = None
+    # 结果在运行目录内的相对路径；按结果定位同一次运行的交付产物时使用，
+    # 不是文件系统绝对路径，页面仍然只拿结果标识。
+    source_result: str | None = None
 
 
 @dataclass(frozen=True)
@@ -40,6 +43,10 @@ class LoadedResultDto:
     result_id: str
     filename: str
     result: MeasurementResult
+    # 已加载结果所属运行与运行内相对路径：报告定位只按这两个事实查产物，
+    # 页面不解析 ``result_id``，也不接触文件系统路径。
+    run_id: str | None = None
+    source_result: str | None = None
 
 
 class ConfigurationPort(Protocol):
@@ -116,8 +123,18 @@ class RunLocationPort(Protocol):
         """返回已登记运行的本地目录。"""
         ...
 
-    def artifact_location(self, run_id: str, kind: ArtifactKind) -> str | None:
-        """返回已登记运行中某类交付产物的本地位置；没有该产物时返回 ``None``。"""
+    def artifact_location(
+        self,
+        run_id: str,
+        kind: ArtifactKind,
+        *,
+        source_result: str | None = None,
+    ) -> str | None:
+        """返回已登记运行中某类交付产物的本地位置；没有该产物时返回 ``None``。
+
+        ``source_result`` 给出运行内相对路径时只匹配该来源结果的产物，避免同一运行
+        有多个同类产物时打开错误的一份。
+        """
         ...
 
 
@@ -162,8 +179,22 @@ class RunHistoryServicePort(Protocol):
         """返回历史运行的本地目录；未装配位置入口或运行不可用时明确失败。"""
         ...
 
-    def artifact_location(self, run_id: str, kind: ArtifactKind) -> str | None:
+    def artifact_location(
+        self,
+        run_id: str,
+        kind: ArtifactKind,
+        *,
+        source_result: str | None = None,
+    ) -> str | None:
         """返回历史运行中某类交付产物的本地位置；没有可用产物时返回 ``None``。"""
+        ...
+
+    def report_for_result(self, result_id: str) -> ResultReportLocation:
+        """按一条历史结果定位它所属运行的最终报告。
+
+        只返回结构化状态与位置：结果不生成报告、报告缺失或服务未装配时用状态区分，
+        页面不解析结果标识，也不判断文件类型或文件是否存在。
+        """
         ...
 
 

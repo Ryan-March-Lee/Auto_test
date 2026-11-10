@@ -22,6 +22,7 @@ from application.dto import (
     DriverPowerMappingMeasurementResult,
 )
 from application.dto.export_requests import ExportFormat, ExportOutcome
+from application.dto.run_history import ResultReportLocation, ResultReportState
 from application.ports.gui_data_service import LoadedResultDto
 from PySide6.QtWidgets import QDialog
 from presentation.qt.history_view_model import HistoryViewModel
@@ -94,6 +95,21 @@ class _RecordingExport:
         return self.outcome
 
 
+class _RecordingReportLocation:
+    """记录报告定位请求；按需返回结构化状态或抛出定位错误。"""
+
+    def __init__(self, report=None, *, error=None):
+        self.report = report
+        self.error = error
+        self.result_ids: list[str] = []
+
+    def report_for_result(self, result_id):
+        self.result_ids.append(result_id)
+        if self.error is not None:
+            raise self.error
+        return self.report
+
+
 class VisualizationPageTests(unittest.TestCase):
     def setUp(self):
         from PySide6.QtWidgets import QApplication
@@ -106,17 +122,24 @@ class VisualizationPageTests(unittest.TestCase):
             self.addCleanup(patcher.stop)
         self.logs: list[str] = []
 
-    def _page(self, *, chooser=None, export_service=None) -> VisualizationPage:
+    def _page(
+        self, *, chooser=None, export_service=None, run_history_service=None
+    ) -> VisualizationPage:
         return VisualizationPage(
             history=HistoryViewModel(_FakeQuery()),
             chooser=chooser,
             export_service=export_service,
+            run_history_service=run_history_service,
             log_callback=self.logs.append,
         )
 
-    def _page_with_loaded_result(self, export_service) -> VisualizationPage:
+    def _page_with_loaded_result(
+        self, export_service, *, run_history_service=None
+    ) -> VisualizationPage:
         page = self._page(
-            chooser=lambda: _amplifier_dto(), export_service=export_service
+            chooser=lambda: _amplifier_dto(),
+            export_service=export_service,
+            run_history_service=run_history_service,
         )
         self.assertTrue(page.load_test_data())
         return page
@@ -262,6 +285,119 @@ class VisualizationPageTests(unittest.TestCase):
 
         self.information_dialog.assert_not_called()
         self.warning_dialog.assert_called_once()
+
+    # -- 打开归档的最终报告 -------------------------------------------------
+
+    def test_report_button_starts_disabled_before_loading(self):
+        service = _RecordingReportLocation(
+            ResultReportLocation(
+                RESULT_ID,
+                ResultReportState.AVAILABLE,
+                location="reports/amplifier_report.html",
+            )
+        )
+        page = self._page(run_history_service=service)
+
+        self.assertFalse(page.open_report_button.isEnabled())
+        self.assertEqual(page.open_report_button.toolTip(), "请先加载一条历史结果")
+        self.assertEqual(service.result_ids, [])
+
+    def test_report_button_enables_for_the_loaded_amplifier_result(self):
+        report = ResultReportLocation(
+            RESULT_ID,
+            ResultReportState.AVAILABLE,
+            location="reports/amplifier_report.html",
+        )
+        service = _RecordingReportLocation(report)
+        page = self._page_with_loaded_result(None, run_history_service=service)
+
+        self.assertTrue(page.open_report_button.isEnabled())
+        self.assertEqual(service.result_ids, [RESULT_ID])
+
+    def test_report_button_stays_disabled_when_the_result_has_no_report(self):
+        report = ResultReportLocation(
+            RESULT_ID,
+            ResultReportState.NOT_APPLICABLE,
+            reason="只有主功放测试结果会生成测试报告",
+        )
+        service = _RecordingReportLocation(report)
+        page = self._page_with_loaded_result(None, run_history_service=service)
+
+        self.assertFalse(page.open_report_button.isEnabled())
+        self.assertIn("主功放", page.open_report_button.toolTip())
+
+    def test_open_report_opens_the_location_from_the_application_layer(self):
+        report = ResultReportLocation(
+            RESULT_ID,
+            ResultReportState.AVAILABLE,
+            location="reports/run/artifacts/amplifier_report.html",
+        )
+        page = self._page_with_loaded_result(
+            None, run_history_service=_RecordingReportLocation(report)
+        )
+
+        with patch(
+            "presentation.qt.visualization_page.QDesktopServices.openUrl",
+            return_value=True,
+        ) as open_url:
+            self.assertTrue(page.open_test_report())
+
+        self.assertEqual(
+            open_url.call_args.args[0].toLocalFile(),
+            "reports/run/artifacts/amplifier_report.html",
+        )
+        self.assertTrue(any("已打开测试报告" in line for line in self.logs))
+
+    def test_open_report_warns_and_disables_when_the_report_is_missing(self):
+        report = ResultReportLocation(
+            RESULT_ID,
+            ResultReportState.MISSING,
+            reason="该运行的报告未生成或文件缺失，可用“另存为 → 测试报告…”生成副本",
+        )
+        page = self._page_with_loaded_result(
+            None, run_history_service=_RecordingReportLocation(report)
+        )
+
+        self.assertFalse(page.open_test_report())
+        self.warning_dialog.assert_called_once()
+        self.assertIn("另存为", self.warning_dialog.call_args.args[2])
+        self.assertFalse(page.open_report_button.isEnabled())
+
+    def test_open_report_without_a_loaded_result_warns(self):
+        page = self._page()
+
+        self.assertFalse(page.open_test_report())
+        self.warning_dialog.assert_called_once()
+        self.assertIn("先加载", self.warning_dialog.call_args.args[2])
+
+    def test_open_report_without_a_report_service_warns(self):
+        page = self._page(chooser=lambda: _amplifier_dto())
+        self.assertTrue(page.load_test_data())
+
+        self.assertFalse(page.open_report_button.isEnabled())
+        self.assertFalse(page.open_test_report())
+        self.warning_dialog.assert_called_once()
+        self.assertIn("未装配历史运行服务", self.warning_dialog.call_args.args[2])
+
+    def test_page_activation_refreshes_report_availability(self):
+        service = _RecordingReportLocation(
+            ResultReportLocation(
+                RESULT_ID,
+                ResultReportState.MISSING,
+                reason="报告缺失",
+            )
+        )
+        page = self._page_with_loaded_result(None, run_history_service=service)
+        self.assertFalse(page.open_report_button.isEnabled())
+
+        service.report = ResultReportLocation(
+            RESULT_ID,
+            ResultReportState.AVAILABLE,
+            location="reports/amplifier_report.html",
+        )
+        page.on_activated()
+
+        self.assertTrue(page.open_report_button.isEnabled())
 
     # -- 选择历史结果 -------------------------------------------------------
 

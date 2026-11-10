@@ -423,10 +423,13 @@ class MainWindow(QMainWindow):
             history=HistoryViewModel(self.gui_data_service.results),
             # 另存为只有一个应用层实现：页面只提交“对哪条结果、哪种格式”的导出请求。
             export_service=self.gui_data_service.export_requests,
+            # 报告查看按已加载结果定位归档产物：页面不解析结果标识或路径。
+            run_history_service=self.gui_data_service.run_history,
             log_callback=self.add_log_message,
             parent=self,
         )
         self.load_data_btn = self.visualization_page.load_data_btn
+        self.open_report_button = self.visualization_page.open_report_button
         self.save_as_button = self.visualization_page.save_as_button
         self.save_as_menu = self.visualization_page.save_as_menu
         self.freq_prev_btn = self.visualization_page.freq_prev_btn

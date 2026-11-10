@@ -170,10 +170,8 @@ class RunHistoryRow:
     artifact_text: str
     problem_text: str = ""
     can_regenerate: bool = False
-    # 打开动作只跟随“运行可用 + 产物已生成且文件仍在”，页面据此启用按钮；
-    # 真正的路径解析由应用层的位置入口完成。
+    # 打开运行目录只跟随“运行可用”；真正的路径解析由应用层的位置入口完成。
     can_open_directory: bool = False
-    can_open_report: bool = False
     # 删除只跟随“不是进行中”：终态、损坏与结构不完整的运行都允许用户清理；
     # 进行中的运行目录可能仍在写入，页面与应用层都不允许删除。
     can_delete: bool = True
@@ -194,7 +192,6 @@ class RunHistoryRow:
             problem_text=_problem_text(summary),
             can_regenerate=summary.can_regenerate,
             can_open_directory=summary.browsable,
-            can_open_report=_completed_report_available(summary),
             can_delete=summary.run_status is not RunStatus.RUNNING,
         )
 
@@ -234,16 +231,6 @@ def _artifact_text(summary: RunHistorySummary) -> str:
     if not summary.artifacts:
         return "无交付产物"
     return "、".join(_artifact_entry_text(item) for item in summary.artifacts)
-
-
-def _completed_report_available(summary: RunHistorySummary) -> bool:
-    """历史页能否打开测试报告：报告已生成且文件没有被标记为缺失。"""
-    return any(
-        artifact.kind is ArtifactKind.REPORT
-        and artifact.status is ArtifactStatus.COMPLETED
-        and not artifact.missing
-        for artifact in summary.artifacts
-    )
 
 
 def _artifact_entry_text(item: RunArtifactSummary) -> str:

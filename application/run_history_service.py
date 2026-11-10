@@ -9,7 +9,10 @@
    受控路径，而不是另存副本（另存副本走 :class:`application.export_service.
    ResultExportUseCase`）；
 3. **删除用户选中的历史运行**：整目录删除，只接受历史列表中的运行标识；进行中的
-   运行明确拒绝，未知运行与单个删除失败按运行逐项返回，不影响同批次的其它运行。
+   运行明确拒绝，未知运行与单个删除失败按运行逐项返回，不影响同批次的其它运行；
+4. **按结果定位最终报告**：数据可视化页加载一条历史结果后，用例把结果映射到所属
+   运行，并按来源结果精确匹配该运行的归档报告，返回“可用 / 不适用 / 缺失 / 不可用”
+   的结构化状态。
 
 边界：
 
@@ -19,7 +22,8 @@
   导出与位置端口仍是只读的，删除能力不能从查询对象上“顺手”获得。
 - 用例不读文件、不拼路径、不生成页面文案：产物路径与失败原因都在
   :class:`application.dto.archival.ArchivalOutcome` 里，措辞由界面层生成；删除的
-  逐项失败原因由删除端口给出，页面负责展示。
+  逐项失败原因由删除端口给出，页面负责展示。报告定位同样只返回位置与原因，用户
+  可见文案属于页面。
 - 运行不可用、没有失败产物、未装配归档/删除服务或归档契约失败，统一抛出
   :class:`RunHistoryRequestError`；其它异常（端口实现缺陷）不在这里兜底。
 """
@@ -32,8 +36,13 @@ from typing import Any, Iterable
 from application.archival_service import ResultArchivalService
 from application.dto.archival import ArchivalOutcome, ArchivalRequest
 from application.dto.run_deletion import RunDeletionFailure, RunDeletionOutcome
-from application.dto.run_history import RunHistorySummary
+from application.dto.run_history import (
+    ResultReportLocation,
+    ResultReportState,
+    RunHistorySummary,
+)
 from application.ports.gui_data_service import (
+    ResultQueryPort,
     RunArchiveStatusPort,
     RunDeletionPort,
     RunLocationPort,
@@ -57,6 +66,7 @@ class RunHistoryService:
         archival: ResultArchivalService | None = None,
         locations: RunLocationPort | None = None,
         deletions: RunDeletionPort | None = None,
+        results: ResultQueryPort | None = None,
     ) -> None:
         if not callable(getattr(statuses, "list_run_summaries", None)):
             raise TypeError("历史运行服务需要状态端口提供 list_run_summaries()")
@@ -73,10 +83,18 @@ class RunHistoryService:
             getattr(deletions, "delete_run", None)
         ):
             raise TypeError("历史运行服务的删除入口必须提供 delete_run(run_id)")
+        if results is not None and (
+            not callable(getattr(results, "list_results", None))
+            or not callable(getattr(results, "load", None))
+        ):
+            raise TypeError(
+                "历史运行服务的结果查询入口必须提供 list_results() 与 load(result_id)"
+            )
         self.statuses = statuses
         self.archival = archival
         self.locations = locations
         self.deletions = deletions
+        self.results = results
 
     # -- 查询 ---------------------------------------------------------------
 
@@ -172,20 +190,109 @@ class RunHistoryService:
             raise RunHistoryRequestError(f"运行 {summary.run_id} 没有可打开的目录")
         return target
 
-    def artifact_location(self, run_id: str, kind: ArtifactKind) -> str | None:
+    def artifact_location(
+        self,
+        run_id: str,
+        kind: ArtifactKind,
+        *,
+        source_result: str | None = None,
+    ) -> str | None:
         """返回历史运行中某类交付产物的本地位置；没有可用产物时返回 ``None``。"""
         summary = self._require_run(run_id)
         if not isinstance(kind, ArtifactKind):
             raise RunHistoryRequestError(f"未知的交付产物类型: {kind!r}")
+        if source_result is not None and (
+            not isinstance(source_result, str) or not source_result.strip()
+        ):
+            raise RunHistoryRequestError("来源结果标识必须是非空字符串或 None")
         if self.locations is None:
             raise RunHistoryRequestError("未装配运行位置入口，无法打开交付产物")
         try:
-            target = self.locations.artifact_location(summary.run_id, kind)
+            target = self.locations.artifact_location(
+                summary.run_id, kind, source_result=source_result
+            )
         except (OSError, ValueError) as error:
             raise RunHistoryRequestError(
                 f"运行 {summary.run_id} 的{kind.value}产物位置不可用: {error}"
             ) from error
         return target if isinstance(target, str) and target.strip() else None
+
+    def report_for_result(self, result_id: str) -> ResultReportLocation:
+        """按历史结果定位所属运行的最终报告。
+
+        结果不在历史列表中属于调用错误，直接抛 :class:`RunHistoryRequestError`；
+        结果不生成报告、报告缺失或位置入口未装配属于可展示状态，用结构化结果返回。
+        """
+        if not isinstance(result_id, str) or not result_id.strip():
+            raise RunHistoryRequestError("打开测试报告必须指定历史结果标识")
+        if self.results is None:
+            return ResultReportLocation(
+                result_id,
+                ResultReportState.UNAVAILABLE,
+                reason="未装配历史结果查询，无法定位测试报告",
+            )
+        if self.locations is None:
+            return ResultReportLocation(
+                result_id,
+                ResultReportState.UNAVAILABLE,
+                reason="未装配运行位置入口，无法打开测试报告",
+            )
+        try:
+            rows = self.results.list_results()
+        except (OSError, ValueError) as error:
+            raise RunHistoryRequestError(f"无法读取历史结果列表: {error}") from error
+        row = next((item for item in rows if item.result_id == result_id), None)
+        if row is None:
+            raise RunHistoryRequestError(
+                f"结果不在历史列表中，无法打开测试报告: {result_id}"
+            )
+        if not row.run_id:
+            return ResultReportLocation(
+                result_id,
+                ResultReportState.UNAVAILABLE,
+                reason="历史结果没有登记所属运行，无法定位测试报告",
+            )
+        try:
+            loaded = self.results.load(result_id)
+        except (OSError, ValueError) as error:
+            return ResultReportLocation(
+                result_id,
+                ResultReportState.UNAVAILABLE,
+                reason=f"无法读取历史结果: {error}",
+            )
+        if not loaded.result.is_amplifier:
+            return ResultReportLocation(
+                result_id,
+                ResultReportState.NOT_APPLICABLE,
+                reason="只有主功放测试结果会生成测试报告",
+            )
+        try:
+            # 直接走只读位置端口：结果列表已经给出运行标识，不再重复读取全部运行摘要。
+            target = self.locations.artifact_location(
+                row.run_id,
+                ArtifactKind.REPORT,
+                source_result=row.source_result,
+            )
+        except (OSError, ValueError) as error:
+            return ResultReportLocation(
+                result_id,
+                ResultReportState.UNAVAILABLE,
+                reason=f"无法定位测试报告: {error}",
+            )
+        if target is None:
+            return ResultReportLocation(
+                result_id,
+                ResultReportState.MISSING,
+                reason=(
+                    "该运行的报告未生成或文件缺失，"
+                    "可用“另存为 → 测试报告…”生成副本"
+                ),
+            )
+        return ResultReportLocation(
+            result_id,
+            ResultReportState.AVAILABLE,
+            location=target,
+        )
 
     def _require_run(self, run_id: str) -> RunHistorySummary:
         """确认 ``run_id`` 是历史列表中可用的一次运行。"""

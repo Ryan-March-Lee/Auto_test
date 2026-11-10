@@ -165,6 +165,7 @@ class ResultQueryAdapter:
                         modified_at=entry.modified_at,
                         source=RESULT_SOURCE_RUN,
                         run_id=run.run_id,
+                        source_result=entry.result_id,
                     )
                 )
         return sorted(rows, key=lambda item: item.modified_at.timestamp(), reverse=True)
@@ -177,7 +178,13 @@ class ResultQueryAdapter:
         if expected is None:
             raise ValueError(f"结果不是正式测量结果类型: {relative_path}")
         result = self._load_verified(run_id, relative_path, expected)
-        return LoadedResultDto(result_id, Path(relative_path).name, result)
+        return LoadedResultDto(
+            result_id,
+            Path(relative_path).name,
+            result,
+            run_id=run_id,
+            source_result=relative_path,
+        )
 
     def read_bytes(self, result_id: str) -> bytes:
         """逐字节读取运行结果，供 JSON 导出使用。"""
@@ -218,7 +225,11 @@ class ResultQueryAdapter:
                     logger.warning("跳过损坏的运行结果 %s: %s", result_id, error)
                     continue
                 return LoadedResultDto(
-                    result_id, Path(entry.result_id).name, result
+                    result_id,
+                    Path(entry.result_id).name,
+                    result,
+                    run_id=run.run_id,
+                    source_result=entry.result_id,
                 )
         raise FileNotFoundError(f"未找到结果类型为 {result_type} 的运行结果")
 

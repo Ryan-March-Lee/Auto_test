@@ -75,6 +75,46 @@ def complete_mapping():
     }
 
 
+def complete_current_mapping():
+    """一份通过当前版校验、可创建运行的运行映射（单电源、两通道、DUT 上电计划）。
+
+    与 :func:`complete_mapping` 的区别是本节使用当前版本形状：电源集合、DUT 上电
+    计划与 ``driver_mode.power_plan``。旧 1.0 映射会让 ``validate_run_configuration``
+    走只读兼容分支并跳过可运行规则，不能用来证明一份配置真的能开始运行。
+    """
+    return {
+        "schema_version": SUPPORTED_SCHEMA_VERSION,
+        "template": False,
+        "run_id": "run-1",
+        "run_datetime": "2026-08-19T10:00:00",
+        "operator": "tester",
+        "instruments": {
+            "signal_generator": {"model": "SG", "visa_address": "TCPIP::SG::INSTR"},
+            "spectrum_analyzer": {"model": "SA", "visa_address": "TCPIP::SA::INSTR"},
+            "power_supplies": {
+                "PS1": {
+                    "label": "PS1",
+                    "model": "DP832A",
+                    "full_code": "SIM1519",
+                    "device_key": "rigol technologies:ps1",
+                    "visa_address": "TCPIP::PS::INSTR",
+                }
+            },
+        },
+        "driver_mode": {
+            "enabled": False,
+            "power_plan": {"power_sequence": [], "inter_channel_delay_s": 0.0},
+        },
+        "dut_power_plan": {
+            "power_sequence": [
+                {"supply_id": "PS1", "channel": "CH1"},
+                {"supply_id": "PS1", "channel": "CH2"},
+            ],
+            "inter_channel_delay_s": 2.0,
+        },
+    }
+
+
 def complete_current_plan():
     """一份通过 v1.1 形状校验的当前版测试方案（单电源、两通道）。"""
     return {
@@ -614,27 +654,27 @@ class PowerScanPlanModelTests(unittest.TestCase):
                     errors,
                 )
 
-    def test_multi_segment_configuration_saves_but_is_not_runnable_yet(self):
+    def test_multi_segment_configuration_is_runnable_after_measurement_link(self):
+        """阶段四接入后，连续多段计划与单段一样可以通过完整运行前校验。"""
+
         plan = TestPlan.from_dict(
             _current_plan_with_plans((-38.0, 1.0, -10.0), (-10.0, 0.5, -2.0))
         )
         configuration = RunConfiguration(
-            plan, RunResourceMapping(schema_version=SUPPORTED_SCHEMA_VERSION)
+            plan, RunResourceMapping.from_dict(complete_current_mapping())
         )
 
         saved = validate_run_configuration(configuration, require_runnable=False)
         runnable = validate_run_configuration(configuration)
 
+        # 正例必须是完整可运行配置：只用空电源映射排除某一条错误路径，会让
+        # “删除多段门禁后配置仍然不合法”也通过。
+        self.assertEqual(saved.errors, [])
+        self.assertEqual(runnable.errors, [])
+        # 当前版本不走 1.0 只读兼容分支，运行就绪规则确实执行过。
         self.assertFalse(
-            any("尚未接入" in issue.message for issue in saved.errors), saved.errors
-        )
-        self.assertTrue(
-            any(
-                issue.path == "signal_source.power_scan_plans"
-                and "尚未接入" in issue.message
-                for issue in runnable.errors
-            ),
-            runnable.errors,
+            any(issue.path == "schema_version" for issue in runnable.warnings),
+            runnable.warnings,
         )
 
 

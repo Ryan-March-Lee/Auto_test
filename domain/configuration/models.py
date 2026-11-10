@@ -872,26 +872,7 @@ def validate_run_configuration(
         )
     elif require_runnable:
         errors.extend(_validate_current_power_configuration(configuration))
-        errors.extend(_validate_power_scan_runnable(configuration.test_plan))
     return ConfigValidationResult(errors=errors, warnings=warnings)
-
-
-def _validate_power_scan_runnable(plan: TestPlan) -> List[ConfigIssue]:
-    """运行前的功率扫描门禁（阶段二临时限制）。
-
-    配置契约已经可以保存多段计划，但驱动映射与主功放测量链路仍只消费单段
-    （阶段四接入 ``PowerScanSchedule``）。在此之前阻止多段配置开始运行，避免
-    “第一段被当成全部”或运行到一半才失败；保存与迁移不受这条限制。
-    """
-    if len(plan.power_scan_plans) <= 1:
-        return []
-    return [
-        ConfigIssue(
-            "error",
-            "signal_source.power_scan_plans",
-            "多段 DUT 功率扫描计划的运行链路尚未接入；当前只能运行单段计划",
-        )
-    ]
 
 
 def require_current_schema_version(

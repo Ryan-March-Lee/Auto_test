@@ -109,9 +109,12 @@ class OfflineCompletionTests(unittest.TestCase):
         }
         self.assertEqual(coordinator_imports["workers"], {"InstrumentWorker"})
 
-    def test_dut_limit_truncates_targets_and_the_legacy_scan_still_protects(self):
-        """两层行为都要成立：DTO 构造期给出不越限的目标网格；无驱动分支在步骤 4.3
-        之前仍按单段计划逐点设置源功率，并由 DUT 输入保护在越限点前停止。"""
+    def test_dut_limit_truncates_targets_and_no_driver_scan_never_exceeds_it(self):
+        """步骤 4.3：无驱动分支直接消费 DTO 的目标网格，越限点在建网格时就被截掉。
+
+        信号源设定从目标 DUT 输入按线①反算，扫描循环里不再出现高于 DUT 上限的
+        目标点，因此既不会设置越限功率，也不会触发 DUT 输入保护。
+        """
         instrument = _Instrument()
         inputs = amplifier_inputs(
             start_power_dbm=-3.0,
@@ -133,7 +136,7 @@ class OfflineCompletionTests(unittest.TestCase):
             safety_cleanup=safety_cleanup_for(instrument),
             event_sink=events, sleep_fn=lambda _: None,
         )
-        service.perform_power_sweep(1.0)
+        result = service.perform_power_sweep(1.0)
 
         set_power_values = [
             operation[1]
@@ -141,10 +144,11 @@ class OfflineCompletionTests(unittest.TestCase):
             if len(operation) == 2 and operation[0] == "set_power"
         ]
         self.assertEqual(set_power_values, [-40, -3.0, -2.0])
-        # 越限点（-1 dBm、0 dBm）在设置功率之前被保护拦住。
+        # 越限点（-1 dBm、0 dBm）从未出现在目标网格里，也没有被设置。
         self.assertNotIn(("set_power", -1), instrument.operations)
         self.assertNotIn(("set_power", 0), instrument.operations)
-        self.assertTrue(any(isinstance(event, StoppedEvent) for event in events.items))
+        self.assertEqual(result["sweep_data"]["input_power_dut"], [-3.0, -2.0])
+        self.assertFalse(any(isinstance(event, StoppedEvent) for event in events.items))
 
     def test_versioned_model_and_reports_are_round_trippable(self):
         result = AmplifierMeasurementResult(

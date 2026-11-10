@@ -15,6 +15,7 @@ if __package__ in (None, ""):
 
 from application.dto import AmplifierInputError, DrainChannel
 from application.measurements.services import AmplifierMeasurementService
+from domain.measurement.values import Frequency
 from tests.contract_doubles import amplifier_inputs
 from tests.fakes import safety_cleanup_for
 
@@ -97,6 +98,8 @@ def make_service(
     inputs=None,
     sleeps=None,
     owns_measurement_port=True,
+    cable1_db=0.0,
+    loss_data=None,
 ):
     instrument = instrument or FakeMeasurementInstrument()
     if inputs is None:
@@ -110,16 +113,17 @@ def make_service(
             supplies=supplies,
             drain=drain,
         )
-    loss_data = {
-        "cable_losses": {
-            "1.0": {
-                "cable1": 0.0,
-                "cable2": 0.0,
-                "cable3": 0.0,
-                "cable4": 0.0,
+    if loss_data is None:
+        loss_data = {
+            "cable_losses": {
+                "1.0": {
+                    "cable1": cable1_db,
+                    "cable2": 0.0,
+                    "cable3": 0.0,
+                    "cable4": 0.0,
+                },
             },
-        },
-    }
+        }
     return AmplifierMeasurementService(
         inputs,
         instrument,
@@ -176,22 +180,136 @@ class MeasurementLoopRegressionTests(unittest.TestCase):
         self.assertEqual(len(result["sweep_data"]["sg_power"]), 2)
         self.assertNotIn(("set_power", -1.0), operations)
 
-    def test_no_driver_mode_rejects_multi_plan_schedules_before_any_hardware_action(self):
-        """步骤 4.1 只迁移正式输入：无驱动反算（步骤 4.3）接入前，多段计划整体拒绝。
+    def test_no_driver_mode_uses_target_dut_points_and_reverse_calculates_source(self):
+        """步骤 4.3：多段目标点全部作为 DUT 输入，信号源按线①逐点反算。
 
-        只跑第一段会让结果看起来像跑完了全部计划，因此这里选择在服务构造期失败；
-        该检查位于 ``perform_power_sweep`` 之前，不会产生任何仪器动作。
+        DUT 输入记录的是目标点本身（不重复扣减线损），``sg_power`` 记录实际下发的
+        源设定；两者相差本频点的线①损耗。
         """
         inputs = amplifier_inputs(
             power_scan_plans=((-3.0, 1.0, -1.0), (-1.0, 1.0, 1.0)),
             max_input_power_dbm=1000.0,
         )
         instrument = FakeMeasurementInstrument()
+        service = make_service(instrument=instrument, inputs=inputs, cable1_db=2.0)
 
-        with self.assertRaises(AmplifierInputError) as raised:
-            make_service(instrument=instrument, inputs=inputs)
+        sweep = service.perform_power_sweep(1.0)["sweep_data"]
 
-        self.assertIn("单段", str(raised.exception))
+        self.assertEqual(sweep["input_power_dut"], [-3.0, -2.0, -1.0, 0.0, 1.0])
+        self.assertEqual(sweep["sg_power"], [-1.0, 0.0, 1.0, 2.0, 3.0])
+        self.assertEqual(
+            [operation[1] for operation in instrument.operations
+             if operation[0] == "set_power"],
+            [-40, -1.0, 0.0, 1.0, 2.0, 3.0],
+        )
+        self.assertEqual(instrument.measurement_count, 5)
+
+    def test_no_driver_mode_uses_each_frequency_cable_loss(self):
+        """不同频点的线损不同，反算出的源设定各自正确，DUT 目标点保持一致。"""
+        inputs = replace(
+            amplifier_inputs(
+                start_power_dbm=-3.0,
+                stop_power_dbm=-2.0,
+                max_input_power_dbm=1000.0,
+            ),
+            frequencies=(Frequency.from_ghz(1.0), Frequency.from_ghz(2.0)),
+        )
+        loss_data = {
+            "cable_losses": {
+                "1.0": {"cable1": 1.0, "cable2": 0.0, "cable3": 0.0, "cable4": 0.0},
+                "2.0": {"cable1": 4.0, "cable2": 0.0, "cable3": 0.0, "cable4": 0.0},
+            }
+        }
+        service = make_service(inputs=inputs, loss_data=loss_data)
+
+        first = service.perform_power_sweep(1.0)["sweep_data"]
+        second = service.perform_power_sweep(2.0)["sweep_data"]
+
+        self.assertEqual(first["input_power_dut"], [-3.0, -2.0])
+        self.assertEqual(second["input_power_dut"], [-3.0, -2.0])
+        self.assertEqual(first["sg_power"], [-2.0, -1.0])
+        self.assertEqual(second["sg_power"], [1.0, 2.0])
+
+    def test_no_driver_mode_prechecks_source_range_before_any_instrument_action(self):
+        """步骤 4.3：整组目标点反算越界时，连初始 set_power/frequency 都不执行。"""
+        inputs = amplifier_inputs(
+            start_power_dbm=19.0,
+            stop_power_dbm=19.0,
+            max_input_power_dbm=1000.0,
+        )
+        instrument = FakeMeasurementInstrument()
+        service = make_service(instrument=instrument, inputs=inputs, cable1_db=2.0)
+
+        with self.assertRaisesRegex(AmplifierInputError, "超出可设范围"):
+            service.perform_power_sweep(1.0)
+
+        self.assertEqual(instrument.operations, [])
+        self.assertEqual(instrument.measurement_count, 0)
+
+    def test_no_driver_mode_accepts_source_power_at_both_range_boundaries(self):
+        """恰好落在可设范围边界的目标点可以执行，实际下发值等于边界值。"""
+        upper_inputs = amplifier_inputs(
+            start_power_dbm=19.0,
+            stop_power_dbm=19.0,
+            max_input_power_dbm=1000.0,
+        )
+        upper_instrument = FakeMeasurementInstrument()
+        upper_service = make_service(
+            instrument=upper_instrument, inputs=upper_inputs, cable1_db=1.0
+        )
+        upper_sweep = upper_service.perform_power_sweep(1.0)["sweep_data"]
+
+        self.assertEqual(upper_sweep["input_power_dut"], [19.0])
+        self.assertEqual(upper_sweep["sg_power"], [20.0])
+        self.assertIn(("set_power", 20.0), upper_instrument.operations)
+
+        lower_inputs = amplifier_inputs(
+            start_power_dbm=-50.0,
+            stop_power_dbm=-50.0,
+            max_input_power_dbm=1000.0,
+        )
+        lower_instrument = FakeMeasurementInstrument()
+        lower_service = make_service(instrument=lower_instrument, inputs=lower_inputs)
+        lower_sweep = lower_service.perform_power_sweep(1.0)["sweep_data"]
+
+        self.assertEqual(lower_sweep["input_power_dut"], [-50.0])
+        self.assertEqual(lower_sweep["sg_power"], [-50.0])
+        self.assertIn(("set_power", -50.0), lower_instrument.operations)
+
+    def test_no_driver_mode_clamps_only_epsilon_level_boundary_error(self):
+        """epsilon 内的浮点误差收敛到边界，下发值和记录值都不会越过硬件范围。"""
+        inputs = amplifier_inputs(
+            start_power_dbm=19.0,
+            stop_power_dbm=19.0,
+            max_input_power_dbm=1000.0,
+        )
+        instrument = FakeMeasurementInstrument()
+        service = make_service(
+            instrument=instrument, inputs=inputs, cable1_db=1.0 + 1e-10
+        )
+
+        sweep = service.perform_power_sweep(1.0)["sweep_data"]
+
+        self.assertEqual(sweep["input_power_dut"], [19.0])
+        self.assertEqual(sweep["sg_power"], [20.0])
+        self.assertIn(("set_power", 20.0), instrument.operations)
+        self.assertNotIn(("set_power", 20.0000000001), instrument.operations)
+
+    def test_no_driver_mode_rejects_boundary_error_beyond_epsilon(self):
+        """真实越界（超过 epsilon）仍然在任何仪器动作之前失败。"""
+        inputs = amplifier_inputs(
+            start_power_dbm=19.0,
+            stop_power_dbm=19.0,
+            max_input_power_dbm=1000.0,
+        )
+        instrument = FakeMeasurementInstrument()
+        service = make_service(
+            instrument=instrument, inputs=inputs, cable1_db=1.0 + 1e-7
+        )
+
+        with self.assertRaisesRegex(AmplifierInputError, "超出可设范围"):
+            service.perform_power_sweep(1.0)
+
         self.assertEqual(instrument.operations, [])
 
 

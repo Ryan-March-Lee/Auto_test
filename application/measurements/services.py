@@ -56,7 +56,6 @@ from application.dto.measurement_results import DriverMappingInput
 from domain.measurement.calculations import (
     calculate_cable_losses,
     calculate_compression_result,
-    calculate_dut_input_power,
     calculate_efficiency,
     calculate_gain,
     compensate_amplifier_output_power,
@@ -89,9 +88,14 @@ DRIVER_MAPPING_MAX_ATTEMPTS_PER_TARGET = 32
 DRIVER_MAPPING_MIN_STEP_DB = 0.05
 DRIVER_MAPPING_MAX_STEP_DB = 10.0
 DRIVER_MAPPING_MIN_SLOPE = 0.05
-DRIVER_MAPPING_SOURCE_MIN_DBM = -50.0
-DRIVER_MAPPING_SOURCE_MAX_DBM = 20.0
-_DRIVER_MAPPING_SOURCE_EPSILON_DB = 1e-9
+# 信号源可设定的功率范围（dBm）。驱动映射用它约束搜索起点/终点，无驱动模式在
+# 打开 RF 之前用同一范围预检“目标 DUT 输入 + 线①”反算出的源功率，两处不各写一份。
+SIGNAL_SOURCE_POWER_MIN_DBM = -50.0
+SIGNAL_SOURCE_POWER_MAX_DBM = 20.0
+_SIGNAL_SOURCE_POWER_EPSILON_DB = 1e-9
+DRIVER_MAPPING_SOURCE_MIN_DBM = SIGNAL_SOURCE_POWER_MIN_DBM
+DRIVER_MAPPING_SOURCE_MAX_DBM = SIGNAL_SOURCE_POWER_MAX_DBM
+_DRIVER_MAPPING_SOURCE_EPSILON_DB = _SIGNAL_SOURCE_POWER_EPSILON_DB
 
 
 class DriverMappingError(MeasurementError):
@@ -130,6 +134,40 @@ class NullEventSink:
 def _publish(sink: EventSink | None, event: Any) -> None:
     if sink is not None:
         sink.publish(event)
+
+
+def _require_source_power_in_range(
+    frequency: Frequency,
+    points: tuple[tuple[PowerDbm, PowerDbm], ...],
+) -> tuple[tuple[PowerDbm, PowerDbm], ...]:
+    """在打开 RF 前校验并收敛整组无驱动目标点反算出的信号源功率。
+
+    ``points`` 是 ``(目标 DUT 输入, 反算源功率)``。信号源只能设定
+    ``[SIGNAL_SOURCE_POWER_MIN_DBM, SIGNAL_SOURCE_POWER_MAX_DBM]`` 内的功率；越界
+    必须在任何仪器动作之前失败，不能等到某个点扫到一半才由驱动拒绝。
+
+    允许边界上的浮点误差，但不把误差量级的值原样下发：落在 epsilon 内的点会被
+    收敛到边界，返回值因此保证每个源功率都在硬件可设范围内。调用方必须使用返回
+    的点列下发，才能让“预检通过”与“实际可设定”保持一致。
+    """
+    lower = SIGNAL_SOURCE_POWER_MIN_DBM - _SIGNAL_SOURCE_POWER_EPSILON_DB
+    upper = SIGNAL_SOURCE_POWER_MAX_DBM + _SIGNAL_SOURCE_POWER_EPSILON_DB
+    normalized: list[tuple[PowerDbm, PowerDbm]] = []
+    for target, source in points:
+        if not lower <= source.dbm <= upper:
+            raise AmplifierInputError(
+                "信号源设定功率超出可设范围："
+                f"{frequency.ghz:g} GHz 上目标 DUT 输入 {target.dbm:g} dBm "
+                f"按线①反算得源功率 {source.dbm:g} dBm，"
+                f"允许范围 [{SIGNAL_SOURCE_POWER_MIN_DBM:g}, "
+                f"{SIGNAL_SOURCE_POWER_MAX_DBM:g}] dBm"
+            )
+        bounded = min(
+            max(source.dbm, SIGNAL_SOURCE_POWER_MIN_DBM),
+            SIGNAL_SOURCE_POWER_MAX_DBM,
+        )
+        normalized.append((target, PowerDbm(bounded)))
+    return tuple(normalized)
 
 
 def _require_event_sink(sink: EventSink | None) -> EventSink | None:
@@ -970,16 +1008,6 @@ class AmplifierMeasurementService(_Service):
         # 驱动模式只消费目标网格（目标 DUT 输入 -> 源功率 + 插值驱放输出）；
         # 原始曲线留在结果文档中供审计，不再参与主功放扫描。
         self.driver_input = driver_input
-        # 正式输入已经支持多段计划（步骤 4.1），但无驱动分支仍按单段计划的点列设置
-        # 信号源功率；把目标 DUT 输入功率按线损反算成源功率属于步骤 4.3。在反算接入
-        # 之前拒绝多段计划，避免只跑第一段却表现得像跑完了全部计划。构造期失败，
-        # 因此这里不会产生任何仪器动作。
-        if driver_input is None and len(inputs.power_scan_schedule.plans) != 1:
-            raise AmplifierInputError(
-                "无驱动模式目前只支持单段 DUT 功率扫描计划："
-                "多段计划的目标输入功率反算尚未接入正式测量（步骤 4.3），"
-                f"当前计划为 {len(inputs.power_scan_schedule.plans)} 段"
-            )
         self.attenuator_value = inputs.attenuator
         self.compression_value = inputs.compression_target
         self.configuration_snapshot = dict(configuration_snapshot or {})
@@ -1010,11 +1038,56 @@ class AmplifierMeasurementService(_Service):
             capabilities += DRIVER_POWER_CAPABILITIES
         return capabilities
 
+    def _plan_scan_points(
+        self, frequency: Frequency
+    ) -> tuple[tuple[PowerDbm, PowerDbm, PowerDbm | None], ...]:
+        """在触碰仪器之前确定整组扫描点。
+
+        驱动模式只读取已完成的目标映射；无驱动模式把每个目标 DUT 输入按线①
+        反算成源功率，并对整组点做范围预检。两种模式的计算或校验失败都发生在
+        任何仪器动作之前，因此不会留下“扫到一半才发现目标表或源功率不可用”的
+        半成品运行。
+
+        返回 ``(目标 DUT 输入, 实际下发的源功率, 驱放输出或 None)``。无驱动模式
+        的第三项恒为 ``None``，``input_power_dut`` 直接记录第一项，不再二次扣减线损。
+        """
+        if self.driver_input is None:
+            cable1 = self.loss_table.profile_at(frequency).dut_input_path_loss()
+            reverse_calculated = tuple(
+                (target, PowerDbm(target.dbm + cable1.db))
+                for target in self.inputs.target_input_powers
+            )
+            checked = _require_source_power_in_range(frequency, reverse_calculated)
+            return tuple((target, source, None) for target, source in checked)
+        targets = sorted(
+            (
+                point
+                for point in self.driver_input.target_points
+                if Frequency.from_document_key(point.frequency_ghz) == frequency
+            ),
+            key=lambda point: point.target_input_power_dbm,
+        )
+        if not targets:
+            raise AmplifierInputError(
+                f"驱动映射目标表缺少测试频率 {frequency.key} 的目标点"
+            )
+        return tuple(
+            (
+                PowerDbm(point.target_input_power_dbm),
+                PowerDbm(point.source_power_dbm),
+                PowerDbm(point.driver_output_power_dbm),
+            )
+            for point in targets
+        )
+
     def perform_power_sweep(self, frequency: float) -> dict[str, Any]:
         compression_value = self.compression_value
         attenuator_value = self.attenuator_value
         frequency_value = Frequency.from_ghz(frequency)
         maximum = self.inputs.max_dut_input_power.dbm
+        # 先解析/预检整组点，再执行任何仪器动作：目标表缺频点、线损缺失或源功率
+        # 越界都必须在 set_power/set_frequency/rf_output_on 之前暴露。
+        scan_points = self._plan_scan_points(frequency_value)
         self.inst_ctrl.set_power(-40)
         self.inst_ctrl.set_frequency(frequency)
         self.inst_ctrl.set_center_frequency(frequency)
@@ -1031,53 +1104,15 @@ class AmplifierMeasurementService(_Service):
             )
         data = {"input_power_dut": [], "output_power_dut": [], "gain": [], "sg_power": [],
                 "voltages": [], "currents": [], "dc_power": [], "efficiency": []}
-        # 驱动模式：正式扫描直接按目标网格执行，源功率和 DUT 输入功率都来自映射
-        # 结果，不再对原始曲线做二次插值。无驱动模式仍以单段计划（构造期已保证只有
-        # 一段）的点列作为信号源扫描点，逐点用 DUT 输入保护拦截越限；把目标 DUT 输入
-        # 功率按线损反算成源功率属于步骤 4.3，届时这里改读
-        # ``self.inputs.target_input_powers`` 并在 RF 输出前预检源功率范围。
-        if self.driver_input is None:
-            scan_points = tuple(
-                (point, None, None)
-                for point in self.inputs.power_scan_schedule.plans[0].points()
-            )
-        else:
-            targets = sorted(
-                (
-                    point
-                    for point in self.driver_input.target_points
-                    if Frequency.from_document_key(point.frequency_ghz)
-                    == frequency_value
-                ),
-                key=lambda point: point.target_input_power_dbm,
-            )
-            if not targets:
-                raise AmplifierInputError(
-                    f"驱动映射目标表缺少测试频率 {frequency_value.key} 的目标点"
-                )
-            scan_points = tuple(
-                (
-                    PowerDbm(point.target_input_power_dbm),
-                    PowerDbm(point.source_power_dbm),
-                    PowerDbm(point.driver_output_power_dbm),
-                )
-                for point in targets
-            )
         self.inst_ctrl.rf_output_on()
         try:
-            for index, (sweep_point, driver_source, driver_output) in enumerate(scan_points):
+            for index, (dut_target, sg_set, driver_output) in enumerate(scan_points):
                 self._check_cancelled()
-                if driver_output is not None and driver_source is not None:
-                    sg_power = driver_source
-                    dut_input = driver_output
-                else:
-                    sg_power = sweep_point
-                    dut_input = calculate_dut_input_power(
-                        sg_power,
-                        frequency_value,
-                        self.loss_table,
-                        None,
-                    )
+                # 无驱动模式记录的 DUT 输入就是目标点本身（不再二次扣减线损），
+                # 源功率是反算后实际下发的设定值；驱动模式的源功率与 DUT 输入
+                # 都来自已完成的目标映射。
+                sg_power = sg_set
+                dut_input = driver_output if driver_output is not None else dut_target
                 if dut_input.dbm > maximum:
                     self._message(
                         f"DUT 输入保护触发: {frequency} GHz, {dut_input.dbm:.2f} dBm > {maximum:.2f} dBm"

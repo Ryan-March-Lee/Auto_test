@@ -321,12 +321,13 @@ def _apply_test_parameter_widgets(widgets: Any, config: Mapping[str, Any]) -> No
     if "test_frequencies" in config:
         apply_frequency_fields(widgets, config.get("test_frequencies"))
     signal_source = config.get("signal_source")
-    signal_source = signal_source if isinstance(signal_source, dict) else {}
     apply_scan_plans = getattr(widgets, "apply_power_scan_plans", None)
     if callable(apply_scan_plans):
         # 动态计划编辑器自己按行重建；结构错误由它返回，投影只负责放进页面状态。
+        # 这里传原始值，让页面区分“键缺失”和“声明了 signal_source 却没有计划”。
         widgets.power_scan_import_error = apply_scan_plans(signal_source)
     else:
+        signal_source = signal_source if isinstance(signal_source, dict) else {}
         scan_error, start, stop, step = _power_scan_projection(signal_source)
         widgets.power_scan_import_error = scan_error
         for widget, value in (

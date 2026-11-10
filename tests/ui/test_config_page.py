@@ -200,6 +200,114 @@ class ConfigurationPageTests(unittest.TestCase):
         self.assertEqual(len(page.power_scan_plan_rows), 1)
         self.assertEqual(page.power_scan_plan_rows[0].values(), (-38.0, 1.0, -16.0))
         self.assertFalse(page.power_scan_plan_rows[0].delete_button.isEnabled())
+        self.assertIsNone(page.power_scan_import_error)
+        self.assertFalse(page.rebuild_power_scan_plan_btn.isVisibleTo(page))
+
+    def test_config_with_signal_source_but_no_plans_is_an_import_error(self):
+        """声明了扫描区却没有计划时，默认行只是占位，不能被当成可保存的配置。"""
+        page = self.make_page()
+
+        page.apply_config({"test_frequencies": [1.0], "signal_source": {}})
+
+        self.assertIsNotNone(page.power_scan_import_error)
+        self.assertIn("缺少", page.power_scan_import_error)
+        self.assertEqual(len(page.power_scan_plan_rows), 1)
+        self.assertTrue(page.rebuild_power_scan_plan_btn.isVisibleTo(page))
+        self.assertFalse(page.validate())
+
+    def test_scalar_and_plan_shapes_together_are_an_import_error(self):
+        """功率扫描只能有一个来源；两种形状并存不能被静默择一。"""
+        page = self.make_page()
+
+        page.apply_config(
+            {
+                "test_frequencies": [1.0],
+                "signal_source": {
+                    "power_scan_plans": [
+                        {"start_power": -20.0, "step": 1.0, "stop_power": -10.0}
+                    ],
+                    "start_power": -20.0,
+                    "step": 1.0,
+                    "stop_power": -10.0,
+                },
+            }
+        )
+
+        self.assertIsNotNone(page.power_scan_import_error)
+        self.assertIn("只能有一个来源", page.power_scan_import_error)
+
+    def test_incomplete_legacy_scalar_is_an_import_error_not_a_fabricated_plan(self):
+        """旧标量缺字段时不能把缺失值换成默认值后当成有效计划。"""
+        page = self.make_page()
+
+        page.apply_config(
+            {"test_frequencies": [1.0], "signal_source": {"start_power": -20.0}}
+        )
+
+        self.assertIsNotNone(page.power_scan_import_error)
+        self.assertIn("不完整", page.power_scan_import_error)
+        # 展示的默认行只是占位，不能把用户填的 -20.0 和凭空补的步长/终点凑成计划。
+        self.assertEqual(page.power_scan_plan_rows[0].values(), (-38.0, 1.0, -16.0))
+
+    def test_row_edits_do_not_clear_an_unreadable_plan_list_error(self):
+        """能读出的段照常展示；只改一行不能证明其它读不出来的段已处理。"""
+        page = self.make_page()
+
+        page.apply_config(
+            {
+                "test_frequencies": [1.0],
+                "signal_source": {
+                    "power_scan_plans": [
+                        {"start_power": -38.0, "step": 1.0, "stop_power": -10.0},
+                        {"start_power": "bad", "step": 0.5, "stop_power": -2.0},
+                    ]
+                },
+            }
+        )
+
+        self.assertIn("第 2 段", page.power_scan_import_error)
+        self.assertEqual(
+            [row.values() for row in page.power_scan_plan_rows],
+            [(-38.0, 1.0, -10.0)],
+        )
+
+        page.power_scan_plan_rows[0].set_values(-37.0, 1.0, -10.0)
+        page.add_power_scan_plan()
+
+        self.assertIn("第 2 段", page.power_scan_import_error)
+        self.assertTrue(page.rebuild_power_scan_plan_btn.isVisibleTo(page))
+        self.assertTrue(
+            any(
+                "第 2 段" in message
+                for message in page.form_adapter.validation_errors()
+            ),
+            "导入错误未解除前，表单校验必须继续阻止保存",
+        )
+
+    def test_rebuild_plan_accepts_the_visible_rows_and_clears_the_error(self):
+        """用户明确重建后，以当前可见行作为完整计划，不再保留结构错误。"""
+        page = self.make_page()
+
+        page.apply_config(
+            {
+                "test_frequencies": [1.0],
+                "signal_source": {
+                    "power_scan_plans": [
+                        {"start_power": -38.0, "step": 1.0, "stop_power": -10.0},
+                        {"start_power": "bad", "step": 0.5, "stop_power": -2.0},
+                    ]
+                },
+            }
+        )
+
+        page.rebuild_power_scan_plan_btn.click()
+
+        self.assertIsNone(page.power_scan_import_error)
+        self.assertFalse(page.rebuild_power_scan_plan_btn.isVisibleTo(page))
+        self.assertEqual(
+            page.build_config()["signal_source"]["power_scan_plans"],
+            [{"start_power": -38.0, "step": 1.0, "stop_power": -10.0}],
+        )
 
     def test_driver_gain_control_follows_the_driver_mode(self):
         page = self.make_page()

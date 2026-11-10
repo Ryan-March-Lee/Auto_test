@@ -14,6 +14,13 @@ from .theme import set_button_variant
 # 配置页表单里数值框的固定宽度：长数字不撑开列宽，两列表单的输入列才能对齐。
 _NUMBER_FIELD_MAXIMUM_WIDTH = 140
 
+#: DUT 输入功率扫描的输入范围（dBm）与步长范围（dB）。
+#:
+#: 功率计划行与配置页原有的单计划控件共用这一份取值，范围只改一处；控件只提供输入
+#: 体验（钳制与显示精度），DUT 上限等业务上限仍由上层校验。
+POWER_RANGE_DBM = (-50.0, 20.0)
+POWER_STEP_RANGE_DB = (0.1, 5.0)
+
 
 def number_field(value, minimum, maximum, *, decimals=2):
     """建一个纯文本数值输入框；宽度按配置页表单固定，避免长数字撑开列宽。
@@ -66,6 +73,8 @@ def build_action_bar(page) -> QWidget:
 
 
 __all__ = [
+    "POWER_RANGE_DBM",
+    "POWER_STEP_RANGE_DB",
     "build_action_bar",
     "combo_box",
     "number_field",

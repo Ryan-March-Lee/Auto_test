@@ -83,7 +83,13 @@ from .config_projection import (
     bool_or_default,
     driver_gain_text,
 )
-from .config_page_widgets import build_action_bar, combo_box, number_field
+from .config_page_widgets import (
+    POWER_RANGE_DBM,
+    POWER_STEP_RANGE_DB,
+    build_action_bar,
+    combo_box,
+    number_field,
+)
 from .frequency_sweep import (
     FrequencySweepError,
     format_frequency,
@@ -246,17 +252,17 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         self.freq_preview.setProperty("role", "note")
         self.freq_preview.setWordWrap(True)
         self.freq_preview.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self.start_power = number_field(test.get("start_power", DEFAULT_SIGNAL_SOURCE["start_power"]), -50, 20)
+        self.start_power = number_field(test.get("start_power", DEFAULT_SIGNAL_SOURCE["start_power"]), *POWER_RANGE_DBM)
         self.start_power.setToolTip(
             "主功放输入功率扫描起点（dBm），不是信号源输出功率；"
             "无驱动时按 cable1 损耗反算信号源设定"
         )
-        self.stop_power = number_field(test.get("stop_power", DEFAULT_SIGNAL_SOURCE["stop_power"]), -50, 20)
+        self.stop_power = number_field(test.get("stop_power", DEFAULT_SIGNAL_SOURCE["stop_power"]), *POWER_RANGE_DBM)
         self.stop_power.setToolTip(
             "主功放输入功率扫描终点（dBm）；与 DUT 最大输入功率取较小值，"
             "限制点不在步进网格上时作为最后一点补入"
         )
-        self.power_step = number_field(test.get("step", DEFAULT_SIGNAL_SOURCE["step"]), 0.1, 5)
+        self.power_step = number_field(test.get("step", DEFAULT_SIGNAL_SOURCE["step"]), *POWER_STEP_RANGE_DB)
         self.power_step.setToolTip("目标主功放输入功率网格的步进（dB）")
         # 驱动功放预估增益是测试配置里的单一全局值（dB）。空文本表示尚未填写；
         # 增益的业务校验（有限数值、驱动模式下必填）由配置 DTO 承担，页面不推算。

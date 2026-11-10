@@ -43,6 +43,9 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
 
     load_result_requested = Signal()
 
+    #: 失败产物的补生成请求：只带运行标识，由窗口转给应用层用例。
+    regenerate_artifacts_requested = Signal(str)
+
     def __init__(
         self,
         *,
@@ -121,6 +124,8 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         control_layout.setColumnStretch(0, 1)
         control_layout.setColumnStretch(1, 1)
         left_layout.addWidget(control_group)
+        self.archival_banner = self._build_archival_banner()
+        left_layout.addWidget(self.archival_banner)
         # 进度与实时日志由窗口挂进这块容器，占满控制框以下的剩余高度。
         self.status_slot = StatusSlot()
         left_layout.addWidget(self.status_slot, 1)

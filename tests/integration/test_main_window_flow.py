@@ -989,6 +989,106 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         )
         dialogs["warning"].assert_called_once()
 
+    def test_measurement_page_repairs_failed_artifacts_through_the_run_service(self):
+        """失败提示条 → 窗口 → 历史运行用例：页面不持有服务，也不重跑测量。"""
+        from unittest.mock import PropertyMock
+
+        from application.dto.archival import (
+            ArchivalOutcome,
+            ArchivalTestStatus,
+            ArchivedArtifact,
+        )
+        from domain.run.models import ArtifactKind
+        from presentation.qt.main_window import MainWindow
+
+        dialogs = self._silence_dialogs()
+        window = self._window()
+        run_id = "20260101T000000Z_deadbeef"
+        window.amplifier_page.show_archival(
+            ArchivalOutcome(
+                run_id=run_id,
+                stage="amplifier",
+                test_status=ArchivalTestStatus.COMPLETED,
+                formal_result_path="results/amplifier_measurement.json",
+                artifacts=(
+                    ArchivedArtifact.failed(ArtifactKind.CSV, "磁盘空间不足"),
+                    ArchivedArtifact.completed(
+                        ArtifactKind.REPORT, "artifacts/amplifier_report.html"
+                    ),
+                ),
+            )
+        )
+        self.assertFalse(window.amplifier_page.archival_banner.isHidden())
+
+        repaired = ArchivalOutcome(
+            run_id=run_id,
+            stage="amplifier",
+            test_status=ArchivalTestStatus.COMPLETED,
+            formal_result_path="results/amplifier_measurement.json",
+            artifacts=(
+                ArchivedArtifact.completed(
+                    ArtifactKind.CSV, "artifacts/amplifier.csv"
+                ),
+                ArchivedArtifact.completed(
+                    ArtifactKind.REPORT, "artifacts/amplifier_report.html"
+                ),
+            ),
+        )
+        service = SimpleNamespace(
+            regenerate_failed_artifacts=MagicMock(return_value=repaired)
+        )
+        with patch.object(
+            MainWindow, "gui_data_service", new_callable=PropertyMock
+        ) as gui_data:
+            gui_data.return_value = SimpleNamespace(run_history=service)
+            window.amplifier_page.regenerate_artifacts_requested.emit(run_id)
+
+        service.regenerate_failed_artifacts.assert_called_once_with(run_id)
+        self.assertTrue(window.amplifier_page.archival_banner.isHidden())
+        dialogs["information"].assert_called_once()
+
+    def test_repair_failure_keeps_the_banner_and_reports_the_reason(self):
+        """补生成失败不吞掉原因：日志与对话框给出错误，提示条保持可见。"""
+        from unittest.mock import PropertyMock
+
+        from application.dto.archival import (
+            ArchivalOutcome,
+            ArchivalTestStatus,
+            ArchivedArtifact,
+        )
+        from domain.run.models import ArtifactKind
+        from presentation.qt.main_window import MainWindow
+
+        dialogs = self._silence_dialogs()
+        window = self._window()
+        run_id = "20260101T000000Z_deadbeef"
+        window.amplifier_page.show_archival(
+            ArchivalOutcome(
+                run_id=run_id,
+                stage="amplifier",
+                test_status=ArchivalTestStatus.COMPLETED,
+                formal_result_path="results/amplifier_measurement.json",
+                artifacts=(
+                    ArchivedArtifact.failed(ArtifactKind.CSV, "磁盘空间不足"),
+                    ArchivedArtifact.failed(ArtifactKind.REPORT, "报告渲染失败"),
+                ),
+            )
+        )
+        service = SimpleNamespace(
+            regenerate_failed_artifacts=MagicMock(
+                side_effect=ValueError("磁盘只读，无法写入产物")
+            )
+        )
+        with patch.object(
+            MainWindow, "gui_data_service", new_callable=PropertyMock
+        ) as gui_data:
+            gui_data.return_value = SimpleNamespace(run_history=service)
+            window.amplifier_page.regenerate_artifacts_requested.emit(run_id)
+
+        dialogs["warning"].assert_called_once()
+        self.assertIn("磁盘只读", dialogs["warning"].call_args.args[2])
+        self.assertFalse(window.amplifier_page.archival_banner.isHidden())
+
     def test_measurement_start_is_blocked_until_a_port_is_connected(self):
         dialogs = self._silence_dialogs()
         window = self._window()

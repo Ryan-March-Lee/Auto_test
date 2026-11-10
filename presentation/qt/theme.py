@@ -1089,6 +1089,19 @@ QScrollBar::add-page, QScrollBar::sub-page {
     background: transparent;
 }
 
+/* ===== 归档失败提示条 =====
+   只在“正式结果已保存、交付产物未生成”时出现：浅暖底 + 1px 警示边，文字仍是正文色，
+   按钮层级由页面声明。 */
+QFrame#archivalBanner {
+    background-color: $warning_soft;
+    border: 1px solid $warning;
+    border-radius: 6px;
+}
+QLabel#archivalBannerMessage {
+    color: $text;
+    font-size: $font_small;
+}
+
 /* ===== 状态区 ===== */
 /* 状态面板嵌在测量页左栏里：不画自己的外框，由“测量控制”分组框与日志凹槽给出边界。 */
 QFrame#statusPanel {

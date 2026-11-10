@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from infrastructure.logging.app_logging import get_logger, setup_logging
 from presentation.qt.application_coordinator import ApplicationCoordinator, RunFlowState
+from presentation.qt.archival_repair import repair_failed_artifacts
 from presentation.qt.composition import build_device_scanner_factory, default_paths
 from presentation.qt.configuration_editor import ConfigurationEditor
 from presentation.qt.test_configuration_page import TestConfigurationPage
@@ -334,6 +335,26 @@ class MainWindow(QMainWindow):
         # 驱动映射页只属于有驱放测试；欢迎页选择模式后再决定是否显示。
         self._driver_mapping_tab_index = self.tab_widget.indexOf(self.driver_mapping_page)
         self.cable_loss_page.load_result_requested.connect(self._load_cable_loss_result)
+        for page in (
+            self.cable_loss_page, self.driver_mapping_page, self.amplifier_page
+        ):
+            page.regenerate_artifacts_requested.connect(
+                self._regenerate_archival_artifacts
+            )
+
+    def _regenerate_archival_artifacts(self, run_id: str) -> bool:
+        """把测量页的补生成请求转给历史运行用例；失败原因由窗口展示。"""
+        _outcome, problem = repair_failed_artifacts(
+            getattr(self.gui_data_service, "run_history", None),
+            run_id,
+            page_for_stage=self.pages.get,
+        )
+        if problem is None:
+            QMessageBox.information(self, "补生成结果", f"运行 {run_id} 的交付产物已重新归档")
+            return True
+        self.add_log_message(f"补生成未完成: {problem}")
+        QMessageBox.warning(self, "补生成未完成", problem)
+        return False
 
     def _on_page_changed(self, index):
         """Keep page activation hooks aligned with the visible tab.

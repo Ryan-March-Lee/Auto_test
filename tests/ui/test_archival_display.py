@@ -1,4 +1,4 @@
-"""归档结果只写运行日志，不再占用测量页面的分组框（离屏 Qt 页面行为）。"""
+"""归档结果写运行日志，失败时另有一条可操作的提示条（离屏 Qt 页面行为）。"""
 
 import os
 import unittest
@@ -170,7 +170,7 @@ def _group_titles(page) -> list[str]:
 
 
 class MeasurementPagesHaveNoArchiveBoxTests(unittest.TestCase):
-    """三个测量页都不再保留“归档结果”分组框。"""
+    """三个测量页都不保留“归档结果”分组框，只用一条可操作的失败提示条。"""
 
     @classmethod
     def setUpClass(cls):
@@ -201,6 +201,9 @@ class MeasurementPagesHaveNoArchiveBoxTests(unittest.TestCase):
             with self.subTest(page=type(page).__name__):
                 self.assertNotIn("归档结果", _group_titles(page))
                 self.assertFalse(hasattr(page, "archival_view"))
+                # 提示条默认收起；没有失败产物时不占据左栏空间。
+                self.assertTrue(page.archival_banner.isHidden())
+                self.assertEqual(page.archival_banner.regenerate_button.text(), "补生成产物")
 
 
 class AmplifierPageArchivalLogTests(unittest.TestCase):
@@ -266,6 +269,41 @@ class AmplifierPageArchivalLogTests(unittest.TestCase):
         self.assertIn("部分", text)
         self.assertIn("写入失败", text)
         self.assertEqual(self.page._archival_summary.tone, TONE_WARNING)
+
+    def test_failed_artifact_offers_inline_repair_with_the_run_id(self):
+        requests = []
+        self.page.regenerate_artifacts_requested.connect(requests.append)
+
+        self.controller.signals.archival.emit(
+            _amplifier_outcome(csv=ArchivedArtifact.failed(ArtifactKind.CSV, "写入失败"))
+        )
+
+        banner = self.page.archival_banner
+        self.assertFalse(banner.isHidden())
+        self.assertEqual(banner.run_id, RUN_ID)
+        self.assertIn("补生成", banner.message.text())
+
+        banner.regenerate_button.click()
+
+        self.assertEqual(requests, [RUN_ID])
+        self.assertTrue(any("正在补生成" in line for line in self.logs))
+
+    def test_completed_outcome_keeps_the_repair_banner_hidden(self):
+        self.controller.signals.archival.emit(_amplifier_outcome())
+
+        self.assertTrue(self.page.archival_banner.isHidden())
+        self.assertIsNone(self.page.archival_banner.run_id)
+
+    def test_repair_success_after_failure_hides_the_banner(self):
+        self.controller.signals.archival.emit(
+            _amplifier_outcome(csv=ArchivedArtifact.failed(ArtifactKind.CSV, "写入失败"))
+        )
+        self.assertFalse(self.page.archival_banner.isHidden())
+
+        self.controller.signals.archival.emit(_amplifier_outcome())
+
+        self.assertTrue(self.page.archival_banner.isHidden())
+        self.assertIsNone(self.page.archival_banner.run_id)
 
     def test_outcome_of_another_stage_is_ignored(self):
         self.controller.signals.archival.emit(
@@ -366,6 +404,7 @@ class AmplifierPageArchivalLogTests(unittest.TestCase):
         self.page.on_activated()
 
         self.assertIsNone(self.page._archival_summary)
+        self.assertTrue(self.page.archival_banner.isHidden())
         self.assertIn("已清除运行", _log_text(self.logs))
 
 

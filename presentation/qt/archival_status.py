@@ -7,7 +7,7 @@
 对照重构计划步骤 6，四类状态各有独立提示：
 
 - 成功：结果已保存且适用产物已生成；
-- 部分产物失败：正式结果保留，提示可定位的运行 ID 与重新生成入口；
+- 部分产物失败：正式结果保留，提示可定位的运行 ID 与就地补生成入口；
 - 测试异常：本次没有归档结果，给出失败原因；
 - 停止：本次没有归档结果，给出停止原因；用户停止时保存的部分结果会一并说明位置。
 
@@ -58,6 +58,8 @@ class ArchivalSummary:
     detail: str
     tone: str = TONE_INFO
     run_id: str | None = None
+    #: 是否存在可“补生成”的失败产物；提示条据此决定是否给出操作按钮。
+    can_regenerate: bool = False
 
     def __post_init__(self) -> None:
         for name in ("headline", "detail"):
@@ -70,6 +72,10 @@ class ArchivalSummary:
             not isinstance(self.run_id, str) or not self.run_id.strip()
         ):
             raise ValueError("归档提示的运行 ID 必须是非空字符串")
+        if not isinstance(self.can_regenerate, bool):
+            raise ValueError("归档提示的可补生成标记必须是布尔值")
+        if self.can_regenerate and self.run_id is None:
+            raise ValueError("可补生成的归档提示必须携带运行 ID")
 
 
 def summarize_archival(outcome: ArchivalOutcome) -> ArchivalSummary:
@@ -142,10 +148,11 @@ def _summarize_completed(
         headline=f"{label}结果已保存，但部分交付产物生成失败",
         detail=(
             f"运行 {run_id}：{lines}。正式结果已保留；"
-            f"可在“历史运行”页按运行 {run_id} 重新生成失败的产物。"
+            "可点“补生成产物”重试，不会重跑测量。"
         ),
         tone=TONE_WARNING,
         run_id=run_id,
+        can_regenerate=True,
     )
 
 

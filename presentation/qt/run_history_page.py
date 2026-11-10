@@ -4,16 +4,16 @@
 **历史管理**，页面类名、路由与模块名都不再沿用“导出页”语义：
 
 - 页面只列出历史运行，并显示每次运行的阶段进度、正式结果数与交付产物状态；
-- 页面动作只保留运行级维护：打开运行目录、对失败产物执行“重新生成”（写回原运行
-  目录），以及删除用户明确选中的历史运行（整目录删除，进行中的运行不允许删除）。
-  历史结果浏览、测试报告查看与另存为都属于“查看结果”的动作，已移到数据可视化页
-  （见 ``visualization_page``）。
+- 页面动作只保留运行级维护：打开运行目录、对未生成的交付产物执行“补生成”（写回原
+  运行目录，不重跑测量），以及删除用户明确选中的历史运行（整目录删除，进行中的运行
+  不允许删除）。历史结果浏览、测试报告查看与另存为都属于“查看结果”的动作，已移到
+  数据可视化页（见 ``visualization_page``）。
 
 页面职责边界：
 
 - 列表与状态全部来自只读历史视图模型（``HistoryViewModel`` + 应用层运行摘要），页面
   不读 manifest、不拼接运行目录路径，也不判断文件是否存在。
-- 重新生成走应用层的 ``RunHistoryServicePort``：页面只传“已列出的运行标识”，不传阶段、
+- 补生成走应用层的 ``RunHistoryServicePort``：页面只传“已列出的运行标识”，不传阶段、
   不传路径；应用层决定用哪个阶段重试，并把产物写回受控位置。
 - 删除同样只传“已列出的运行标识”：页面对多选行做确认与文案，目录边界、进行中复核与
   实际删除由应用层和删除适配器完成，页面不调用任何文件系统删除接口。
@@ -185,10 +185,13 @@ class RunHistoryPage(QWidget):
         run_layout.addLayout(run_actions)
         layout.addWidget(run_group, 1)
 
-        action_group = QGroupBox("产物维护")
+        action_group = QGroupBox("交付产物")
         action_layout = QHBoxLayout(action_group)
         action_layout.setSpacing(10)
-        self.regenerate_button = QPushButton("重新生成失败的产物")
+        self.regenerate_button = QPushButton("补生成未生成的产物")
+        self.regenerate_button.setToolTip(
+            "使用已保存的正式结果补生成 CSV 或测试报告，不会重跑测量"
+        )
         set_button_variant(self.regenerate_button, "primary")
         self.regenerate_button.clicked.connect(self.regenerate_failed_artifacts)
         action_layout.addWidget(self.regenerate_button)
@@ -355,33 +358,33 @@ class RunHistoryPage(QWidget):
         self.log_callback(f"已打开运行目录: {target}")
         return True
 
-    # -- 重新生成失败产物 ---------------------------------------------------
+    # -- 补生成失败产物 -----------------------------------------------------
 
     def regenerate_failed_artifacts(self):
-        """对选中的历史运行重新生成失败的交付产物（写回原运行目录）。"""
+        """对选中的历史运行补生成未生成的交付产物（写回原运行目录）。"""
         row = self.selected_run_row()
         if row is None:
             return False
         if not row.can_regenerate:
             QMessageBox.warning(
                 self,
-                "无法重新生成",
-                f"运行 {row.run_id} 没有可重新生成的失败产物"
+                "无法补生成",
+                f"运行 {row.run_id} 没有待补生成的交付产物"
                 f"（当前产物状态：{row.artifact_text}）",
             )
             return False
         if self.run_service is None:
-            QMessageBox.warning(self, "无法重新生成", "未装配历史运行服务")
+            QMessageBox.warning(self, "无法补生成", "未装配历史运行服务")
             return False
         try:
             outcome = self.run_service.regenerate_failed_artifacts(row.run_id)
             message = self._regeneration_message(outcome)
         except (OSError, ValueError, RuntimeError) as error:
-            self.log_callback(f"重新生成失败: {error}")
-            QMessageBox.warning(self, "重新生成失败", str(error))
+            self.log_callback(f"补生成交付产物失败: {error}")
+            QMessageBox.warning(self, "补生成失败", str(error))
             return False
         self.log_callback(message)
-        QMessageBox.information(self, "重新生成结果", message)
+        QMessageBox.information(self, "补生成结果", message)
         self.refresh()
         return True
 

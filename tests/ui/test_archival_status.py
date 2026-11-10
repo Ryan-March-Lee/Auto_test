@@ -75,7 +75,8 @@ class ArchivalSummaryTests(unittest.TestCase):
         self.assertEqual(summary.tone, TONE_WARNING)
         self.assertIn("磁盘空间不足", summary.detail)
         self.assertIn(RUN_ID, summary.detail)
-        self.assertIn("重新生成", summary.detail)
+        self.assertIn("补生成", summary.detail)
+        self.assertTrue(summary.can_regenerate)
 
     def test_all_artifacts_failed_still_points_at_the_run(self):
         outcome = _amplifier_outcome(
@@ -86,7 +87,27 @@ class ArchivalSummaryTests(unittest.TestCase):
         summary = summarize_archival(outcome)
 
         self.assertEqual(summary.tone, TONE_WARNING)
-        self.assertIn("重新生成", summary.detail)
+        self.assertIn("补生成", summary.detail)
+        self.assertTrue(summary.can_regenerate)
+
+    def test_completed_and_stage_only_summaries_offer_no_repair(self):
+        """补生成只出现在“产物失败”上；成功与不适用都不提供按钮。"""
+        completed = summarize_archival(_amplifier_outcome())
+        stage_only = summarize_archival(
+            ArchivalOutcome(
+                run_id=RUN_ID,
+                stage="cable_loss",
+                test_status=ArchivalTestStatus.PARTIAL,
+                formal_result_path="inputs/cable_loss.json",
+                artifacts=(
+                    ArchivedArtifact.not_applicable(ArtifactKind.CSV),
+                    ArchivedArtifact.not_applicable(ArtifactKind.REPORT),
+                ),
+            )
+        )
+
+        self.assertFalse(completed.can_regenerate)
+        self.assertFalse(stage_only.can_regenerate)
 
     def test_pending_artifacts_report_that_generation_continues(self):
         outcome = _amplifier_outcome(
@@ -236,6 +257,10 @@ class ArchivalFallbackSummaryTests(unittest.TestCase):
             ArchivalSummary(headline="标题", detail="说明", tone="purple")
         with self.assertRaises(ValueError):
             ArchivalSummary(headline="标题", detail="说明", run_id="  ")
+        with self.assertRaises(ValueError):
+            ArchivalSummary(
+                headline="标题", detail="说明", can_regenerate=True
+            )
 
 
 if __name__ == "__main__":

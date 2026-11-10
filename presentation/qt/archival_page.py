@@ -2,7 +2,8 @@
 
 三个测量页面的“等待归档 / 正在保存 / 展示结果 / 终止事件”完全同构，差异只有测量
 类型。本模块只保留这份状态机，让页面不再各写一套：任何页面都不读文件、不判断产物
-是否存在，也不拼接导出规则，只把状态 DTO 写成运行日志。
+是否存在，也不拼接导出规则，只把状态 DTO 写成运行日志；交付产物失败时另有一条可
+操作的提示条，让用户就地补生成。
 
 页面使用顺序：
 
@@ -41,8 +42,9 @@ class ArchivalPageMixin:
     """把归档状态机从三个测量页面收拢到一处。
 
     页面负责按钮、表格和接线确认；本类只负责归档状态与日志文案。页面必须在
-    ``build_ui`` 之前调用 :meth:`_setup_archival`，归档结果只写运行日志，不再创建
-    页面内的归档分组控件。
+    ``build_ui`` 之前调用 :meth:`_setup_archival`，并在左栏用
+    :meth:`_build_archival_banner` 放一条失败提示条：归档结果仍写运行日志，提示条只
+    在“正式结果已保存、交付产物失败”时出现，提供一个不重跑测量的补生成入口。
     """
 
     def _setup_archival(
@@ -72,8 +74,31 @@ class ArchivalPageMixin:
         self._archival_saving = False
         # 已显示的终端归档提示计数：用于判断“启动被拒”时是否已经有失败文案。
         self._archival_terminal_events = 0
-        # 最近一次归档提示只用于切运行时的清理判断；页面不再持有归档控件。
+        # 最近一次归档提示只用于切运行时的清理判断；提示条由页面按需创建。
         self._archival_summary: ArchivalSummary | None = None
+        self._archival_banner = None
+
+    def _build_archival_banner(self):
+        """创建失败提示条；页面必须把它加入左栏布局（默认隐藏）。
+
+        提示条自己不调用应用层：点击只发出运行标识，由窗口转给历史运行用例。页面
+        没有装配 ``regenerate_artifacts_requested`` 时保持只读，按钮点击只记一条日志。
+        """
+        from .archival_banner import ArchivalBanner
+
+        banner = ArchivalBanner()
+        banner.regenerate_requested.connect(self._request_archival_repair)
+        self._archival_banner = banner
+        return banner
+
+    def _request_archival_repair(self, run_id: str) -> None:
+        """把提示条上的点击转成页面信号；页面不持有历史运行服务。"""
+        signal = getattr(self, "regenerate_artifacts_requested", None)
+        if signal is None:
+            self._log_callback("当前页面没有装配补生成入口，无法补生成交付产物")
+            return
+        self._log_callback(f"正在补生成运行 {run_id} 的交付产物…")
+        signal.emit(run_id)
 
     # -- controller 事件 ---------------------------------------------------
 
@@ -229,11 +254,18 @@ class ArchivalPageMixin:
         self._archival_summary = None
         self._archival_pending = False
         self._archival_saving = False
+        banner = self._archival_banner
+        if banner is not None:
+            banner.clear()
 
     # -- 内部 ---------------------------------------------------------------
 
     def _show_archival_summary(self, summary: ArchivalSummary) -> None:
-        """把一条归档提示写成运行日志；保存位置只在这里说明，页面上不再保留归档框。"""
+        """把归档提示写进运行日志，并刷新失败提示条。
+
+        保存位置仍只在日志里说明；提示条只在摘要声明“可补生成”时出现，成功后由
+        :meth:`_clear_archival_summary` 收起。
+        """
         self._archival_summary = summary
         message = f"{summary.headline}：{summary.detail}"
         location = self._archival_directory(summary.run_id)
@@ -244,6 +276,9 @@ class ArchivalPageMixin:
         elif summary.tone == TONE_ERROR:
             message = f"[归档错误] {message}"
         self._log_callback(message)
+        banner = self._archival_banner
+        if banner is not None:
+            banner.show_summary(summary)
 
     def _archival_directory(self, run_id: str | None) -> str | None:
         """解析本次结果的运行目录；只用于日志定位，失败时不改变归档状态。"""

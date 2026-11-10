@@ -1188,7 +1188,7 @@ class RunHistoryPageTests(unittest.TestCase):
         self.assertFalse(page.regenerate_failed_artifacts())
         self.warning_dialog.assert_called_once()
         self.assertIn(
-            "没有可重新生成的失败产物", self.warning_dialog.call_args.args[2]
+            "没有待补生成的交付产物", self.warning_dialog.call_args.args[2]
         )
         self.assertIn("manifest", page.run_table.item(invalid_row, 6).text())
 

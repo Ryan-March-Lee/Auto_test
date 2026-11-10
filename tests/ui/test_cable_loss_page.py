@@ -82,6 +82,12 @@ class CableLossPageTests(unittest.TestCase):
     def setUp(self):
         self.controller = Controller()
         self.dialog_results = [QDialog.Accepted]
+        self.dialog_types = []
+
+        def dialog_factory(diagram_type, _parent):
+            self.dialog_types.append(diagram_type)
+            return Dialog(self.dialog_results.pop(0))
+
         self.logs = []
         self.errors = []
         self.run = type("PreparedRun", (), {
@@ -92,7 +98,7 @@ class CableLossPageTests(unittest.TestCase):
         self.page = CableLossPage(
             config_path_provider=lambda: "config.json",
             run_provider=lambda: self.run,
-            connection_dialog_factory=lambda *_: Dialog(self.dialog_results.pop(0)),
+            connection_dialog_factory=dialog_factory,
             log_callback=self.logs.append,
             error_callback=self.errors.append,
         )
@@ -253,15 +259,35 @@ class CableLossPageTests(unittest.TestCase):
         self.assertEqual(self.page.cable_loss_table.rowCount(), 0)
         self.assertEqual(self.errors, ["线损测量结果不是正式结果模型，无法显示"])
 
-    def test_connection_diagram_buttons_live_in_measurement_controls(self):
-        """接线说明只剩连接图入口：页面上不再有线路文字。"""
+    def test_connection_diagram_button_lives_in_measurement_controls(self):
+        """接线说明只剩一个连接图入口：页面上不再有线路文字。"""
         from PySide6.QtWidgets import QGroupBox, QTextEdit
 
         titles = [box.title() for box in self.page.findChildren(QGroupBox)]
         self.assertEqual(titles, ["测量控制", "测量结果"])
-        self.assertEqual(self.page.show_path1_btn.parent().title(), "测量控制")
-        self.assertEqual(self.page.show_path2_btn.parent().title(), "测量控制")
+        self.assertEqual(
+            self.page.show_cable_loss_diagram_btn.parent().title(), "测量控制"
+        )
+        self.assertFalse(hasattr(self.page, "show_path1_btn"))
+        self.assertFalse(hasattr(self.page, "show_path2_btn"))
         self.assertEqual(self.page.findChildren(QTextEdit), [])
+
+    def test_connection_diagram_button_is_on_the_load_results_row(self):
+        button = self.page.show_cable_loss_diagram_btn
+        layout = button.parentWidget().layout()
+        load_row, load_column, load_row_span, load_column_span = (
+            layout.getItemPosition(layout.indexOf(self.page.load_cable_results_btn))
+        )
+        diagram_row, diagram_column, diagram_row_span, diagram_column_span = (
+            layout.getItemPosition(layout.indexOf(button))
+        )
+        self.assertEqual((diagram_row, diagram_column), (load_row, 1))
+        self.assertEqual((diagram_row_span, diagram_column_span), (1, 1))
+        self.assertEqual((load_row_span, load_column_span), (1, 1))
+
+    def test_view_diagram_button_opens_the_combined_diagram(self):
+        self.page.show_cable_loss_diagram_btn.click()
+        self.assertEqual(self.dialog_types, ["cable_loss_paths"])
 
     def test_status_slot_sits_below_the_measurement_controls(self):
         """左栏在“测量控制”下面留出状态区：进度与日志由窗口挂进来。"""

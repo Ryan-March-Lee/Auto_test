@@ -100,13 +100,12 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         self.start_measurement_btn.clicked.connect(self.start_measurement)
         self.load_cable_results_btn.clicked.connect(self.load_result_requested.emit)
         self.stop_cable_loss_btn.clicked.connect(self.stop_measurement)
-        # 接线说明只保留连接图入口：测试者已知道仪器怎么接，按钮只用于防止忘记。
-        self.show_path1_btn = QPushButton("查看路径1连接图")
-        self.show_path2_btn = QPushButton("查看路径2连接图")
-        set_button_variant(self.show_path1_btn, "secondary")
-        set_button_variant(self.show_path2_btn, "secondary")
-        self.show_path1_btn.clicked.connect(lambda: self._show_diagram("cable_loss_path1"))
-        self.show_path2_btn.clicked.connect(lambda: self._show_diagram("cable_loss_path2"))
+        # 接线说明只保留一个连接图入口：两条路径在同一窗口里上下展示，按钮只用于防止忘记。
+        self.show_cable_loss_diagram_btn = QPushButton("查看连接图")
+        set_button_variant(self.show_cable_loss_diagram_btn, "secondary")
+        self.show_cable_loss_diagram_btn.clicked.connect(
+            lambda: self._show_diagram("cable_loss_paths")
+        )
         self.controls = MeasurementControlPresenter(
             MeasurementKind.CABLE_LOSS,
             {
@@ -117,9 +116,8 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         self.controls.show_idle()
         control_layout.addWidget(self.start_measurement_btn, 0, 0)
         control_layout.addWidget(self.stop_cable_loss_btn, 0, 1)
-        control_layout.addWidget(self.load_cable_results_btn, 1, 0, 1, 2)
-        control_layout.addWidget(self.show_path1_btn, 2, 0)
-        control_layout.addWidget(self.show_path2_btn, 2, 1)
+        control_layout.addWidget(self.load_cable_results_btn, 1, 0)
+        control_layout.addWidget(self.show_cable_loss_diagram_btn, 1, 1)
         control_layout.setColumnStretch(0, 1)
         control_layout.setColumnStretch(1, 1)
         left_layout.addWidget(control_group)

@@ -116,6 +116,8 @@ DIAGRAM_VIEWS = {
 }
 #: 单行标题（13 pt 加粗，含标题与坐标区之间的留白）占用的画布高度（英寸）。
 _TITLE_HEIGHT_INCHES = 0.40
+#: 组合图里上下两张连接图之间的画布高度（英寸）。
+_COMBINED_GAP_INCHES = 0.30
 
 _ASSETS_DIR = Path(__file__).resolve().parents[2] / "assets"
 #: 连接图用到的图片资源：电缆与两台有实拍图的仪器。
@@ -360,14 +362,18 @@ def _draw_cable_run(axis, left, run, right, metrics, devices):
     _draw_vertical_cable(axis, target_x, left_y, arrival_y)
 
 
-def _render_diagram(key):
-    """按 :data:`DIAGRAM_DEVICES` 画一张连接图。"""
-    configure_diagram_style()
-    width, x_limits, y_limits = DIAGRAM_VIEWS[key]
+def _diagram_height(key, width=None):
+    """按显示范围与目标画布宽度推算单张连接图的画布高度（英寸）。"""
+    view_width, x_limits, y_limits = DIAGRAM_VIEWS[key]
+    if width is None:
+        width = view_width
     x_span = x_limits[1] - x_limits[0]
     y_span = y_limits[1] - y_limits[0]
-    height = width * y_span / x_span + _TITLE_HEIGHT_INCHES
-    figure, axis = plt.subplots(1, 1, figsize=(width, height), layout="constrained")
+    return width * y_span / x_span + _TITLE_HEIGHT_INCHES
+
+
+def _draw_diagram(axis, key):
+    """把一张连接图画到给定坐标区，图内容完全由 ``DIAGRAM_*`` 数据决定。"""
     devices = DIAGRAM_DEVICES[key]
     metrics = {
         name: (x, y, *_draw_device(axis, name, x, y))
@@ -376,12 +382,38 @@ def _render_diagram(key):
     }
     for left, run, right in _cable_runs(devices):
         _draw_cable_run(axis, left, run, right, metrics, devices)
+    _width, x_limits, y_limits = DIAGRAM_VIEWS[key]
     axis.set_xlim(*x_limits)
     axis.set_ylim(*y_limits)
     axis.set_aspect("equal")
     axis.set_title(DIAGRAM_TITLES[key], fontsize=13, weight='bold', color=TOKENS["text"], pad=16)
     axis.axis('off')
 
+
+def _render_diagram(key):
+    """按 :data:`DIAGRAM_DEVICES` 画一张连接图。"""
+    configure_diagram_style()
+    width = DIAGRAM_VIEWS[key][0]
+    figure, axis = plt.subplots(
+        1, 1, figsize=(width, _diagram_height(key)), layout="constrained"
+    )
+    _draw_diagram(axis, key)
+    return figure
+
+
+def _render_combined_diagrams(keys):
+    """把多张连接图上下排在同一张画布上，供一次查看。"""
+    configure_diagram_style()
+    width = max(DIAGRAM_VIEWS[key][0] for key in keys)
+    height = (
+        sum(_diagram_height(key, width) for key in keys)
+        + _COMBINED_GAP_INCHES * (len(keys) - 1)
+    )
+    figure, axes = plt.subplots(
+        len(keys), 1, figsize=(width, height), layout="constrained", squeeze=False
+    )
+    for axis, key in zip(axes[:, 0], keys):
+        _draw_diagram(axis, key)
     return figure
 
 
@@ -397,6 +429,11 @@ class ConnectionDiagram:
     def create_cable_loss_path2():
         """创建线损测量路径2的连接图"""
         return _render_diagram("cable_loss_path2")
+
+    @staticmethod
+    def create_cable_loss_combined():
+        """创建线损测量路径1与路径2的组合连接图"""
+        return _render_combined_diagrams(("cable_loss_path1", "cable_loss_path2"))
 
     @staticmethod
     def create_driver_mapping():

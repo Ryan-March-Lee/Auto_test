@@ -58,6 +58,14 @@ class BuildDiagramTests(unittest.TestCase):
         self.assertIsNone(reason)
         self.assertTrue(figure.axes)
 
+    def test_combined_cable_loss_diagram_stacks_both_paths(self):
+        figure, reason = build_diagram("cable_loss_paths")
+
+        self.assertIsNone(reason)
+        self.assertEqual(len(figure.axes), 2)
+        self.assertIn("路径1", figure.axes[0].get_title())
+        self.assertIn("路径2", figure.axes[1].get_title())
+
 
 class ConnectionDialogTests(unittest.TestCase):
     @classmethod
@@ -93,6 +101,16 @@ class ConnectionDialogTests(unittest.TestCase):
 
         self.assertFalse(dialog.ok_btn.isEnabled())
         self.assertIn("图数据非法", dialog.unavailable_reason)
+
+    def test_combined_diagram_is_a_view_only_window(self):
+        dialog = ConnectionDialog("cable_loss_paths")
+        self.addCleanup(dialog.deleteLater)
+
+        self.assertTrue(dialog.view_only)
+        self.assertEqual(dialog.windowTitle(), "线损测量连接图")
+        self.assertEqual(dialog.close_btn.text(), "关闭")
+        self.assertFalse(hasattr(dialog, "ok_btn"))
+        self.assertFalse(hasattr(dialog, "cancel_btn"))
 
 
 if __name__ == "__main__":

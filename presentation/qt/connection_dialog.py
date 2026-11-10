@@ -22,6 +22,8 @@ logger = get_logger(__name__)
 _DIALOG_WIDTH = 920
 #: 图形下方的按钮行、边距与图注占用的高度（px）。
 _DIALOG_CHROME_HEIGHT = 78
+#: 一次显示多张图、只用于查看的连接图类型：不承担现场接线确认。
+VIEW_ONLY_DIAGRAM_TYPES = frozenset({"cable_loss_paths"})
 
 
 def _dialog_size(figure: Figure) -> tuple[int, int]:
@@ -37,6 +39,7 @@ def _diagram_factories(connection_diagram: Any) -> dict[str, Callable[[], Figure
     return {
         "cable_loss_path1": connection_diagram.create_cable_loss_path1,
         "cable_loss_path2": connection_diagram.create_cable_loss_path2,
+        "cable_loss_paths": connection_diagram.create_cable_loss_combined,
         "driver_mapping": connection_diagram.create_driver_mapping,
         "amplifier_test": connection_diagram.create_amplifier_test,
         "amplifier_test_no_driver": connection_diagram.create_amplifier_test_no_driver,
@@ -62,15 +65,17 @@ def build_diagram(diagram_type: str) -> tuple[Figure, str | None]:
 
 
 class ConnectionDialog(QDialog):
-    """现场接线确认对话框：显示连接图并让用户明确确认。
+    """连接图对话框：单张图用于现场接线确认，组合图只用于查看。
 
-    连接图不可用（可选依赖缺失、图工厂失败或未知图类型）时**禁用确认按钮**：
-    看不到接线图就确认接线等于绕过现场核对，只允许取消。
+    单张连接图不可用（可选依赖缺失、图工厂失败或未知图类型）时**禁用确认按钮**：
+    看不到接线图就确认接线等于绕过现场核对，只允许取消。组合图没有确认语义，只提供
+    关闭按钮，因此渲染失败也允许关闭窗口。
     """
 
     def __init__(self, diagram_type: str, parent: Any = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("连接说明")
+        self.view_only = diagram_type in VIEW_ONLY_DIAGRAM_TYPES
+        self.setWindowTitle("线损测量连接图" if self.view_only else "连接说明")
         self.setModal(True)
         self.figure, self.unavailable_reason = build_diagram(diagram_type)
         self.resize(*_dialog_size(self.figure))
@@ -79,25 +84,34 @@ class ConnectionDialog(QDialog):
         layout.setSpacing(12)
         layout.addWidget(FigureCanvas(self.figure), 1)
         if self.unavailable_reason:
-            reason_label = QLabel(
-                f"{self.unavailable_reason}\n"
-                "连接图不可用时不能确认接线，请先修复后重新打开该对话框。"
+            hint = (
+                ""
+                if self.view_only
+                else "\n连接图不可用时不能确认接线，请先修复后重新打开该对话框。"
             )
+            reason_label = QLabel(f"{self.unavailable_reason}{hint}")
             reason_label.setWordWrap(True)
             reason_label.setProperty("tone", "danger")
             layout.addWidget(reason_label)
         buttons = QHBoxLayout()
         buttons.setSpacing(10)
-        self.cancel_btn = QPushButton("取消")
-        set_button_variant(self.cancel_btn, "secondary")
-        self.ok_btn = QPushButton("我已正确连接")
-        set_button_variant(self.ok_btn, "primary")
-        self.cancel_btn.clicked.connect(self.reject)
-        self.ok_btn.clicked.connect(self.accept)
-        self.ok_btn.setEnabled(self.unavailable_reason is None)
-        buttons.addStretch(1)
-        buttons.addWidget(self.cancel_btn)
-        buttons.addWidget(self.ok_btn)
+        if self.view_only:
+            self.close_btn = QPushButton("关闭")
+            set_button_variant(self.close_btn, "primary")
+            self.close_btn.clicked.connect(self.accept)
+            buttons.addStretch(1)
+            buttons.addWidget(self.close_btn)
+        else:
+            self.cancel_btn = QPushButton("取消")
+            set_button_variant(self.cancel_btn, "secondary")
+            self.ok_btn = QPushButton("我已正确连接")
+            set_button_variant(self.ok_btn, "primary")
+            self.cancel_btn.clicked.connect(self.reject)
+            self.ok_btn.clicked.connect(self.accept)
+            self.ok_btn.setEnabled(self.unavailable_reason is None)
+            buttons.addStretch(1)
+            buttons.addWidget(self.cancel_btn)
+            buttons.addWidget(self.ok_btn)
         layout.addLayout(buttons)
 
 

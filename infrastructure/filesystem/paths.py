@@ -31,6 +31,21 @@ class PathService:
         return self.root / "test_results"
 
     @property
+    def cable_loss_results_dir(self) -> Path:
+        """线损正式结果的阶段目录。"""
+        return self.test_results_dir / "cable_loss"
+
+    @property
+    def driver_mapping_results_dir(self) -> Path:
+        """驱动映射正式结果的阶段目录。"""
+        return self.test_results_dir / "driver_mapping"
+
+    @property
+    def amplifier_results_dir(self) -> Path:
+        """主功放正式结果的阶段目录。"""
+        return self.test_results_dir / "amplifier"
+
+    @property
     def config_file(self) -> Path:
         return self.root / "config.json"
 

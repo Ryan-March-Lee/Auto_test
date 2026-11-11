@@ -53,7 +53,23 @@ class ProjectPathsTests(unittest.TestCase):
             self.assertEqual(paths.config_file, Path(temporary_directory) / "config.json")
             self.assertEqual(paths.test_results_dir, Path(temporary_directory) / "test_results")
             self.assertEqual(paths.logs_dir, Path(temporary_directory) / "logs")
+            self.assertEqual(
+                paths.cable_loss_file,
+                paths.test_results_dir / "cable_loss_results.json",
+            )
             self.assertFalse(paths.test_results_dir.exists())
+
+    def test_stage_result_directories_derive_from_test_results_dir(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            paths = PathService(temporary_directory)
+            expected_root = Path(temporary_directory) / "test_results"
+
+            self.assertEqual(paths.cable_loss_results_dir, expected_root / "cable_loss")
+            self.assertEqual(paths.driver_mapping_results_dir, expected_root / "driver_mapping")
+            self.assertEqual(paths.amplifier_results_dir, expected_root / "amplifier")
+            self.assertFalse(paths.cable_loss_results_dir.exists())
+            self.assertFalse(paths.driver_mapping_results_dir.exists())
+            self.assertFalse(paths.amplifier_results_dir.exists())
 
 
 if __name__ == "__main__":

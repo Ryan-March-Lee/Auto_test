@@ -169,6 +169,9 @@ class DriverPowerMappingUseCase:
         ``test_results/cable_loss/`` 权威结果的引用，校验会跟随引用核对阶段文件），
         绝不回退到全局兼容结果或扫描其它运行目录，因此另一个运行的线损数据不会被
         自动使用，已被替换的输入也会被拒绝。
+
+        该约束属于调用方的运行契约；``ResultInputReader`` 只读取调用方传入的显式
+        路径，不判断路径是否属于当前运行。
         """
         if self.input_reader is None:
             raise ValueError("DriverPowerMappingUseCase 必须注入 input_reader")

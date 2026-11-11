@@ -224,6 +224,9 @@ class AmplifierMeasurementUseCase:
         权威结果的引用，校验会跟随引用核对阶段文件），绝不回退到全局兼容结果或按时间
         扫描的“最新结果”读取。组合入口已在预检时读取并交出同一份对象时直接复用，避免
         同一运行文件被读取两次。
+
+        该约束属于调用方的运行契约；``ResultInputReader`` 只读取调用方传入的显式路径，
+        不判断路径是否属于当前运行。
         """
         preloaded = self.request.calibration_inputs
         if preloaded is not None:

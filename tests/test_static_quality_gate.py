@@ -109,6 +109,9 @@ BROAD_CATCH_BASELINE = {
     "infrastructure/persistence/result_repository.py": (
         "FileMeasurementResultRepository.save#1",
     ),
+    "infrastructure/persistence/stage_result_repository.py": (
+        "FileStageResultRepository._discard#1",
+    ),
     "infrastructure/persistence/run_directory.py": (
         "create_empty_run#1",
     ),

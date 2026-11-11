@@ -69,6 +69,9 @@ ATOMIC_WRITE_IMPORTERS = {
     "infrastructure/persistence/instrument_registry.py": "设备表 instruments.json",
     "infrastructure/persistence/run_directory.py": "运行 manifest",
     "infrastructure/persistence/run_repository.py": "运行目录快照与阶段结果",
+    "infrastructure/persistence/stage_result_repository.py": (
+        "阶段目录正式测量结果（原子独占创建，不覆盖历史）"
+    ),
 }
 
 # 正式配置的序列化格式：``indent=4`` + 非 ASCII 原样保留。
@@ -158,6 +161,13 @@ JSON_WRITE_SITES = {
     ),
     ("infrastructure/persistence/run_repository.py", "RunRepository.write_run_json"): (
         "运行阶段结果 JSON",
+        CATEGORY_OTHER_JSON,
+    ),
+    (
+        "infrastructure/persistence/stage_result_repository.py",
+        "FileStageResultRepository._write_new_json",
+    ): (
+        "阶段目录正式测量结果 JSON（原子独占创建，不覆盖历史）",
         CATEGORY_OTHER_JSON,
     ),
     ("collect_baseline.py", "collect_baseline"): ("基线收集清单", CATEGORY_OTHER_JSON),

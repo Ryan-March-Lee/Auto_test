@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from application.ports.stage_result_repository import MeasurementStage
 from infrastructure.logging.app_logging import setup_logging
 from presentation.qt.application_coordinator import ApplicationCoordinator, RunFlowState
 from presentation.qt.composition import build_device_scanner_factory, default_paths
@@ -34,10 +33,14 @@ from presentation.qt.power_configuration_page import PowerConfigurationPage
 from presentation.qt.rack_overview_page import RackOverviewPage
 from presentation.qt.run_history_page import build_run_history_page
 from presentation.qt.history_view_model import HistoryViewModel
-from presentation.qt.measurement_state import MeasurementKind, MeasurementResultReference
 from presentation.qt.pages import PageContext, build_pages
 from presentation.qt.realtime_plot import RealTimePlotWidget
-from presentation.qt.stage_result_selection import choose_stage_result
+from presentation.qt.stage_result_selection import (
+    load_amplifier_cable_loss,
+    load_amplifier_driver_mapping,
+    load_cable_loss_result,
+    load_driver_mapping_cable_loss,
+)
 from presentation.qt.status_panel import StatusPanel
 from presentation.qt.theme import apply_theme, build_stylesheet
 from presentation.qt.visualization_page import VisualizationPage
@@ -57,15 +60,6 @@ def apply_light_theme(app: QApplication) -> None:
     基准字体，保证未单独设置样式的区域也是浅底深字。
     """
     apply_theme(app)
-
-
-def _choose_stage_result(window, stage, *, title: str, label: str):
-    """打开文件选择器并按显式路径加载阶段结果；取消/失败返回 ``None``。"""
-    return choose_stage_result(
-        window, results=window.gui_data_service.results,
-        directory=window.paths.cable_loss_results_dir, stage=stage,
-        title=title, label=label, log=window.add_log_message,
-    )
 
 
 class MainWindow(QMainWindow):
@@ -345,6 +339,12 @@ class MainWindow(QMainWindow):
         self.driver_mapping_page.load_cable_loss_requested.connect(
             self._load_driver_mapping_cable_loss
         )
+        self.amplifier_page.load_cable_loss_requested.connect(
+            self._load_amplifier_cable_loss
+        )
+        self.amplifier_page.load_driver_mapping_requested.connect(
+            self._load_amplifier_driver_mapping
+        )
 
     def _on_page_changed(self, index):
         """Keep page activation hooks aligned with the visible tab.
@@ -565,38 +565,19 @@ class MainWindow(QMainWindow):
 
     def _load_cable_loss_result(self):
         """由用户显式选择线损结果文件；取消或失败都保留当前显示。"""
-        selected = _choose_stage_result(
-            self, MeasurementStage.CABLE_LOSS,
-            title="选择线损测量结果", label="线损测量结果",
-        )
-        if selected is None:
-            return
-        _path, loaded = selected
-        self.cable_loss_page.show_loaded_result(
-            MeasurementResultReference(
-                result_id=loaded.result_id,
-                kind=MeasurementKind.CABLE_LOSS,
-                value=loaded.result,
-                source="stage_result",
-            ),
-            filename=loaded.filename,
-        )
+        load_cable_loss_result(self)
 
     def _load_driver_mapping_cable_loss(self):
         """显式选择驱动映射使用的线损结果；页面回显来源文件与测量时间。"""
-        selected = _choose_stage_result(
-            self, MeasurementStage.CABLE_LOSS,
-            title="选择驱动映射使用的线损测量结果",
-            label="驱动映射使用的线损测量结果",
-        )
-        if selected is None:
-            return
-        path, loaded = selected
-        self.driver_mapping_page.show_loaded_cable_loss(
-            path=path,
-            filename=loaded.filename,
-            created_at=loaded.result.created_at,
-        )
+        load_driver_mapping_cable_loss(self)
+
+    def _load_amplifier_cable_loss(self):
+        """显式选择主功放使用的线损结果；页面回显来源文件与测量时间。"""
+        load_amplifier_cable_loss(self)
+
+    def _load_amplifier_driver_mapping(self):
+        """显式选择主功放使用的驱动映射结果；与线损选择互不覆盖。"""
+        load_amplifier_driver_mapping(self)
 
     def refresh_history(self):
         """测量结束后刷新历史运行列表：页面自己容忍读取失败。"""

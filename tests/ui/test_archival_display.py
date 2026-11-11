@@ -230,6 +230,19 @@ class AmplifierPageArchivalLogTests(unittest.TestCase):
             archival_run_id_provider=lambda: self.run.run_id,
         )
         self.page.bind_controller(self.controller)
+        # 主功放测量要求先显式选择校准输入（本类默认有驱放，因此两类都要）。
+        self.page.show_loaded_cable_loss(
+            path="test_results/cable_loss/cable.json",
+            filename="cable.json",
+            created_at="2026-11-11T01:02:03+00:00",
+        )
+        self.page.show_loaded_driver_mapping(
+            path="test_results/driver_mapping/driver.json",
+            filename="driver.json",
+            created_at="2026-11-10T05:06:07+00:00",
+        )
+        # 选择日志不属于本类要验证的归档提示。
+        self.logs.clear()
 
     def test_start_announces_automatic_archival(self):
         self.page.start_measurement()

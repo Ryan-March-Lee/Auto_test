@@ -736,5 +736,158 @@ class DriverMappingCableLossSelectionTests(unittest.TestCase):
         self.assertIn("cable_loss 阶段目录", logs[0])
 
 
+class AmplifierCalibrationInputSelectionTests(unittest.TestCase):
+    """步骤 12：主功放页通过文件选择器显式选择线损与驱动映射。"""
+
+    def _window(self, results):
+        from presentation.qt.main_window import MainWindow
+
+        logs = []
+        page = Mock()
+        window = SimpleNamespace(
+            paths=SimpleNamespace(
+                cable_loss_results_dir=Path("test_results") / "cable_loss",
+                driver_mapping_results_dir=Path("test_results") / "driver_mapping",
+            ),
+            gui_data_service=SimpleNamespace(results=results),
+            amplifier_page=page,
+            add_log_message=logs.append,
+        )
+        return MainWindow, window, page, logs
+
+    def test_cancelled_cable_loss_selection_keeps_the_page_unchanged(self):
+        results = Mock()
+        MainWindow, window, page, logs = self._window(results)
+
+        with patch(
+            "presentation.qt.stage_result_selection.QFileDialog.getOpenFileName",
+            return_value=("", ""),
+        ):
+            MainWindow._load_amplifier_cable_loss(window)
+
+        results.load_stage_result.assert_not_called()
+        page.show_loaded_cable_loss.assert_not_called()
+        self.assertEqual(logs, ["已取消选择主功放使用的线损测量结果"])
+
+    def test_selected_cable_loss_is_loaded_and_its_source_is_shown(self):
+        from application.ports.stage_result_repository import MeasurementStage
+
+        loaded = SimpleNamespace(
+            result_id="stage::cable_loss::20261111T010203Z_a1b2c3d4",
+            filename="20261111T010203Z_a1b2c3d4.json",
+            result=SimpleNamespace(created_at="2026-11-11T01:02:03+00:00"),
+        )
+        results = Mock()
+        results.load_stage_result.return_value = loaded
+        MainWindow, window, page, logs = self._window(results)
+        selected = str(Path("test_results") / "cable_loss" / loaded.filename)
+
+        with patch(
+            "presentation.qt.stage_result_selection.QFileDialog.getOpenFileName",
+            return_value=(selected, "JSON 文件 (*.json)"),
+        ) as dialog:
+            MainWindow._load_amplifier_cable_loss(window)
+
+        _parent, title, directory, filters = dialog.call_args.args
+        self.assertEqual(title, "选择主功放使用的线损测量结果")
+        self.assertEqual(directory, str(window.paths.cable_loss_results_dir))
+        self.assertIn("*.json", filters)
+        results.load_stage_result.assert_called_once_with(
+            MeasurementStage.CABLE_LOSS, selected
+        )
+        page.show_loaded_cable_loss.assert_called_once_with(
+            path=selected,
+            filename=loaded.filename,
+            created_at=loaded.result.created_at,
+        )
+        page.show_loaded_driver_mapping.assert_not_called()
+        self.assertEqual(logs, [])
+
+    def test_broken_cable_loss_file_keeps_the_page_unchanged(self):
+        results = Mock()
+        results.load_stage_result.side_effect = ValueError(
+            "阶段结果路径必须直接位于 cable_loss 阶段目录"
+        )
+        MainWindow, window, page, logs = self._window(results)
+
+        with patch(
+            "presentation.qt.stage_result_selection.QFileDialog.getOpenFileName",
+            return_value=("test_results/cable_loss/broken.json", "JSON"),
+        ):
+            MainWindow._load_amplifier_cable_loss(window)
+
+        page.show_loaded_cable_loss.assert_not_called()
+        self.assertEqual(len(logs), 1)
+        self.assertIn("加载主功放使用的线损测量结果失败", logs[0])
+        self.assertIn("cable_loss 阶段目录", logs[0])
+
+    def test_selected_driver_mapping_is_loaded_from_its_own_stage_directory(self):
+        from application.ports.stage_result_repository import MeasurementStage
+
+        loaded = SimpleNamespace(
+            result_id="stage::driver_mapping::20261110T050607Z_0f1e2d3c",
+            filename="20261110T050607Z_0f1e2d3c.json",
+            result=SimpleNamespace(created_at="2026-11-10T05:06:07+00:00"),
+        )
+        results = Mock()
+        results.load_stage_result.return_value = loaded
+        MainWindow, window, page, logs = self._window(results)
+        selected = str(Path("test_results") / "driver_mapping" / loaded.filename)
+
+        with patch(
+            "presentation.qt.stage_result_selection.QFileDialog.getOpenFileName",
+            return_value=(selected, "JSON 文件 (*.json)"),
+        ) as dialog:
+            MainWindow._load_amplifier_driver_mapping(window)
+
+        _parent, title, directory, filters = dialog.call_args.args
+        self.assertEqual(title, "选择主功放使用的驱动映射结果")
+        self.assertEqual(directory, str(window.paths.driver_mapping_results_dir))
+        self.assertIn("*.json", filters)
+        results.load_stage_result.assert_called_once_with(
+            MeasurementStage.DRIVER_MAPPING, selected
+        )
+        page.show_loaded_driver_mapping.assert_called_once_with(
+            path=selected,
+            filename=loaded.filename,
+            created_at=loaded.result.created_at,
+        )
+        # 两个入口互不覆盖：加载驱动映射不会改写线损选择。
+        page.show_loaded_cable_loss.assert_not_called()
+        self.assertEqual(logs, [])
+
+    def test_cancelled_driver_mapping_selection_keeps_the_page_unchanged(self):
+        results = Mock()
+        MainWindow, window, page, logs = self._window(results)
+
+        with patch(
+            "presentation.qt.stage_result_selection.QFileDialog.getOpenFileName",
+            return_value=("", ""),
+        ):
+            MainWindow._load_amplifier_driver_mapping(window)
+
+        results.load_stage_result.assert_not_called()
+        page.show_loaded_driver_mapping.assert_not_called()
+        self.assertEqual(logs, ["已取消选择主功放使用的驱动映射结果"])
+
+    def test_broken_driver_mapping_file_keeps_the_page_unchanged(self):
+        results = Mock()
+        results.load_stage_result.side_effect = ValueError(
+            "阶段结果路径必须直接位于 driver_mapping 阶段目录"
+        )
+        MainWindow, window, page, logs = self._window(results)
+
+        with patch(
+            "presentation.qt.stage_result_selection.QFileDialog.getOpenFileName",
+            return_value=("test_results/driver_mapping/broken.json", "JSON"),
+        ):
+            MainWindow._load_amplifier_driver_mapping(window)
+
+        page.show_loaded_driver_mapping.assert_not_called()
+        self.assertEqual(len(logs), 1)
+        self.assertIn("加载主功放使用的驱动映射结果失败", logs[0])
+        self.assertIn("driver_mapping 阶段目录", logs[0])
+
+
 if __name__ == "__main__":
     unittest.main()

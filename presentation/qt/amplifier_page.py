@@ -5,11 +5,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Callable
 
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QDialog,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QLabel,
     QMessageBox,
     QPushButton,
     QVBoxLayout,
@@ -21,8 +23,12 @@ from .measurement_controls import (
     MeasurementAction,
     MeasurementControlPresenter,
 )
-from .measurement_start_facade import MeasurementStartFacade, StartMeasurementRequest
-from .measurement_state import MeasurementKind
+from .measurement_start_facade import (
+    MeasurementStartFacade,
+    StartMeasurementRequest,
+    is_busy,
+)
+from .measurement_state import MeasurementKind, StageResultSelection
 from .pages import PageControllerBindingMixin
 from .realtime_buffer import RealtimeMeasurementBuffer
 from .realtime_page import RealtimePageMixin
@@ -38,6 +44,11 @@ class AmplifierPage(
     RealtimePageMixin, ArchivalPageMixin, PageControllerBindingMixin, QWidget
 ):
     """主功放测量的输入、接线确认、进度和实时曲线展示。"""
+
+    # 页面只发出“用户想加载某类校准输入”的意图；打开文件选择器和应用层校验都由
+    # 窗口负责，页面不持有路径服务，也不读取 JSON。
+    load_cable_loss_requested = Signal()
+    load_driver_mapping_requested = Signal()
 
     def __init__(
         self,
@@ -58,6 +69,10 @@ class AmplifierPage(
         PageControllerBindingMixin.__init__(self)
         QWidget.__init__(self)
         self._run_provider = run_provider
+        # 用户在本次会话里显式选择的校准输入；页面切换不清除，只有重新选择才替换。
+        # 两个来源互不关联：可以来自不同日期、不同运行，兼容性由应用层校验。
+        self._cable_loss_selection: StageResultSelection | None = None
+        self._driver_mapping_selection: StageResultSelection | None = None
         self._start_facade = MeasurementStartFacade(
             config_path_provider=config_path_provider
         )
@@ -107,6 +122,14 @@ class AmplifierPage(
         self.show_amp_diagram_btn = QPushButton("查看连接图")
         set_button_variant(self.show_amp_diagram_btn, "secondary")
         self.show_amp_diagram_btn.clicked.connect(self.show_connection_diagram)
+        self.load_cable_loss_btn = QPushButton("加载线损结果")
+        set_button_variant(self.load_cable_loss_btn, "secondary")
+        self.load_cable_loss_btn.clicked.connect(self.load_cable_loss_requested.emit)
+        self.load_driver_mapping_btn = QPushButton("加载驱动映射结果")
+        set_button_variant(self.load_driver_mapping_btn, "secondary")
+        self.load_driver_mapping_btn.clicked.connect(
+            self.load_driver_mapping_requested.emit
+        )
         self.controls = MeasurementControlPresenter(
             MeasurementKind.AMPLIFIER,
             {
@@ -124,7 +147,22 @@ class AmplifierPage(
         ):
             control_layout.addWidget(button, 0, column)
         control_layout.addWidget(self.show_amp_diagram_btn, 1, 0, 1, 2)
+        control_layout.addWidget(self.load_cable_loss_btn, 2, 0, 1, 2)
+        control_layout.addWidget(self.load_driver_mapping_btn, 3, 0, 1, 2)
         left_layout.addWidget(control_group)
+        # 两类校准输入是主功放测量的前置条件：这里持续回显来源文件与测量时间。
+        # 驱动关闭时不需要驱动映射，入口与来源行随驱动模式一起隐藏。
+        self.cable_loss_source_label = QLabel()
+        self.cable_loss_source_label.setObjectName("emptyHint")
+        self.cable_loss_source_label.setWordWrap(True)
+        left_layout.addWidget(self.cable_loss_source_label)
+        self.driver_mapping_source_label = QLabel()
+        self.driver_mapping_source_label.setObjectName("emptyHint")
+        self.driver_mapping_source_label.setWordWrap(True)
+        left_layout.addWidget(self.driver_mapping_source_label)
+        self._sync_cable_loss_label()
+        self._sync_driver_mapping_label()
+        self._sync_driver_input_availability()
         self.archival_banner = self._build_archival_banner()
         left_layout.addWidget(self.archival_banner)
         # 进度与实时日志由窗口挂进这块容器，占满控制框以下的剩余高度。
@@ -153,6 +191,21 @@ class AmplifierPage(
         self._connect_signal(signals.finished, self._on_finished)
 
     def start_measurement(self) -> None:
+        # 校准输入是主功放测量的前置条件：驱动关闭只要求线损，驱动开启要求线损
+        # 和驱动映射。这里在每次点击时按当前驱动模式重新判定，配置在页面外被修改
+        # 后不会沿用上一次的结论；未选择时直接拦下，不打开接线确认、不提交
+        # controller，因此不会启动仪器连接。页面只判断“是否选过”，文件内容与
+        # 兼容性仍由应用层在测量开始前校验。
+        #
+        # 其它页面测量运行时先让 facade 统一报告“已有测量正在运行”，不要用
+        # 输入缺失掩盖更直接的原因；忙碌判据来自 facade 的 is_busy。
+        if self.controller is not None and not is_busy(self.controller):
+            self._sync_driver_input_availability()
+            missing = self._missing_input_message()
+            if missing is not None:
+                self._error_callback(missing)
+                self._log_callback("未选择主功放必需的校准输入，主功放测试未启动")
+                return
         # controller 只在 prepare 时读取一次：决策携带检查过的那个对象，接线对话框
         # 的嵌套事件循环返回后不会重新读取 self.controller。
         decision = self._start_facade.prepare(
@@ -174,6 +227,22 @@ class AmplifierPage(
             "主功放测试未能启动，未开始测量",
         )
 
+    def _missing_input_message(self) -> str | None:
+        """按当前驱动模式返回缺失的必需输入；齐备时返回 ``None``。"""
+        missing = []
+        if self._cable_loss_selection is None:
+            missing.append("线损测量结果")
+        if self._driver_mode_provider() and self._driver_mapping_selection is None:
+            missing.append("驱动映射测量结果")
+        if not missing:
+            return None
+        return "请先加载主功放使用的" + "和".join(missing)
+
+    def on_activated(self) -> None:
+        """配置可能在别的页面被修改：回到本页时重新同步驱动映射入口。"""
+        super().on_activated()
+        self._sync_driver_input_availability()
+
     def _confirm_start_connection(self) -> bool:
         """按驱动模式选择连接图，接受才算完成接线确认。"""
         diagram = (
@@ -190,6 +259,85 @@ class AmplifierPage(
     def show_connection_diagram(self) -> None:
         diagram = "amplifier_test" if self._driver_mode_provider() else "amplifier_test_no_driver"
         self._connection_dialog_factory(diagram, self).exec()
+
+    def show_loaded_cable_loss(
+        self, *, path: str, filename: str, created_at: str
+    ) -> None:
+        """记录用户显式选择的线损结果，并回显来源文件与测量时间。
+
+        文件内容、阶段目录边界与结果类型已由应用层校验；页面只保存窗口交回的事实，
+        不读取文件，也不把这里的显示当成测量输入的第二次校验。日志只说“已选择”，
+        不暗示正在运行（或下一次）测量已经消费了这份文件。
+        """
+        self._cable_loss_selection = StageResultSelection(
+            path=path, filename=filename, created_at=created_at
+        )
+        self._sync_cable_loss_label()
+        self._log_callback(
+            f"已选择主功放线损测量结果：{filename}"
+            f"（测量时间：{created_at}）"
+        )
+
+    def show_loaded_driver_mapping(
+        self, *, path: str, filename: str, created_at: str
+    ) -> None:
+        """记录用户显式选择的驱动映射结果；与线损选择互不覆盖。"""
+        self._driver_mapping_selection = StageResultSelection(
+            path=path, filename=filename, created_at=created_at
+        )
+        self._sync_driver_input_availability()
+        self._log_callback(
+            f"已选择主功放驱动映射测量结果：{filename}"
+            f"（测量时间：{created_at}）"
+        )
+
+    @property
+    def cable_loss_selection(self) -> StageResultSelection | None:
+        """当前显式选择的线损结果；未选择时为 ``None``。"""
+        return self._cable_loss_selection
+
+    @property
+    def driver_mapping_selection(self) -> StageResultSelection | None:
+        """当前显式选择的驱动映射结果；未选择时为 ``None``。"""
+        return self._driver_mapping_selection
+
+    def _sync_cable_loss_label(self) -> None:
+        selection = self._cable_loss_selection
+        label = getattr(self, "cable_loss_source_label", None)
+        if label is None:
+            return
+        if selection is None:
+            label.setText("未选择线损结果：开始前请先加载线损测量结果")
+            return
+        label.setText(
+            f"线损来源：{selection.filename}\n测量时间：{selection.created_at}"
+        )
+
+    def _sync_driver_mapping_label(self) -> None:
+        selection = self._driver_mapping_selection
+        label = getattr(self, "driver_mapping_source_label", None)
+        if label is None:
+            return
+        if selection is None:
+            label.setText("未选择驱动映射结果：开始前请先加载驱动映射测量结果")
+            return
+        label.setText(
+            f"驱动映射来源：{selection.filename}\n测量时间：{selection.created_at}"
+        )
+
+    def _sync_driver_input_availability(self) -> None:
+        """驱动关闭时隐藏驱动映射入口：该模式下它既不需要，也不会被检查。"""
+        required = bool(self._driver_mode_provider())
+        button = getattr(self, "load_driver_mapping_btn", None)
+        label = getattr(self, "driver_mapping_source_label", None)
+        if button is not None:
+            button.setVisible(required)
+        if label is not None:
+            label.setVisible(required)
+            if required:
+                self._sync_driver_mapping_label()
+            else:
+                label.setText("无驱放测试不需要驱动映射结果")
 
     def _update_plot(self, data: Mapping[str, Any]) -> None:
         update_plot = getattr(self.amplifier_plot_widget, "update_plot", None)

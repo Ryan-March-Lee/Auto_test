@@ -696,14 +696,21 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self._silence_dialogs()
         window = self._window()
         with patch(
-            "presentation.qt.main_window._choose_stage_result", return_value=None
+            "presentation.qt.stage_result_selection.choose_stage_result",
+            return_value=None,
         ) as chooser:
             window.driver_mapping_page.load_cable_loss_btn.click()
             self.app.processEvents()
 
         chooser.assert_called_once()
         self.assertIs(chooser.call_args.args[0], window)
-        self.assertEqual(chooser.call_args.args[1], MeasurementStage.CABLE_LOSS)
+        self.assertEqual(
+            chooser.call_args.kwargs["stage"], MeasurementStage.CABLE_LOSS
+        )
+        self.assertEqual(
+            chooser.call_args.kwargs["directory"],
+            self.paths.cable_loss_results_dir,
+        )
         self.assertIsNone(window.driver_mapping_page.cable_loss_selection)
 
     def test_driver_mapping_accepts_an_existing_cable_loss_stage_file(self):
@@ -755,6 +762,112 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         page.start_measurement()
 
         self.assertEqual(errors, ["请先加载驱动映射使用的线损测量结果"])
+        self.assertFalse(window.measurement_controller.state.is_active)
+        self.assertIsNone(page.cable_loss_selection)
+
+    def test_amplifier_load_buttons_route_to_the_stage_result_selector(self):
+        from application.ports.stage_result_repository import MeasurementStage
+
+        self._silence_dialogs()
+        window = self._window()
+        with patch(
+            "presentation.qt.stage_result_selection.choose_stage_result",
+            return_value=None,
+        ) as chooser:
+            window.amplifier_page.load_cable_loss_btn.click()
+            window.amplifier_page.load_driver_mapping_btn.click()
+            self.app.processEvents()
+
+        self.assertEqual(chooser.call_count, 2)
+        first, second = chooser.call_args_list
+        self.assertIs(first.args[0], window)
+        self.assertEqual(
+            first.kwargs["stage"], MeasurementStage.CABLE_LOSS
+        )
+        self.assertEqual(
+            first.kwargs["directory"], self.paths.cable_loss_results_dir
+        )
+        self.assertIs(second.args[0], window)
+        self.assertEqual(
+            second.kwargs["stage"], MeasurementStage.DRIVER_MAPPING
+        )
+        self.assertEqual(
+            second.kwargs["directory"], self.paths.driver_mapping_results_dir
+        )
+        self.assertIsNone(window.amplifier_page.cable_loss_selection)
+        self.assertIsNone(window.amplifier_page.driver_mapping_selection)
+
+    def test_amplifier_accepts_existing_cable_loss_and_driver_mapping_stage_files(self):
+        """真实阶段文件经窗口加载后落到页面：两个来源互不覆盖。"""
+        from application.dto import (
+            CableLossMeasurementResult,
+            CableLossRow,
+            DriverPowerMappingMeasurementResult,
+            generate_measurement_id,
+        )
+        from application.ports.stage_result_repository import MeasurementStage
+        from infrastructure.persistence.stage_result_repository import (
+            FileStageResultRepository,
+        )
+
+        self._silence_dialogs()
+        repository = FileStageResultRepository(paths=self.paths)
+        cable_result = CableLossMeasurementResult(
+            run_id="run-amplifier",
+            measurement_id=generate_measurement_id(),
+            points=(
+                CableLossRow(frequency_ghz="3.5", cable_losses={"cable1": 1.25}),
+            ),
+        )
+        cable_reference = repository.save(MeasurementStage.CABLE_LOSS, cable_result)
+        driver_result = DriverPowerMappingMeasurementResult(
+            run_id="run-amplifier",
+            measurement_id=generate_measurement_id(),
+        )
+        driver_reference = repository.save(
+            MeasurementStage.DRIVER_MAPPING, driver_result
+        )
+        window = self._window()
+        # 驱动映射来源行只在有驱放模式下可见；先把窗口切到该模式。
+        window._enter_test_mode(True)
+
+        with patch(
+            "presentation.qt.stage_result_selection.QFileDialog.getOpenFileName",
+            side_effect=[
+                (str(cable_reference.path), "JSON 文件 (*.json)"),
+                (str(driver_reference.path), "JSON 文件 (*.json)"),
+            ],
+        ):
+            window._load_amplifier_cable_loss()
+            window._load_amplifier_driver_mapping()
+
+        page = window.amplifier_page
+        self.assertEqual(page.cable_loss_selection.filename, cable_reference.path.name)
+        self.assertEqual(
+            page.cable_loss_selection.created_at, cable_result.created_at
+        )
+        self.assertEqual(
+            page.driver_mapping_selection.filename, driver_reference.path.name
+        )
+        self.assertEqual(
+            page.driver_mapping_selection.created_at, driver_result.created_at
+        )
+        self.assertIn(cable_reference.path.name, page.cable_loss_source_label.text())
+        self.assertIn(
+            driver_reference.path.name, page.driver_mapping_source_label.text()
+        )
+
+    def test_amplifier_start_without_chosen_inputs_never_starts(self):
+        self._silence_dialogs()
+        window = self._window()
+        page = window.amplifier_page
+        errors = []
+        page._error_callback = errors.append
+
+        page.start_measurement()
+
+        self.assertTrue(errors)
+        self.assertIn("请先加载主功放使用的", errors[0])
         self.assertFalse(window.measurement_controller.state.is_active)
         self.assertIsNone(page.cable_loss_selection)
 

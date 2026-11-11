@@ -50,8 +50,10 @@ from domain.run.models import (
 )
 from infrastructure.persistence import artifact_generator
 from infrastructure.persistence.artifact_generator import ArchiveArtifactGenerator
+from infrastructure.filesystem.paths import PathService
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 from infrastructure.persistence.run_repository import RunRepository
+from infrastructure.persistence.stage_result_repository import FileStageResultRepository
 from application.configuration_authoring import author_official_configuration
 from tests.contract_doubles import amplifier_inputs
 from tests.fakes import safety_cleanup_for
@@ -225,10 +227,12 @@ class SuccessPathArchivalTests(unittest.TestCase):
         self._temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self._temporary.cleanup)
         self.base = Path(self._temporary.name)
+        self.paths = PathService(self.base)
         self.repository = RunRepository(self.base / "runs")
         self.result_repository = FileMeasurementResultRepository(
             results_directory=self.base / "test_results"
         )
+        self.stage_repository = FileStageResultRepository(paths=self.paths)
         self._plot_patch = patch.object(
             artifact_generator, "_default_report_plots", _fake_report_plots
         )
@@ -270,7 +274,10 @@ class SuccessPathArchivalTests(unittest.TestCase):
             measurement_port=instrument,
             safety_cleanup=safety_cleanup_for(instrument),
             result_repository=self.result_repository,
-            stage_recorder=RunStageRecorder(self.repository, RUN_ID),
+            stage_result_repository=self.stage_repository,
+            stage_recorder=RunStageRecorder(
+                self.repository, RUN_ID, stage_results=self.stage_repository
+            ),
             archival_service=archival,
             safety_options={"owns_measurement_port": True},
         )
@@ -555,6 +562,7 @@ class CompositionWiringTests(unittest.TestCase):
         self._temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self._temporary.cleanup)
         self.base = Path(self._temporary.name)
+        self.paths = PathService(self.base)
         self.repository = RunRepository(self.base / "runs")
         self.result_repository = FileMeasurementResultRepository(
             results_directory=self.base / "test_results"
@@ -578,6 +586,7 @@ class CompositionWiringTests(unittest.TestCase):
             prepared_run=prepared,
             measurement_port=_Instrument(),
             result_repository=self.result_repository,
+            paths=self.paths,
             sleep_fn=lambda _: None,
         )
         cable_case.measure_all_frequencies()
@@ -587,6 +596,7 @@ class CompositionWiringTests(unittest.TestCase):
             prepared_run=prepared,
             measurement_port=_Instrument(),
             result_repository=self.result_repository,
+            paths=self.paths,
             sleep_fn=lambda _: None,
         )
         self.assertIsInstance(amplifier_case.archival_service, ResultArchivalService)

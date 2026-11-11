@@ -151,11 +151,12 @@ class DriverPowerMappingUseCase:
     def _load_loss_data(self) -> Mapping[str, Any]:
         """解析本次运行实际消费的线损输入。
 
-        当前运行目录是唯一输入来源：通过
+        当前运行 manifest 是唯一输入来源：通过
         :meth:`RunStageRecorder.verified_result_path` 强制校验
-        ``inputs/cable_loss.json`` 已完成、已登记且校验值一致，绝不回退到全局兼容
-        结果或扫描其它运行目录，因此另一个运行的线损数据不会被自动使用，已被替换
-        的输入也会被拒绝。
+        ``inputs/cable_loss.json`` 已完成、已登记且校验值一致（步骤 7 起该文件是指向
+        ``test_results/cable_loss/`` 权威结果的引用，校验会跟随引用核对阶段文件），
+        绝不回退到全局兼容结果或扫描其它运行目录，因此另一个运行的线损数据不会被
+        自动使用，已被替换的输入也会被拒绝。
         """
         if self.input_reader is None:
             raise ValueError("DriverPowerMappingUseCase 必须注入 input_reader")

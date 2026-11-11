@@ -23,6 +23,7 @@ from .amplifier_inputs import AmplifierMeasurementInputs
 
 if TYPE_CHECKING:  # pragma: no cover - 仅用于类型标注，避免运行时循环导入
     from application.archival_service import ResultArchivalService
+    from application.ports.stage_result_repository import StageResultRepository
     from application.run_stages import RunStageRecorder
     from instrument.ports import MeasurementInstrumentPort
 
@@ -55,6 +56,9 @@ class MeasurementRequest:
     cancellation_token: CancellationToken | None = None
     result_repository: MeasurementResultRepository | None = None
     input_reader: ResultInputReader | None = None
+    # 阶段正式结果的独立仓库：步骤 7 起线损结果写入 ``test_results/cable_loss/``，
+    # 运行目录只登记引用。组装层必须为会产生正式结果的用例注入它。
+    stage_result_repository: "StageResultRepository | None" = None
     # 阶段成功提交后的自动归档服务；组装层总是注入，省略时只是不生成交付产物。
     archival_service: "ResultArchivalService | None" = None
     _expected_measurement_type: ClassVar[MeasurementType | None] = None
@@ -158,9 +162,10 @@ class AmplifierCalibrationInputs:
     """本次运行已经读取并结构校验过的主功放校准输入。
 
     组合入口在连接仪器前必须读取 ``inputs/cable_loss.json``（以及驱动模式下的
-    ``inputs/driver_mapping.json``）来完成预检。把这些对象随请求交给用例，入口预检
-    与实际测量消费的就是同一份对象：既不会重复读取同一个运行文件，也不会出现“入口
-    校验的是 A、测量消费的是 B”的漂移。
+    ``inputs/driver_mapping.json``）来完成预检。步骤 7 起线损的这些运行路径登记的是
+    指向阶段目录权威结果的引用，预检按引用读取并核对阶段文件。把这些对象随请求交给
+    用例，入口预检与实际测量消费的就是同一份对象：既不会重复读取同一个运行文件，
+    也不会出现“入口校验的是 A、测量消费的是 B”的漂移。
 
     只允许组合入口在完成运行目录校验（``verified_result_path`` 与校验值比对）后填写；
     独立构造请求的调用方省略本对象，用例按运行目录自行读取。

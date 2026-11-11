@@ -39,7 +39,7 @@ from application.ports.measurement_session import (
     SafetyCleanupError,
 )
 from application.run_service import RunNotResumable
-from application.run_stages import StageInputUnavailable
+from application.run_stages import StageInputUnavailable, StageResultNotRecorded
 from instrument.drivers.spectrum_analyzer import SpectrumAnalyzerMeasurementError
 from instrument.flow import SafetyShutdownError
 from instrument.flow.cleanup import cleanup_measurement
@@ -109,6 +109,7 @@ class ExistingErrorClassificationTests(unittest.TestCase):
             AmplifierCalibrationError,
             AmplifierInputError,
             StageInputUnavailable,
+            StageResultNotRecorded,
             RunNotResumable,
             ConfigurationAuthoringError,
             ConfigBackfillError,

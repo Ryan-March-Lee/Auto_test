@@ -1,10 +1,12 @@
-"""步骤 4 测试：把线损结果迁移到运行目录契约。
+"""步骤 7 测试：线损正式结果写入独立阶段目录。
 
 覆盖验收标准：
 
-- 线损结果必定归属于当前 ``run_id``，写入 ``inputs/cable_loss.json`` 并登记 manifest。
-- 失败、取消和部分完成不会把线损阶段标记为完成，也不会生成阶段结果文件。
-- 旧的全局兼容结果文件仍会写入，旧读取路径继续可用。
+- 正式结果落在 ``test_results/cable_loss/<measurement_id>.json``，带测量身份；
+- 运行目录只登记引用，不保存同一正式结果的副本；
+- 失败、取消和部分完成不会生成 ``completed`` 阶段结果文件；
+- 重复测量产生多个结果文件，不覆盖旧结果；
+- 旧运行目录中的完整结果文档仍可按原路径读取（只读兼容）。
 """
 
 import json
@@ -16,17 +18,30 @@ from unittest.mock import patch
 
 from app.cancellation import CancellationToken, MeasurementCancelled
 from app.gui_runtime import create_cable_loss_measurement, prepare_configuration
-from application.dto import CableLossMeasurementRequest
+from application.dto import (
+    CableLossMeasurementRequest,
+    measurement_result_from_document,
+    validate_generated_measurement_id,
+)
 from application.measurements import CableLossUseCase
-from application.run_stages import RunStageRecorder, StageInputUnavailable
+from application.ports.stage_result_repository import MeasurementStage, StageResultReference
+from application.run_stages import (
+    STAGE_RESULT_REFERENCE_SCHEMA,
+    RunStageRecorder,
+    StageInputUnavailable,
+    StageResultNotRecorded,
+)
 from domain.run.models import (
     CABLE_LOSS_INPUT_PATH,
     RunStatus,
     StageStatus,
 )
+from infrastructure.filesystem.paths import PathService
+from infrastructure.gui_data_service import ResultQueryAdapter
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 from infrastructure.persistence.run_history_repository import FileRunHistoryRepository
 from infrastructure.persistence.run_repository import RunRepository
+from infrastructure.persistence.stage_result_repository import FileStageResultRepository
 from application.configuration_authoring import author_official_configuration
 from tests.fakes import safety_cleanup_for
 
@@ -145,10 +160,12 @@ class CableLossRunStageTests(unittest.TestCase):
         self._temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self._temporary.cleanup)
         self.base = Path(self._temporary.name)
+        self.paths = PathService(self.base)
         self.repository = RunRepository(self.base / "runs")
         self.result_repository = FileMeasurementResultRepository(
             results_directory=self.base / "test_results"
         )
+        self.stage_repository = FileStageResultRepository(paths=self.paths)
 
     def _create_run(self, run_id=RUN_ID):
         layout, _manifest = self.repository.create_run(
@@ -158,7 +175,9 @@ class CableLossRunStageTests(unittest.TestCase):
 
     def _request(self, run_id=RUN_ID, *, instrument=None, token=None):
         layout = self._create_run(run_id)
-        recorder = RunStageRecorder(self.repository, run_id)
+        recorder = RunStageRecorder(
+            self.repository, run_id, stage_results=self.stage_repository
+        )
         instrument = instrument or _Instrument()
         return CableLossMeasurementRequest(
             configuration={"test_frequencies": [1.0], "attenuator": {"type": "10dB"}},
@@ -167,27 +186,43 @@ class CableLossRunStageTests(unittest.TestCase):
             measurement_port=instrument,
             safety_cleanup=safety_cleanup_for(instrument),
             result_repository=self.result_repository,
+            stage_result_repository=self.stage_repository,
             stage_recorder=recorder,
             cancellation_token=token,
             safety_options={"owns_measurement_port": True},
         )
 
-    def test_completed_result_belongs_to_current_run(self):
+    def _stage_result_files(self):
+        directory = self.paths.cable_loss_results_dir
+        if not directory.is_dir():
+            return []
+        return sorted(path.name for path in directory.iterdir())
+
+    def _stage_result_path(self, measurement_id):
+        return self.paths.cable_loss_results_dir / f"{measurement_id}.json"
+
+    def test_completed_result_belongs_to_the_stage_directory(self):
         request = self._request()
         use_case = CableLossUseCase(request, sleep_fn=lambda _: None)
 
         use_case.measure_all_frequencies()
         manifest = self.repository.load_manifest(RUN_ID)
         self.assertEqual(manifest.stage("cable_loss").status, StageStatus.RUNNING)
+        self.assertEqual(self._stage_result_files(), [])
         self.assertFalse((self.base / "runs" / RUN_ID / CABLE_LOSS_INPUT_PATH).exists())
 
         result = use_case.continue_to_step2()
 
-        result_path = self.base / "runs" / RUN_ID / CABLE_LOSS_INPUT_PATH
-        self.assertTrue(result_path.is_file())
-        payload = json.loads(result_path.read_text(encoding="utf-8"))
-        self.assertEqual(payload["run_id"], RUN_ID)
-        self.assertIn("cable_losses", payload)
+        identity = validate_generated_measurement_id(result.measurement_id)
+        stage_path = self._stage_result_path(identity)
+        self.assertTrue(stage_path.is_file())
+        document = json.loads(stage_path.read_text(encoding="utf-8"))
+        self.assertEqual(document["run_id"], RUN_ID)
+        self.assertEqual(document["measurement_id"], identity)
+        self.assertIn("cable_losses", document)
+        parsed = measurement_result_from_document(document)
+        self.assertEqual(parsed.measurement_id, identity)
+        self.assertIs(parsed.measurement_type, MeasurementStage.CABLE_LOSS.measurement_type)
 
         manifest = self.repository.load_manifest(RUN_ID)
         self.assertEqual(manifest.status, RunStatus.RUNNING)
@@ -195,16 +230,77 @@ class CableLossRunStageTests(unittest.TestCase):
         self.assertEqual(stage.status, StageStatus.COMPLETED)
         self.assertEqual(stage.result, CABLE_LOSS_INPUT_PATH)
 
+        # 运行目录只有引用文档：路径、身份与摘要指向阶段目录文件，不含结果正文。
+        reference_path = self.base / "runs" / RUN_ID / CABLE_LOSS_INPUT_PATH
+        self.assertTrue(reference_path.is_file())
+        pointer = json.loads(reference_path.read_text(encoding="utf-8"))
+        self.assertEqual(pointer["schema"], STAGE_RESULT_REFERENCE_SCHEMA)
+        self.assertEqual(pointer["stage"], MeasurementStage.CABLE_LOSS.value)
+        self.assertEqual(pointer["measurement_id"], identity)
+        self.assertEqual(Path(pointer["path"]), stage_path)
+        self.assertNotIn("cable_losses", pointer)
+
         registered = {item.path: item for item in manifest.inputs}
         self.assertIn(CABLE_LOSS_INPUT_PATH, registered)
         self.assertIsNotNone(registered[CABLE_LOSS_INPUT_PATH].sha256)
         self.assertEqual(
-            registered[CABLE_LOSS_INPUT_PATH].size_bytes, result_path.stat().st_size
+            registered[CABLE_LOSS_INPUT_PATH].size_bytes,
+            reference_path.stat().st_size,
         )
 
         self.assertEqual(
-            result.result_reference["archive_path"], str(result_path)
+            result.result_reference["archive_path"], str(stage_path)
         )
+
+    def test_stage_reference_resolves_back_to_the_stage_file(self):
+        request = self._request()
+        use_case = CableLossUseCase(request, sleep_fn=lambda _: None)
+        use_case.measure_all_frequencies()
+        result = use_case.continue_to_step2()
+
+        verified = request.stage_recorder.verified_result_path("cable_loss")
+
+        self.assertEqual(verified, self._stage_result_path(result.measurement_id))
+        loaded = self.stage_repository.load(MeasurementStage.CABLE_LOSS, verified)
+        self.assertEqual(loaded.result.measurement_id, result.measurement_id)
+
+    def test_replaced_stage_file_is_rejected_before_consumption(self):
+        request = self._request()
+        use_case = CableLossUseCase(request, sleep_fn=lambda _: None)
+        use_case.measure_all_frequencies()
+        result = use_case.continue_to_step2()
+        stage_path = self._stage_result_path(result.measurement_id)
+        stage_path.write_text(
+            json.dumps(
+                {
+                    "measurement_type": "cable_loss",
+                    "status": "completed",
+                    "run_id": RUN_ID,
+                    "measurement_id": result.measurement_id,
+                    "created_at": "2026-10-22T15:30:00+00:00",
+                    "cable_losses": {"1.0": {"cable1": 9.0}},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(StageInputUnavailable, "已被替换"):
+            request.stage_recorder.verified_result_path("cable_loss")
+
+    def test_legacy_run_result_document_keeps_its_run_path(self):
+        """旧运行目录中的完整结果文档没有引用标记，仍按原路径返回。"""
+        layout = self._create_run()
+        recorder = RunStageRecorder(self.repository, RUN_ID)
+        recorder.start("cable_loss", now=CREATED_AT)
+        recorder.complete(
+            "cable_loss",
+            {"run_id": RUN_ID, "cable_losses": {"1.0": {"cable1": 0.5}}},
+            now=CREATED_AT,
+        )
+
+        verified = recorder.verified_result_path("cable_loss")
+
+        self.assertEqual(verified, layout.run_directory / CABLE_LOSS_INPUT_PATH)
 
     def test_global_compatibility_copy_is_not_written(self):
         request = self._request()
@@ -212,11 +308,11 @@ class CableLossRunStageTests(unittest.TestCase):
         use_case.measure_all_frequencies()
         result = use_case.continue_to_step2()
 
-        # 正式结果只落在运行目录并登记 manifest，全局兼容目录不再出现结果文件。
+        # 正式结果只落在阶段目录，全局兼容目录不再出现结果文件。
         self.assertFalse((self.base / "test_results" / "cable_loss_results.json").exists())
         self.assertEqual(
             result.result_reference["archive_path"],
-            str(self.base / "runs" / RUN_ID / CABLE_LOSS_INPUT_PATH),
+            str(self._stage_result_path(result.measurement_id)),
         )
 
     def test_failure_marks_stage_failed_without_result_file(self):
@@ -230,6 +326,7 @@ class CableLossRunStageTests(unittest.TestCase):
         stage = manifest.stage("cable_loss")
         self.assertEqual(stage.status, StageStatus.FAILED)
         self.assertIn("measurement failed", stage.error)
+        self.assertEqual(self._stage_result_files(), [])
         self.assertFalse((self.base / "runs" / RUN_ID / CABLE_LOSS_INPUT_PATH).exists())
 
     def test_cancel_while_waiting_marks_stage_cancelled_without_result_file(self):
@@ -241,6 +338,7 @@ class CableLossRunStageTests(unittest.TestCase):
 
         manifest = self.repository.load_manifest(RUN_ID)
         self.assertEqual(manifest.stage("cable_loss").status, StageStatus.CANCELLED)
+        self.assertEqual(self._stage_result_files(), [])
         self.assertFalse((self.base / "runs" / RUN_ID / CABLE_LOSS_INPUT_PATH).exists())
 
     def test_cancelled_token_does_not_complete_the_stage(self):
@@ -254,6 +352,7 @@ class CableLossRunStageTests(unittest.TestCase):
 
         manifest = self.repository.load_manifest(RUN_ID)
         self.assertEqual(manifest.stage("cable_loss").status, StageStatus.CANCELLED)
+        self.assertEqual(self._stage_result_files(), [])
         self.assertFalse((self.base / "runs" / RUN_ID / CABLE_LOSS_INPUT_PATH).exists())
 
     def test_completed_stage_is_not_overwritten_by_later_failure_or_cancel(self):
@@ -384,7 +483,10 @@ class CableLossRunStageTests(unittest.TestCase):
             measurement_port=instrument,
             safety_cleanup=safety_cleanup_for(instrument),
             result_repository=_UnwritableResultRepository(),
-            stage_recorder=RunStageRecorder(self.repository, RUN_ID),
+            stage_result_repository=self.stage_repository,
+            stage_recorder=RunStageRecorder(
+                self.repository, RUN_ID, stage_results=self.stage_repository
+            ),
             safety_options={"owns_measurement_port": True},
         )
         use_case = CableLossUseCase(request, sleep_fn=lambda _: None)
@@ -392,11 +494,15 @@ class CableLossRunStageTests(unittest.TestCase):
 
         result = use_case.continue_to_step2()
 
-        result_path = layout.run_directory / CABLE_LOSS_INPUT_PATH
-        self.assertTrue(result_path.is_file())
+        self.assertEqual(self._stage_result_files(), [f"{result.measurement_id}.json"])
+        reference_path = layout.run_directory / CABLE_LOSS_INPUT_PATH
+        self.assertTrue(reference_path.is_file())
         manifest = self.repository.load_manifest(RUN_ID)
         self.assertEqual(manifest.stage("cable_loss").status, StageStatus.COMPLETED)
-        self.assertEqual(result.result_reference["archive_path"], str(result_path))
+        self.assertEqual(
+            result.result_reference["archive_path"],
+            str(self._stage_result_path(result.measurement_id)),
+        )
         self.assertNotIn("legacy_copy_path", result.result_reference)
 
     def test_composition_entry_creates_contract_run_and_writes_stage_result(self):
@@ -417,15 +523,21 @@ class CableLossRunStageTests(unittest.TestCase):
             prepared_run=prepared,
             measurement_port=_Instrument(),
             result_repository=self.result_repository,
+            paths=self.paths,
             sleep_fn=lambda _: None,
         )
         use_case.measure_all_frequencies()
-        use_case.continue_to_step2()
+        result = use_case.continue_to_step2()
 
         result_path = prepared.run_directory / "inputs" / "cable_loss.json"
         self.assertTrue(result_path.is_file())
         self.assertEqual(
             json.loads(result_path.read_text(encoding="utf-8"))["run_id"], RUN_ID
+        )
+        stage_path = self._stage_result_path(result.measurement_id)
+        self.assertTrue(stage_path.is_file())
+        self.assertEqual(
+            json.loads(stage_path.read_text(encoding="utf-8"))["run_id"], RUN_ID
         )
         self.assertEqual(
             self.repository.load_manifest(RUN_ID).stage("cable_loss").status,
@@ -434,6 +546,157 @@ class CableLossRunStageTests(unittest.TestCase):
         self.assertFalse(
             (self.base / "test_results" / "cable_loss_results.json").is_file()
         )
+
+    def test_repeated_measurements_do_not_overwrite_old_results(self):
+        first = CableLossUseCase(self._request(RUN_ID), sleep_fn=lambda _: None)
+        first.measure_all_frequencies()
+        first_result = first.continue_to_step2()
+
+        second = CableLossUseCase(self._request(OTHER_RUN_ID), sleep_fn=lambda _: None)
+        second.measure_all_frequencies()
+        second_result = second.continue_to_step2()
+
+        self.assertNotEqual(first_result.measurement_id, second_result.measurement_id)
+        self.assertEqual(
+            self._stage_result_files(),
+            sorted(
+                [
+                    f"{first_result.measurement_id}.json",
+                    f"{second_result.measurement_id}.json",
+                ]
+            ),
+        )
+        first_document = json.loads(
+            self._stage_result_path(first_result.measurement_id).read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(first_document["run_id"], RUN_ID)
+
+    def test_registration_failure_keeps_the_formal_result_and_reports_it(self):
+        """阶段文件已保存、运行引用登记失败：保留正式结果，错误说明给出位置。"""
+        layout = self._create_run()
+        instrument = _Instrument()
+        recorder = RunStageRecorder(
+            _FailingCommitRepository(self.repository),
+            RUN_ID,
+            stage_results=self.stage_repository,
+        )
+        request = CableLossMeasurementRequest(
+            configuration={"test_frequencies": [1.0], "attenuator": {"type": "10dB"}},
+            context=_Context(RUN_ID),
+            run_directory=layout.run_directory,
+            measurement_port=instrument,
+            safety_cleanup=safety_cleanup_for(instrument),
+            result_repository=self.result_repository,
+            stage_result_repository=self.stage_repository,
+            stage_recorder=recorder,
+            safety_options={"owns_measurement_port": True},
+        )
+        use_case = CableLossUseCase(request, sleep_fn=lambda _: None)
+        use_case.measure_all_frequencies()
+
+        with self.assertRaisesRegex(StageResultNotRecorded, "已保存到") as caught:
+            use_case.continue_to_step2()
+
+        reference = caught.exception.reference
+        self.assertEqual(
+            reference.path, self._stage_result_path(reference.measurement_id)
+        )
+        # 已提交的正式结果没有被删除或截断，阶段仓库仍能按正式契约读回。
+        self.assertTrue(reference.path.is_file())
+        loaded = self.stage_repository.load(
+            MeasurementStage.CABLE_LOSS, reference.path
+        )
+        self.assertEqual(loaded.result.measurement_id, reference.measurement_id)
+        self.assertEqual(loaded.result.status.value, "completed")
+
+        # 运行阶段仍收敛为 failed，但说明里给出阶段文件位置，而不是“没有结果”。
+        manifest = self.repository.load_manifest(RUN_ID)
+        stage = manifest.stage("cable_loss")
+        self.assertEqual(stage.status, StageStatus.FAILED)
+        self.assertIn(str(reference.path), stage.error)
+        # 无法兑现的引用文档与 manifest 登记都已回滚，不留下“完成但无结果”的记录。
+        self.assertFalse((layout.run_directory / CABLE_LOSS_INPUT_PATH).exists())
+        self.assertNotIn(
+            CABLE_LOSS_INPUT_PATH, [item.path for item in manifest.inputs]
+        )
+
+    def test_complete_with_stage_result_verifies_the_stage_file(self):
+        """登记引用前复核阶段目录文件：缺失或摘要不符时拒绝登记。"""
+        first = CableLossUseCase(self._request(RUN_ID), sleep_fn=lambda _: None)
+        first.measure_all_frequencies()
+        result = first.continue_to_step2()
+
+        layout = self._create_run(OTHER_RUN_ID)
+        recorder = RunStageRecorder(
+            self.repository, OTHER_RUN_ID, stage_results=self.stage_repository
+        )
+        recorder.start("cable_loss", now=CREATED_AT)
+        stage_path = self._stage_result_path(result.measurement_id)
+        tampered = StageResultReference(
+            stage=MeasurementStage.CABLE_LOSS,
+            measurement_id=result.measurement_id,
+            path=stage_path,
+            sha256="0" * 64,
+            size_bytes=stage_path.stat().st_size,
+        )
+
+        with self.assertRaisesRegex(ValueError, "不一致"):
+            recorder.complete_with_stage_result(
+                "cable_loss", tampered, now=CREATED_AT
+            )
+
+        missing_identity = "20261022T160000Z_0123456789abcdef0123456789abcdef"
+        missing = StageResultReference(
+            stage=MeasurementStage.CABLE_LOSS,
+            measurement_id=missing_identity,
+            path=self._stage_result_path(missing_identity),
+            sha256="0" * 64,
+            size_bytes=0,
+        )
+        with self.assertRaisesRegex(ValueError, "不存在"):
+            recorder.complete_with_stage_result(
+                "cable_loss", missing, now=CREATED_AT
+            )
+
+        # 权威结果不受影响，第二个运行也没有登记任何“完成”声明。
+        self.assertEqual(self._stage_result_files(), [f"{result.measurement_id}.json"])
+        manifest = self.repository.load_manifest(OTHER_RUN_ID)
+        self.assertEqual(manifest.stage("cable_loss").status, StageStatus.RUNNING)
+        self.assertIsNone(manifest.stage("cable_loss").result)
+        self.assertFalse((layout.run_directory / CABLE_LOSS_INPUT_PATH).exists())
+
+    def test_result_query_adapter_reads_the_stage_file_behind_the_run_reference(self):
+        """历史列表/最新结果/导出跟随运行引用读取阶段目录中的权威结果。"""
+        request = self._request()
+        use_case = CableLossUseCase(request, sleep_fn=lambda _: None)
+        use_case.measure_all_frequencies()
+        result = use_case.continue_to_step2()
+
+        query = ResultQueryAdapter(
+            self.paths,
+            run_history=FileRunHistoryRepository(runs=self.repository),
+            stage_results=self.stage_repository,
+        )
+        rows = [
+            row
+            for row in query.list_results()
+            if row.run_id == RUN_ID and row.source_result == CABLE_LOSS_INPUT_PATH
+        ]
+        self.assertEqual(len(rows), 1)
+
+        loaded = query.load(rows[0].result_id)
+        self.assertEqual(loaded.result.measurement_id, result.measurement_id)
+        self.assertTrue(loaded.result.points)
+        self.assertEqual(
+            query.latest_result("cable_loss").result.measurement_id,
+            result.measurement_id,
+        )
+        exported = json.loads(query.read_bytes(rows[0].result_id))
+        self.assertEqual(exported["measurement_id"], result.measurement_id)
+        self.assertIn("cable_losses", exported)
+        self.assertEqual(exported["run_id"], RUN_ID)
 
     def test_two_runs_are_isolated(self):
         first = CableLossUseCase(self._request(RUN_ID), sleep_fn=lambda _: None)

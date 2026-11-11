@@ -21,6 +21,7 @@ from .run_context import (
 from instrument.measurement_factory import create_measurement_port
 from instrument.flow.cleanup import SafetyCleanupAdapter
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
+from infrastructure.persistence.stage_result_repository import FileStageResultRepository
 from infrastructure.persistence.artifact_generator import ArchiveArtifactGenerator
 from application.inputs import ResultInputReader
 from application.run_stages import RunStageRecorder
@@ -220,18 +221,31 @@ def require_run_contract(prepared_run: PreparedRun) -> PreparedRun:
     return prepared_run
 
 
-def _stage_recorder(prepared_run: PreparedRun) -> RunStageRecorder:
-    """当前运行的阶段记录器；运行契约已校验，运行仓储是唯一写入目标。"""
-    return RunStageRecorder(prepared_run.run_repository, prepared_run.context.run_id)
+def _stage_recorder(
+    prepared_run: PreparedRun, paths: PathService | None = None
+) -> RunStageRecorder:
+    """当前运行的阶段记录器；运行契约已校验，运行仓储是唯一写入目标。
+
+    同时注入阶段结果仓库：阶段正式结果写入独立阶段目录，运行目录只保存引用文档，
+    解析引用时必须再次加载并校验权威结果（步骤 7）。
+    """
+    service = paths if paths is not None else DEFAULT_PATHS
+    return RunStageRecorder(
+        prepared_run.run_repository,
+        prepared_run.context.run_id,
+        stage_results=FileStageResultRepository(paths=service),
+    )
 
 
-def _require_stage_inputs(prepared_run: PreparedRun, *stages: str) -> None:
+def _require_stage_inputs(
+    prepared_run: PreparedRun, *stages: str, paths: PathService | None = None
+) -> None:
     """在连接仪器前校验运行的前置阶段输入已就绪。
 
     校验失败会抛出 :class:`StageInputUnavailable`，从而在打开仪器或执行任何硬件
     动作前终止，避免为无效输入付出连接代价或产生硬件副作用。
     """
-    recorder = _stage_recorder(prepared_run)
+    recorder = _stage_recorder(prepared_run, paths)
     for stage in stages:
         recorder.verified_result_path(stage)
 
@@ -249,18 +263,21 @@ def _test_frequencies(prepared_run: PreparedRun) -> tuple[Any, ...]:
 
 
 def _preflight_amplifier_inputs(
-    prepared_run: PreparedRun, input_reader: Any
+    prepared_run: PreparedRun,
+    input_reader: Any,
+    paths: PathService | None = None,
 ) -> AmplifierCalibrationInputs:
     """在连接仪器前读取并校验主功放的当前运行校准输入。
 
     只从当前运行目录读取已校验的线损与（按需）驱动映射，再做结构校验，因此结构
-    无效的输入会在打开仪器或执行任何 RF 动作前失败。
+    无效的输入会在打开仪器或执行任何 RF 动作前失败。阶段结果引用文档由阶段记录器
+    解析回独立阶段目录并核对摘要，因此跨运行复用的权威结果仍会被验证。
 
     返回本次读取到的校准输入：调用方在构造正式输入后继续用它校验目标表与 DUT
     功率扫描计划是否逐点一致，并把同一个对象交给用例，正式测量因此不会重复读取
     同一份运行文件，也不会消费与预检不同的对象。
     """
-    recorder = _stage_recorder(prepared_run)
+    recorder = _stage_recorder(prepared_run, paths)
     loss_data = input_reader.read_cable_loss(recorder.verified_result_path(STAGE_CABLE_LOSS))
     driver_enabled = _driver_mode_enabled(prepared_run)
     driver_mapping = None
@@ -383,7 +400,12 @@ def _request_kwargs(prepared_run: PreparedRun, callbacks: dict[str, Any]) -> dic
         "result_repository": repository,
         # 所有运行只接受显式输入路径；无路径兼容读取已在步骤 B3 删除。
         "input_reader": callbacks.get("input_reader") or _input_reader_for(repository),
-        "stage_recorder": _stage_recorder(prepared_run),
+        # 正式结果写入独立阶段目录，运行目录只登记引用（步骤 7）。
+        "stage_result_repository": (
+            callbacks.get("stage_result_repository")
+            or FileStageResultRepository(paths=paths)
+        ),
+        "stage_recorder": _stage_recorder(prepared_run, paths),
         "archival_service": archival_service,
         "safety_options": {
             "owns_measurement_port": bool(callbacks.get("owns_measurement_port", False)),
@@ -439,7 +461,9 @@ def create_driver_mapping_measurement(*, prepared_run: PreparedRun, **callbacks:
     try:
         # 连接仪器前校验本次运行实际需要的线损输入：只从当前运行目录读取，缺失时不做
         # 任何仪器连接或硬件动作；随后按领域/硬件两套职责分别校验冻结快照。
-        _require_stage_inputs(prepared_run, STAGE_CABLE_LOSS)
+        _require_stage_inputs(
+            prepared_run, STAGE_CABLE_LOSS, paths=callbacks.get("paths")
+        )
         _ensure_run_snapshots_are_intact(prepared_run)
         if owned_port:
             callbacks["measurement_port"] = connect_instruments(prepared_run)
@@ -477,7 +501,9 @@ def create_amplifier_measurement(*, prepared_run: PreparedRun, **callbacks: Any)
         # 驱动模式启用时才需要驱动映射。输入只从当前运行目录读取并做结构校验，因此
         # 结构无效或配置漂移都在打开仪器或执行任何 RF 动作前失败。随后按领域/硬件
         # 两套职责分别校验冻结快照。
-        calibration_inputs = _preflight_amplifier_inputs(prepared_run, input_reader)
+        calibration_inputs = _preflight_amplifier_inputs(
+            prepared_run, input_reader, paths
+        )
         _ensure_run_snapshots_are_intact(prepared_run)
         # 正式输入模型在应用边界构造（技术债步骤 8）：非法配置在打开任何仪器之前
         # 收敛为 AmplifierInputError；用例与服务只消费这一个类型化对象。

@@ -10,6 +10,12 @@
 一律是正式结果 DTO；不再扫描 ``test_results/`` 下的旧全局结果文件，也不提供旧历史
 回退。
 
+步骤 7 起线损等正式结果保存在独立阶段目录，运行目录只登记引用文档：适配器识别这种
+引用并按其中的阶段、路径与校验值读取阶段目录中的权威结果，列表、最新结果、按标识
+读取和导出看到的内容仍是同一份正式 DTO。引用解析只跟随 manifest 已登记的文件，
+不扫描阶段目录、不提供“最新文件”回退；步骤 19 把浏览改为直接扫描阶段目录后，这段
+兼容读取随之退役。
+
 报告只有一个适配器实现：:meth:`ResultExportAdapter.export_report`。它把归档结果交给
 ``build_report_result()`` 后再渲染，因此不存在第二个“页面配置 + 生成时刻”的报告入口
 （重构计划步骤 8 删除的 ``ReportAdapter``）。
@@ -35,6 +41,8 @@ from application.ports.gui_data_service import (
     ResultFileDto,
 )
 from application.ports.run_history import RunHistoryRepository
+from application.ports.stage_result_repository import StageResultRepository
+from application.run_stages import resolve_stage_result_reference
 from analysis.visualization import DataVisualization
 from infrastructure.config.json_config_repository import JsonConfigurationRepository
 from infrastructure.config.json_io import load_config_file
@@ -102,6 +110,10 @@ class ResultQueryAdapter:
     唯一数据源是运行目录：列表、按标识读取、最新结果和导出全部走运行 manifest
     登记并校验过的结果。每条结果在返回前都会解析为正式结果 DTO；无法解析的文档
     （非正式 schema、拆分明细文件、被篡改文件）既不会出现在列表里，也不会被读取。
+
+    步骤 7 起的阶段正式结果保存在独立阶段目录：运行目录里登记的是一份引用文档，
+    适配器按引用读取阶段目录中的权威结果（阶段边界、正式 DTO、摘要与大小都由注入的
+    阶段结果仓库校验）。这只是过渡期的读取兼容，不提供阶段目录扫描或“最新文件”查找。
     """
 
     _LABELS = {
@@ -115,9 +127,13 @@ class ResultQueryAdapter:
         paths: PathService,
         *,
         run_history: RunHistoryRepository,
+        stage_results: StageResultRepository | None = None,
     ):
         self.paths = paths
         self.run_history = run_history
+        # 引用解析必须经过阶段结果仓库（端口实现由组装层注入）。省略时只能读取旧运行
+        # 目录里的完整结果文档：遇到阶段结果引用会明确失败，绝不退回引用文档本身。
+        self.stage_results = stage_results
 
     # -- 列表 ---------------------------------------------------------------
 
@@ -142,9 +158,10 @@ class ResultQueryAdapter:
                     logger.warning("跳过无法校验的运行结果 %s: %s", result_id, error)
                     continue
                 try:
-                    result = measurement_result_from_document(document)
-                except ValueError as error:
-                    # 拆分明细等非正式文档属于预期情况，不刷警告。
+                    result = self._measurement_result(document)
+                except (OSError, ValueError) as error:
+                    # 拆分明细等非正式文档属于预期情况，不刷警告；引用指向的阶段
+                    # 结果缺失或被替换也在这里跳过，不影响其它结果。
                     logger.debug("跳过非正式结果文档 %s: %s", result_id, error)
                     continue
                 if result.measurement_type is not expected:
@@ -187,8 +204,16 @@ class ResultQueryAdapter:
         )
 
     def read_bytes(self, result_id: str) -> bytes:
-        """逐字节读取运行结果，供 JSON 导出使用。"""
+        """逐字节读取结果，供 JSON 导出使用。
+
+        阶段结果引用的权威文件在阶段目录：导出读取的是那份文件，而不是运行目录里的
+        引用文档，因此导出内容与已校验的正式结果一致。
+        """
         run_id, relative_path = self._decode(result_id)
+        document = self.run_history.load(run_id, relative_path)
+        loaded = resolve_stage_result_reference(document, self.stage_results)
+        if loaded is not None:
+            return loaded.path.read_bytes()
         return self.run_history.read_bytes(run_id, relative_path)
 
     def latest_result(self, result_type: str) -> LoadedResultDto:
@@ -255,13 +280,26 @@ class ResultQueryAdapter:
     ) -> MeasurementResult:
         """读取已登记结果并解析为正式 DTO，同时校验与 manifest 登记类型一致。"""
         document = self.run_history.load(run_id, relative_path)
-        result = measurement_result_from_document(document)
+        result = self._measurement_result(document)
         if result.measurement_type is not expected:
             raise ValueError(
                 "结果文件类型与 manifest 登记不一致: "
                 f"{relative_path} ({result.measurement_type.value} != {expected.value})"
             )
         return result
+
+    def _measurement_result(self, document: Mapping[str, Any]) -> MeasurementResult:
+        """把运行目录登记的结果文档解析为正式结果 DTO。
+
+        运行目录里可能只是阶段结果引用（步骤 7 起的阶段正式结果）：此时按引用中的
+        阶段、路径与校验值读取阶段目录里的权威结果，列表、最新结果和导出因此看到
+        同一份已校验的正式 DTO。引用不是正式结果文档时仍按原路径解析，保持旧运行
+        目录的读取语义。
+        """
+        loaded = resolve_stage_result_reference(document, self.stage_results)
+        if loaded is not None:
+            return loaded.result
+        return measurement_result_from_document(document)
 
 
 class ResultExportAdapter:

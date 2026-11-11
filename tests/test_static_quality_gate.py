@@ -84,6 +84,7 @@ BROAD_CATCH_BASELINE = {
         "CableLossUseCase.measure_all_frequencies#1",
         "CableLossUseCase.continue_to_step2#1",
         "CableLossUseCase._try_record#1",
+        "CableLossUseCase._save#1",
     ),
     "application/measurements/driver_mapping.py": (
         "DriverPowerMappingUseCase.measure_all_frequencies#1",

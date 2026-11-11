@@ -50,6 +50,7 @@ from domain.run.models import (
 )
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 from infrastructure.persistence.run_repository import RunRepository
+from infrastructure.filesystem.paths import PathService
 from application.configuration_authoring import author_official_configuration
 from tests.contract_doubles import amplifier_inputs
 from tests.fakes import safety_cleanup_for
@@ -245,6 +246,7 @@ class AmplifierRunStageTests(unittest.TestCase):
         self._temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self._temporary.cleanup)
         self.base = Path(self._temporary.name)
+        self.paths = PathService(self.base)
         self.repository = RunRepository(self.base / "runs")
         self.result_repository = FileMeasurementResultRepository(
             results_directory=self.base / "test_results"
@@ -919,6 +921,7 @@ class AmplifierRunStageTests(unittest.TestCase):
             prepared_run=prepared,
             measurement_port=_Instrument(),
             result_repository=self.result_repository,
+            paths=self.paths,
             sleep_fn=lambda _: None,
         )
         cable_case.measure_all_frequencies()
@@ -928,6 +931,7 @@ class AmplifierRunStageTests(unittest.TestCase):
             prepared_run=prepared,
             measurement_port=_Instrument(),
             result_repository=self.result_repository,
+            paths=self.paths,
             sleep_fn=lambda _: None,
         )
         amplifier_case.measure_all_frequencies()
@@ -986,6 +990,7 @@ class AmplifierRunStageTests(unittest.TestCase):
             prepared_run=prepared,
             measurement_port=_Instrument(),
             result_repository=self.result_repository,
+            paths=self.paths,
             sleep_fn=lambda _: None,
         )
         cable_case.measure_all_frequencies()
@@ -999,7 +1004,7 @@ class AmplifierRunStageTests(unittest.TestCase):
         with patch("app.gui_runtime.connect_instruments", return_value=_Instrument()) as connect, patch(
             "app.gui_runtime.AmplifierMeasurementUseCase", return_value=object()
         ):
-            create_amplifier_measurement(prepared_run=prepared)
+            create_amplifier_measurement(prepared_run=prepared, paths=self.paths)
 
         connect.assert_called_once()
         # 连接绑定的是本次运行对象本身；全局配置的修改不会改变它解析出的硬件快照。

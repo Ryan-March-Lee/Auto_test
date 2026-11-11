@@ -99,6 +99,7 @@ class RecordingStageRecorder:
         self.cancelled: list[tuple[str, str | None]] = []
         self.skipped: list[tuple[str, str | None]] = []
         self.partials: list[tuple[str, Any, str]] = []
+        self.stage_references: list[tuple[str, Any]] = []
         self.verified: list[str] = []
         self.completed_runs = 0
 
@@ -118,6 +119,22 @@ class RecordingStageRecorder:
         path = result_path or f"inputs/{stage}.json"
         self.completed.append(
             (stage, payload, {"result_path": path, "extra_files": dict(extra_files or {})})
+        )
+        return SimpleNamespace(path=path)
+
+    def complete_with_stage_result(
+        self,
+        stage: str,
+        reference: Any,
+        *,
+        description: str | None = None,
+        now: Any = None,
+    ) -> Any:
+        """记录“运行时结果已写入阶段目录、运行目录只登记引用”的调用。"""
+        path = f"inputs/{stage}.json"
+        self.stage_references.append((stage, reference))
+        self.completed.append(
+            (stage, reference, {"result_path": path, "extra_files": {}})
         )
         return SimpleNamespace(path=path)
 

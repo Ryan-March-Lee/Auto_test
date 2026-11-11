@@ -14,8 +14,17 @@
   看起来完整的阶段结果文件；对已经进入终态的阶段再次写入会被忽略，避免把
   旧数据重新标记为完成。
 
-本模块只依赖领域模型与 :class:`RunRepositoryPort`，不导入基础设施或 Qt，
+本模块只依赖领域模型、应用层端口与结果 DTO 契约，不导入基础设施或 Qt，
 也不直接访问仪器。
+
+阶段正式结果从重构步骤 7 起写入独立阶段目录，**运行目录只登记引用**：
+:meth:`RunStageRecorder.complete_with_stage_result` 把
+:class:`application.ports.stage_result_repository.StageResultReference` 收敛为一份
+指针文档（阶段、测量身份、阶段目录路径、SHA-256 与大小），仍写在该阶段固定的
+运行相对路径上并登记 manifest，但不复制正式结果本身。读取时
+:meth:`RunStageRecorder.verified_result_path` 识别指针文档并解析回阶段目录文件，
+因此过渡期的旧读取链路仍消费同一份已校验结果；旧运行目录中的完整结果文档继续
+按原路径返回。
 """
 
 from __future__ import annotations
@@ -25,9 +34,22 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping
 
+from application.dto.measurement_results import (
+    measurement_result_filename,
+    validate_measurement_id,
+)
 from application.errors import ConfigurationError
 from application.ports.run_repository import RunRepositoryPort
+from application.ports.stage_result_repository import (
+    LoadedStageResult,
+    MeasurementStage,
+    StageResultError,
+    StageResultReference,
+    StageResultRepository,
+    coerce_measurement_stage,
+)
 from domain.run.models import (
+    SHA256_PATTERN,
     STAGE_CABLE_LOSS,
     STAGE_DRIVER_MAPPING,
     FileReference,
@@ -38,6 +60,7 @@ from domain.run.models import (
     TERMINAL_STAGE_STATUSES,
     default_partial_stage_result_path,
     default_stage_result_path,
+    utc_now_iso,
 )
 
 
@@ -45,6 +68,11 @@ logger = logging.getLogger(__name__)
 
 # 除 ``amplifier`` 外，各阶段有固定结果路径；``amplifier`` 允许多个结果文件。
 _MISSING_RESULT_PATH = "阶段 {stage} 没有固定结果路径，调用方必须显式指定结果路径"
+
+# 运行目录内的阶段结果引用文档：只描述阶段目录中的权威结果，不包含结果正文。
+# ``schema`` 是识别标记，旧运行目录的完整结果文档没有该字段，因此不会被误判。
+STAGE_RESULT_REFERENCE_SCHEMA = "pa_auto_test.stage_result_reference"
+STAGE_RESULT_REFERENCE_VERSION = 1
 
 
 class StageInputUnavailable(ConfigurationError, RuntimeError):
@@ -58,17 +86,54 @@ class StageInputUnavailable(ConfigurationError, RuntimeError):
     """
 
 
+class StageResultNotRecorded(ConfigurationError, RuntimeError):
+    """阶段正式结果已写入阶段目录，但运行 manifest 的引用登记失败。
+
+    阶段目录文件是正式结果的权威副本，因此登记失败时**不删除**已经保存的结果：
+    删除本身也可能失败，还会把一次已完成的测量变成不可恢复的损失。调用方必须把
+    本异常报告成“结果已保存、运行引用登记失败”，不能用“没有结果的失败测量”掩盖。
+
+    运行阶段仍会收敛为 ``failed``（manifest 无法声明 ``completed``），但错误说明
+    里给出阶段文件的实际位置：这份结果仍可在阶段目录中找到，并作为后续测量的显式
+    输入使用。``reference`` 保留登记失败时已提交的引用事实（路径、身份、摘要与大小）。
+    """
+
+    def __init__(
+        self,
+        stage: str,
+        reference: StageResultReference,
+        reason: str,
+    ) -> None:
+        self.stage = coerce_measurement_stage(stage)
+        self.reference = reference
+        self.reason = reason
+        super().__init__(
+            f"阶段 {self.stage.value} 的正式结果已保存到 {reference.path}，"
+            f"但运行引用登记失败: {reason}"
+        )
+
+
 class RunStageRecorder:
     """在指定运行目录内记录单个阶段的状态和结果。
 
     ``run_id`` 决定结果文件归属的运行，调用方不能通过路径参数切换到其他运行。
+    ``stage_results`` 是阶段结果仓库（可选）：登记阶段结果引用时给出阶段目录事实，
+    解析指针文档时用它重新加载并校验权威结果。实际测量链路由组装层注入，旧运行
+    目录兼容用例可以省略。
     """
 
-    def __init__(self, repository: RunRepositoryPort, run_id: str) -> None:
+    def __init__(
+        self,
+        repository: RunRepositoryPort,
+        run_id: str,
+        *,
+        stage_results: StageResultRepository | None = None,
+    ) -> None:
         if not isinstance(run_id, str) or not run_id.strip():
             raise ValueError("run_id 不能为空")
         self.repository = repository
         self.run_id = run_id
+        self.stage_results = stage_results
 
     # -- 状态读取 ---------------------------------------------------------
 
@@ -97,6 +162,11 @@ class RunStageRecorder:
         - 结果文件已登记到 manifest 的 ``inputs``；
         - 文件存在，且 SHA-256 和大小与登记值一致。
 
+        步骤 7 起阶段正式结果写入独立阶段目录，运行目录只保存引用文档：识别到
+        引用文档时，先按登记值确认引用文件本身未被替换，再用注入的阶段结果仓库
+        重新加载权威结果并核对指针中的 SHA-256 与大小，返回阶段目录文件路径。
+        旧运行目录中的完整结果文档没有引用标记，仍按原路径返回。
+
         任一条件不满足都抛出 :class:`StageInputUnavailable`，绝不返回可继续使用的
         路径，从而保证后续阶段不会消费缺失或已被替换的当前运行输入。
         """
@@ -114,11 +184,37 @@ class RunStageRecorder:
                 f"当前运行 {self.run_id} 的阶段 {stage} 结果 {record.result} 未登记到 manifest"
             )
         try:
-            return self.repository.verify_file(self.run_id, reference)
+            path = self.repository.verify_file(self.run_id, reference)
         except (FileNotFoundError, ValueError) as error:
             raise StageInputUnavailable(
                 f"当前运行 {self.run_id} 的阶段 {stage} 输入校验失败: {error}"
             ) from error
+        return self._resolve_stage_result_reference(stage, record.result, path)
+
+    def _resolve_stage_result_reference(
+        self, stage: str, relative_path: str, verified_path: Path
+    ) -> Path:
+        """把运行目录的引用文档解析为阶段目录中的权威结果路径。
+
+        旧运行目录的结果文档没有引用标记，原样返回 ``verified_path``。引用文档
+        损坏、阶段不符、身份/摘要格式非法或权威结果已被替换时，统一以
+        :class:`StageInputUnavailable` 结束，不回退到引用文件或其它路径。
+        """
+        try:
+            document = self.repository.read_run_json(self.run_id, relative_path)
+        except (FileNotFoundError, ValueError) as error:
+            raise StageInputUnavailable(
+                f"当前运行 {self.run_id} 的阶段 {stage} 结果不是可读取的 JSON: {error}"
+            ) from error
+        try:
+            loaded = resolve_stage_result_reference(
+                document, self.stage_results, stage=stage
+            )
+        except (OSError, ValueError) as error:
+            raise StageInputUnavailable(
+                f"当前运行 {self.run_id} 的阶段 {stage} 引用结果不可用: {error}"
+            ) from error
+        return verified_path if loaded is None else loaded.path
 
     # -- 阶段生命周期 -----------------------------------------------------
 
@@ -212,6 +308,68 @@ class RunStageRecorder:
                 self._discard_quietly(written_path)
             raise
         return reference
+
+    def complete_with_stage_result(
+        self,
+        stage: str,
+        reference: StageResultReference,
+        *,
+        description: str | None = None,
+        now: datetime | None = None,
+    ) -> FileReference:
+        """阶段结果已写入独立阶段目录时，只在运行目录登记引用。
+
+        正式结果的权威副本由阶段结果仓库写进 ``test_results/<stage>/``；本方法不
+        写入结果正文，只把阶段、测量身份、阶段目录路径、SHA-256 与大小写成引用
+        文档，按阶段固定路径落到运行目录并登记 manifest，然后照常把阶段推进到
+        ``completed``。因此“manifest 报告完成”与“阶段目录中存在对应结果”仍然
+        是同一件事，但运行目录不再保存同一正式结果的第二份副本。
+
+        登记前按引用重新加载权威结果并核对摘要与大小：``complete()`` 用“先写文件、
+        再登记校验值”保证 manifest 的 ``completed`` 对应真实文件，引用路径必须守住
+        同一个不变式。引用文件缺失、被替换或不再是正式结果时在登记前失败，调用方
+        据此报告“结果已保存、运行引用登记失败”（:class:`StageResultNotRecorded`）。
+        """
+        target_stage = coerce_measurement_stage(stage)
+        if not isinstance(reference, StageResultReference):
+            raise ValueError("阶段结果引用必须是 StageResultReference")
+        if reference.stage is not target_stage:
+            raise ValueError(
+                "阶段结果引用与阶段不符："
+                f"阶段 {target_stage.value} 收到 {reference.stage.value} 的结果"
+            )
+        self._verify_stage_result_reference(reference)
+        path = default_stage_result_path(stage)
+        if path is None:
+            raise ValueError(_MISSING_RESULT_PATH.format(stage=stage))
+        document = _stage_result_reference_document(
+            reference, run_id=self.run_id, now=now
+        )
+        return self.complete(
+            stage,
+            document,
+            result_path=path,
+            description=description,
+            now=now,
+        )
+
+    def _verify_stage_result_reference(self, reference: StageResultReference) -> None:
+        """登记前复核阶段目录文件确实存在且与引用事实一致。
+
+        ``complete()`` 用“先写文件、再登记校验值”保证 manifest 的 ``completed``
+        一定有真实文件；引用路径必须守住同一个不变式。参考文件缺失、被替换或不再是
+        正式 ``completed`` 结果时在这里以 ``ValueError``/``OSError`` 失败，绝不登记
+        一份无法兑现的完成声明。
+        """
+        if self.stage_results is None:
+            raise ValueError(
+                "登记阶段结果引用需要注入阶段结果仓库，无法复核引用文件"
+            )
+        loaded = self.stage_results.load(reference.stage, reference.path)
+        if (loaded.sha256, loaded.size_bytes) != (reference.sha256, reference.size_bytes):
+            raise ValueError(
+                f"阶段结果引用与阶段目录文件不一致: {reference.path}"
+            )
 
     def save_partial(
         self,
@@ -387,9 +545,135 @@ class RunStageRecorder:
             logger.exception("清理未提交的运行结果失败: %s", relative_path)
 
 
+def _stage_result_reference_document(
+    reference: StageResultReference, *, run_id: str, now: datetime | None = None
+) -> dict[str, Any]:
+    """把阶段结果引用收敛为运行目录内的指针文档（不含结果正文）。"""
+    return {
+        "schema": STAGE_RESULT_REFERENCE_SCHEMA,
+        "schema_version": STAGE_RESULT_REFERENCE_VERSION,
+        "stage": reference.stage.value,
+        "measurement_id": reference.measurement_id,
+        "path": str(reference.path),
+        "sha256": reference.sha256,
+        "size_bytes": reference.size_bytes,
+        "run_id": run_id,
+        "created_at": utc_now_iso(now),
+    }
+
+
+def read_stage_result_reference(document: Any) -> StageResultReference | None:
+    """把运行目录的阶段结果引用文档解析为结构化引用。
+
+    不是引用文档（例如旧运行目录里的完整结果文档）时返回 ``None``，调用方按原
+    语义处理；引用文档自身不自洽时抛 ``ValueError``。本函数只校验文档内容，不读取
+    阶段目录文件，也不判断结果是否可用。
+    """
+    if not _is_stage_result_reference_document(document):
+        return None
+    stage, path, digest, size_bytes = _stage_result_reference_target(
+        document, document.get("stage")
+    )
+    return StageResultReference(
+        stage=stage,
+        measurement_id=document.get("measurement_id"),
+        path=path,
+        sha256=digest,
+        size_bytes=size_bytes,
+    )
+
+
+def resolve_stage_result_reference(
+    document: Any,
+    stage_results: StageResultRepository | None,
+    *,
+    stage: str | None = None,
+) -> LoadedStageResult | None:
+    """把阶段结果引用文档解析为阶段目录中的权威结果。
+
+    不是引用文档时返回 ``None``，旧运行目录的完整结果文档仍由调用方按原路径处理。
+    ``stage`` 给出时要求引用与之一致。解析必须经过阶段结果仓库的 ``load()``：阶段
+    目录边界、正式 DTO、类型/状态/身份都在那里校验；随后再核对引用中登记的 SHA-256
+    与大小，确保调用方拿到的是登记时的那一份结果。权威文件缺失、被替换或阶段结果
+    仓库缺失时抛 ``ValueError``，调用方不得回退到引用文档或其它路径。
+    """
+    reference = read_stage_result_reference(document)
+    if reference is None:
+        return None
+    if stage is not None:
+        expected = coerce_measurement_stage(stage)
+        if reference.stage is not expected:
+            raise StageResultError(
+                "阶段结果引用与阶段不符："
+                f"阶段 {expected.value} 引用的是 {reference.stage.value}"
+            )
+    if stage_results is None:
+        raise StageResultError("阶段结果引用需要注入阶段结果仓库，无法解析权威结果")
+    loaded = stage_results.load(reference.stage, reference.path)
+    if (loaded.sha256, loaded.size_bytes) != (reference.sha256, reference.size_bytes):
+        raise StageResultError(f"阶段结果引用已被替换: {loaded.path}")
+    return loaded
+
+
+def _is_stage_result_reference_document(document: Any) -> bool:
+    """是否为阶段结果引用文档；旧运行目录的完整结果文档不会被误判。"""
+    return (
+        isinstance(document, Mapping)
+        and document.get("schema") == STAGE_RESULT_REFERENCE_SCHEMA
+    )
+
+
+def _stage_result_reference_target(
+    document: Mapping[str, Any], stage: str
+) -> tuple[MeasurementStage, Path, str, int]:
+    """校验引用文档并返回 ``(阶段, 结果路径, sha256, 大小)``。
+
+    只校验文档自身是否自洽；阶段目录边界、正式 DTO、类型/状态/schema 与最终文件
+    事实由阶段结果仓库的 ``load()`` 负责，调用方不得把这里的返回值当作已加载结果。
+    """
+    target = coerce_measurement_stage(stage)
+    version = document.get("schema_version")
+    if isinstance(version, bool) or version != STAGE_RESULT_REFERENCE_VERSION:
+        raise ValueError(f"不支持的阶段结果引用版本: {version!r}")
+    document_stage = coerce_measurement_stage(document.get("stage"))
+    if document_stage is not target:
+        raise ValueError(
+            "阶段结果引用与阶段不符："
+            f"阶段 {target.value} 引用的是 {document_stage.value}"
+        )
+    identity = validate_measurement_id(document.get("measurement_id"))
+    raw_path = document.get("path")
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        raise ValueError("阶段结果引用缺少结果路径")
+    path = Path(raw_path)
+    if not path.is_absolute():
+        raise ValueError("阶段结果引用的结果路径必须是绝对路径")
+    if path.name != measurement_result_filename(identity):
+        raise ValueError(
+            "阶段结果引用的文件名必须由 measurement_id 构造："
+            f"{path.name!r} 与 {identity!r} 不一致"
+        )
+    digest = document.get("sha256")
+    if not isinstance(digest, str) or not SHA256_PATTERN.fullmatch(digest):
+        raise ValueError("阶段结果引用的摘要必须是 64 位小写十六进制 sha256")
+    size_bytes = document.get("size_bytes")
+    if (
+        isinstance(size_bytes, bool)
+        or not isinstance(size_bytes, int)
+        or size_bytes < 0
+    ):
+        raise ValueError("阶段结果引用的大小必须是非负整数")
+    return document_stage, path, digest, size_bytes
+
+
 __all__ = [
     "STAGE_CABLE_LOSS",
     "STAGE_DRIVER_MAPPING",
+    "STAGE_RESULT_REFERENCE_SCHEMA",
+    "STAGE_RESULT_REFERENCE_VERSION",
     "RunStageRecorder",
     "StageInputUnavailable",
+    "StageResultNotRecorded",
+    "read_stage_result_reference",
+    "resolve_stage_result_reference",
 ]

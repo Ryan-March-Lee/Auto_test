@@ -23,6 +23,7 @@ from infrastructure.persistence.instrument_registry import InstrumentRegistry
 from infrastructure.persistence.run_deletion import FileRunDeletion
 from infrastructure.persistence.run_history_repository import FileRunHistoryRepository
 from infrastructure.persistence.run_repository import RunRepository
+from infrastructure.persistence.stage_result_repository import FileStageResultRepository
 
 
 def default_paths() -> PathService:
@@ -44,6 +45,9 @@ def build_gui_data_service(
     query = ResultQueryAdapter(
         paths,
         run_history=run_history,
+        # 步骤 7 起阶段结果保存在独立阶段目录，运行目录只登记引用：浏览/导出按引用
+        # 读取权威结果。这里注入的是阶段结果仓储的读取能力，不是运行写入路径。
+        stage_results=FileStageResultRepository(paths=paths),
     )
     # 历史管理的“重新生成失败产物”复用同一个归档服务与产物生成端口：产物写回原运行
     # 目录的受控路径，页面既不需要拼接路径，也不需要另写一份导出规则。

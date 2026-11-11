@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -15,9 +16,12 @@ from application.dto import (
     CableLossMeasurementResult,
     MeasurementResult,
     MeasurementStatus,
+    generate_measurement_id,
 )
 from application.measurements.services import CableLossService
 from application.ports.measurement_session import CleanupRecord, SafetyCleanupError
+from application.ports.stage_result_repository import MeasurementStage
+from application.run_stages import StageResultNotRecorded
 from domain.run.models import STAGE_CABLE_LOSS
 
 
@@ -30,11 +34,15 @@ class CableLossUseCase:
     The first call to :meth:`measure_all_frequencies` measures path 1 and
     returns a waiting result.  :meth:`continue_to_step2` resumes the same
     service, measures path 2, and persists the completed result into the
-    current ``runs/<run_id>/`` run directory.
+    independent ``test_results/cable_loss/`` stage directory.
 
-    结果写入由注入的阶段记录器完成：线损结果落在当前运行的
-    ``inputs/cable_loss.json`` 并登记到 manifest，因此不存在“只写运行目录、不登记”
-    的旁路（D1）。
+    正式结果写入由注入的阶段结果仓库完成：成功结果先写入 ``cable_loss/``，
+    再由阶段记录器把引用登记到当前运行 manifest。运行目录不再保存正式结果的
+    第二份副本，manifest 只记录阶段目录文件的路径与校验值；测量失败/取消只登记
+    阶段状态，不产生阶段结果文件。阶段文件已提交、运行引用登记失败时保留这份正式
+    结果并以 :class:`StageResultNotRecorded` 报告，而不是把它当成失败测量删除。
+    部分结果（用户停止）仍按运行契约写在 ``results/`` 下，只供浏览/导出，不会被
+    当作正式输入。
     """
 
     def __init__(
@@ -59,8 +67,14 @@ class CableLossUseCase:
         self.safety_cleanup = request.safety_cleanup
         if self.safety_cleanup is None:
             raise ValueError("CableLossUseCase 必须由应用组装层注入 safety_cleanup")
-        # 阶段记录器是请求契约的一部分（D1）：结果写入当前运行的 inputs/cable_loss.json
-        # 并更新 manifest。
+        # 阶段结果仓库是正式结果写入边界（步骤 7）：结果写入独立阶段目录，
+        # 运行 manifest 只登记引用。
+        self.stage_result_repository = request.stage_result_repository
+        if self.stage_result_repository is None:
+            raise ValueError(
+                "CableLossUseCase 必须由应用组装层注入 stage_result_repository"
+            )
+        # 阶段记录器是请求契约的一部分（D1）：阶段状态与结果引用写入当前运行。
         self.stage_recorder = request.stage_recorder
         # 只有阶段已开始且尚未结束的阶段才允许写入 failed/cancelled。
         self._stage_open = False
@@ -248,11 +262,13 @@ class CableLossUseCase:
         self.stage_recorder.start(STAGE_CABLE_LOSS)
         self._stage_open = True
 
-    def _record_complete(self, result: MeasurementResult) -> Any:
-        """把完成的线损结果写入当前运行并登记为 ``completed``。"""
-        reference = self.stage_recorder.complete(STAGE_CABLE_LOSS, result.to_dict())
+    def _record_complete(self, reference: Any) -> Any:
+        """把阶段结果引用登记到当前运行 manifest。"""
+        run_reference = self.stage_recorder.complete_with_stage_result(
+            STAGE_CABLE_LOSS, reference
+        )
         self._stage_open = False
-        return reference
+        return run_reference
 
     def _record_failure(self, error: Exception) -> None:
         if not self._stage_open:
@@ -277,20 +293,44 @@ class CableLossUseCase:
             logger.exception("线损阶段状态记录失败")
 
     def _save(self, result: MeasurementResult) -> MeasurementResult:
-        """运行契约运行：权威结果写入 ``inputs/cable_loss.json``。
+        """正式完成保存：结果写入 ``cable_loss/``，运行 manifest 只登记引用。
 
-        运行目录结果是本次运行的权威来源：先原子提交并登记 manifest，返回值只暴露该
-        权威路径；不再同时写全局兼容副本。正式结果提交后立即触发自动归档：线损没有
-        CSV/报告交付产物，因此按契约登记为 ``not_applicable``。
+        顺序固定为“构造带身份的正式 DTO → 原子写入阶段目录 → 登记运行引用”，
+        因此阶段目录文件是正式结果的权威来源，运行目录不再复制同一份结果。阶段
+        文件保存与引用登记是两个提交边界：阶段文件已提交后登记失败，不删除这份
+        正式结果，而是以 :class:`StageResultNotRecorded` 明确报告“结果已保存、
+        运行引用登记失败”，错误说明里给出阶段文件位置。阶段结果提交后立即触发
+        自动归档：线损没有 CSV/报告交付产物，因此按契约登记为 ``not_applicable``。
         """
-        reference = self._record_complete(result)
+        formal = self._formal_result(result)
+        stage_reference = self.stage_result_repository.save(
+            MeasurementStage.CABLE_LOSS, formal
+        )
+        try:
+            self._record_complete(stage_reference)
+        except Exception as error:
+            # 已提交的正式结果不能因为运行记账失败而被删除或隐藏：删除本身也可能
+            # 失败，而且会丢掉一次已完成的测量。调用方据异常消息提示结果位置。
+            raise StageResultNotRecorded(
+                STAGE_CABLE_LOSS,
+                stage_reference,
+                str(error) or error.__class__.__name__,
+            ) from error
         self.last_archival_outcome = archive_completed_stage(
             self.archival_service,
             run_id=self.run_id,
             stage=STAGE_CABLE_LOSS,
         )
-        archive_path = Path(self.run_directory) / reference.path
-        return result.with_saved_result(archive_path=str(archive_path))
+        return formal.with_saved_result(archive_path=str(stage_reference.path))
+
+    @staticmethod
+    def _formal_result(result: MeasurementResult) -> CableLossMeasurementResult:
+        """为新正式结果分配自身身份；已带身份的结果保持不变。"""
+        if not isinstance(result, CableLossMeasurementResult):
+            raise ValueError("CableLossUseCase 只能保存 CableLossMeasurementResult")
+        if result.measurement_id is not None:
+            return result
+        return replace(result, measurement_id=generate_measurement_id())
 
 
 def _service_config(configuration: Any) -> Mapping[str, Any]:

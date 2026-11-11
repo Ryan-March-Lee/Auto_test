@@ -38,6 +38,7 @@ from domain.run.models import (
 )
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 from infrastructure.persistence.run_repository import RunRepository
+from infrastructure.filesystem.paths import PathService
 from application.configuration_authoring import author_official_configuration
 from tests.fakes import safety_cleanup_for
 
@@ -178,6 +179,7 @@ class DriverMappingRunStageTests(unittest.TestCase):
         self._temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self._temporary.cleanup)
         self.base = Path(self._temporary.name)
+        self.paths = PathService(self.base)
         self.repository = RunRepository(self.base / "runs")
         self.result_repository = FileMeasurementResultRepository(
             results_directory=self.base / "test_results"
@@ -559,6 +561,7 @@ class DriverMappingRunStageTests(unittest.TestCase):
             prepared_run=prepared,
             measurement_port=_Instrument(),
             result_repository=self.result_repository,
+            paths=self.paths,
             sleep_fn=lambda _: None,
         )
         cable_case.measure_all_frequencies()
@@ -568,6 +571,7 @@ class DriverMappingRunStageTests(unittest.TestCase):
             prepared_run=prepared,
             measurement_port=_Instrument(),
             result_repository=self.result_repository,
+            paths=self.paths,
             sleep_fn=lambda _: None,
         )
         mapping_case.measure_all_frequencies()

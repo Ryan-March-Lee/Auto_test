@@ -218,11 +218,12 @@ class AmplifierMeasurementUseCase:
     def _load_loss_data(self) -> Mapping[str, Any]:
         """解析本次运行实际消费的线损输入。
 
-        当前运行目录是唯一输入来源：通过
+        当前运行 manifest 是唯一输入来源：通过
         :meth:`RunStageRecorder.verified_result_path` 强制校验
-        ``inputs/cable_loss.json`` 已完成且校验值一致，绝不回退到全局兼容结果或
-        按时间扫描的“最新结果”读取。组合入口已在预检时读取并交出同一份对象时直接
-        复用，避免同一运行文件被读取两次。
+        ``inputs/cable_loss.json`` 已完成且校验值一致（步骤 7 起该文件是指向阶段目录
+        权威结果的引用，校验会跟随引用核对阶段文件），绝不回退到全局兼容结果或按时间
+        扫描的“最新结果”读取。组合入口已在预检时读取并交出同一份对象时直接复用，避免
+        同一运行文件被读取两次。
         """
         preloaded = self.request.calibration_inputs
         if preloaded is not None:

@@ -12,9 +12,14 @@
     "signal_source": {
         "power_scan_plans": [
             {
-                "start_power": -40.0,
+                "start_power": -20.0,
+                "step": 1.0,
+                "stop_power": 0.0
+            },
+            {
+                "start_power": 0.0,
                 "step": 0.5,
-                "stop_power": -28.0
+                "stop_power": 7.0
             }
         ],
         "power_reference": "dut_input"
@@ -24,7 +29,7 @@
     },
     "driver_mode": {
         "enabled": true,
-        "estimated_gain_db": null
+        "estimated_gain_db": 40.0
     },
     "attenuator": {
         "type": "40dB"
@@ -33,26 +38,26 @@
         "max_input_power": 31.0,
         "power_supply_count": 1,
         "drain_channel": {
-            "supply_id": "DP8B0885",
-            "channel": "CH2"
+            "supply_id": "DP8B0950",
+            "channel": "CH1"
         }
     },
     "instruments": {
         "signal_generator": {
             "model": "SMW200A",
             "enabled": true,
-            "address": "TCPIP0::192.168.1.201::inst0::INSTR",
             "label": "5462",
             "full_code": "105462",
-            "device_key": "rohde&schwarz:105462"
+            "device_key": "rohde&schwarz:105462",
+            "address": "TCPIP0::192.168.1.201::inst0::INSTR"
         },
         "spectrum_analyzer": {
             "model": "4082F",
             "enabled": true,
-            "address": "TCPIP0::192.168.1.202::inst0::INSTR",
             "label": "QZNI0866",
             "full_code": "QZNI000866",
-            "device_key": "ceyear technologies:qzni000866"
+            "device_key": "ceyear technologies:qzni000866",
+            "address": "TCPIP0::192.168.1.202::inst0::INSTR"
         },
         "power_supplies": {
             "DP8B1519": {
@@ -102,12 +107,12 @@
                         "voltage": {
                             "value": 0.0,
                             "protection": 0.0,
-                            "protection_enabled": false
+                            "protection_enabled": true
                         },
                         "current": {
                             "value": 0.0,
                             "protection": 0.0,
-                            "protection_enabled": false
+                            "protection_enabled": true
                         },
                         "power_on_delay_s": 2.0
                     },
@@ -170,8 +175,12 @@
             "power_plan": {
                 "power_sequence": [
                     {
-                        "supply_id": "DP8B1519",
-                        "channel": "CH1"
+                        "supply_id": "DP8B0885",
+                        "channel": "CH2"
+                    },
+                    {
+                        "supply_id": "DP8B0950",
+                        "channel": "CH2"
                     }
                 ],
                 "inter_channel_delay_s": 0.0
@@ -181,12 +190,16 @@
             "power_plan": {
                 "power_sequence": [
                     {
-                        "supply_id": "DP8B0885",
-                        "channel": "CH2"
+                        "supply_id": "DP8B0950",
+                        "channel": "CH1"
                     },
                     {
-                        "supply_id": "DP8B0950",
-                        "channel": "CH2"
+                        "supply_id": "DP8B1519",
+                        "channel": "CH1"
+                    },
+                    {
+                        "supply_id": "DP8B0885",
+                        "channel": "CH1"
                     }
                 ],
                 "inter_channel_delay_s": 0.0
@@ -273,9 +286,14 @@
         "signal_source": {
             "power_scan_plans": [
                 {
-                    "start_power": -40.0,
+                    "start_power": -20.0,
+                    "step": 1.0,
+                    "stop_power": 0.0
+                },
+                {
+                    "start_power": 0.0,
                     "step": 0.5,
-                    "stop_power": -28.0
+                    "stop_power": 7.0
                 }
             ],
             "unit": "dBm",
@@ -291,9 +309,45 @@
         "dut": {
             "max_input_power": 31.0,
             "drain_channel": {
-                "supply_id": "DP8B0885",
-                "channel": "CH2"
+                "supply_id": "DP8B0950",
+                "channel": "CH1"
             },
+            "channel_settings": [
+                {
+                    "supply_id": "DP8B0950",
+                    "channel": "CH1",
+                    "voltage": 0.0,
+                    "current": 0.0,
+                    "voltage_protection": 0.0,
+                    "current_protection": 0.0,
+                    "unit_voltage": "V",
+                    "unit_current": "A"
+                },
+                {
+                    "supply_id": "DP8B1519",
+                    "channel": "CH1",
+                    "voltage": 0.0,
+                    "current": 0.0,
+                    "voltage_protection": 0.0,
+                    "current_protection": 0.0,
+                    "unit_voltage": "V",
+                    "unit_current": "A"
+                },
+                {
+                    "supply_id": "DP8B0885",
+                    "channel": "CH1",
+                    "voltage": 0.0,
+                    "current": 0.0,
+                    "voltage_protection": 0.0,
+                    "current_protection": 0.0,
+                    "unit_voltage": "V",
+                    "unit_current": "A"
+                }
+            ]
+        },
+        "driver_mode": {
+            "enabled": true,
+            "estimated_gain_db": 40.0,
             "channel_settings": [
                 {
                     "supply_id": "DP8B0885",
@@ -308,22 +362,6 @@
                 {
                     "supply_id": "DP8B0950",
                     "channel": "CH2",
-                    "voltage": 0.0,
-                    "current": 0.0,
-                    "voltage_protection": 0.0,
-                    "current_protection": 0.0,
-                    "unit_voltage": "V",
-                    "unit_current": "A"
-                }
-            ]
-        },
-        "driver_mode": {
-            "enabled": true,
-            "estimated_gain_db": null,
-            "channel_settings": [
-                {
-                    "supply_id": "DP8B1519",
-                    "channel": "CH1",
                     "voltage": 0.0,
                     "current": 0.0,
                     "voltage_protection": 0.0,
@@ -357,13 +395,6 @@
                 "visa_address": "TCPIP0::192.168.1.202::inst0::INSTR"
             },
             "power_supplies": {
-                "DP8B0885": {
-                    "label": "DP8B0885",
-                    "model": "DP832A",
-                    "full_code": "DP8B174400885",
-                    "device_key": "rigol technologies:dp8b174400885",
-                    "visa_address": "TCPIP0::192.168.1.108::inst0::INSTR"
-                },
                 "DP8B0950": {
                     "label": "DP8B0950",
                     "model": "DP832A",
@@ -377,6 +408,13 @@
                     "full_code": "DP8B214901519",
                     "device_key": "rigol technologies:dp8b214901519",
                     "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR"
+                },
+                "DP8B0885": {
+                    "label": "DP8B0885",
+                    "model": "DP832A",
+                    "full_code": "DP8B174400885",
+                    "device_key": "rigol technologies:dp8b174400885",
+                    "visa_address": "TCPIP0::192.168.1.108::inst0::INSTR"
                 }
             }
         },
@@ -385,8 +423,12 @@
             "power_plan": {
                 "power_sequence": [
                     {
-                        "supply_id": "DP8B1519",
-                        "channel": "CH1"
+                        "supply_id": "DP8B0885",
+                        "channel": "CH2"
+                    },
+                    {
+                        "supply_id": "DP8B0950",
+                        "channel": "CH2"
                     }
                 ],
                 "inter_channel_delay_s": 0.0
@@ -395,12 +437,16 @@
         "dut_power_plan": {
             "power_sequence": [
                 {
-                    "supply_id": "DP8B0885",
-                    "channel": "CH2"
+                    "supply_id": "DP8B0950",
+                    "channel": "CH1"
                 },
                 {
-                    "supply_id": "DP8B0950",
-                    "channel": "CH2"
+                    "supply_id": "DP8B1519",
+                    "channel": "CH1"
+                },
+                {
+                    "supply_id": "DP8B0885",
+                    "channel": "CH1"
                 }
             ],
             "inter_channel_delay_s": 0.0

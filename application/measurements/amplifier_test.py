@@ -23,7 +23,9 @@ from application.dto import (
 from application.errors import ConfigurationError
 from application.measurements.driver_target_grid import require_driver_target_grid
 from application.measurements.services import AmplifierMeasurementService
+from application.inputs.explicit_stage_input import load_selected_stage_result
 from application.ports.measurement_session import CleanupRecord
+from application.ports.stage_result_repository import MeasurementStage
 from domain.measurement.values import (
     CableLossTable,
     Frequency,
@@ -52,11 +54,11 @@ class AmplifierCalibrationError(ConfigurationError):
 class AmplifierMeasurementUseCase:
     """Coordinate the amplifier sweep and its calibration inputs.
 
-    只消费**当前运行**显式登记的输入：线损来自 ``inputs/cable_loss.json``，驱动映射
-    启用时来自 ``inputs/driver_mapping.json``；主功放所有结果写入当前运行的
-    ``results/``，完成后把主功放阶段和运行级状态更新为 ``completed``。驱动模式关闭
-    时不要求映射文件存在。运行目录是唯一输入来源，绝不回退到按时间扫描的“最新结果”
-    读取。
+    校准输入优先使用组合入口预检并随请求交来的同一份对象；没有预检对象时，页面
+    显式选择的阶段结果路径（含选择时摘要）优先，其次是当前运行登记的
+    ``inputs/cable_loss.json`` / ``inputs/driver_mapping.json``。主功放所有结果写入
+    当前运行的 ``results/``，完成后把主功放阶段和运行级状态更新为 ``completed``。
+    驱动模式关闭时不要求映射文件存在。绝不回退到按时间扫描的“最新结果”读取。
     """
 
     def __init__(
@@ -85,8 +87,10 @@ class AmplifierMeasurementUseCase:
         if self.safety_cleanup is None:
             raise ValueError("AmplifierMeasurementUseCase 必须由应用组装层注入 safety_cleanup")
         self.input_reader = request.input_reader
-        # 阶段记录器是请求契约的一部分（D1）：输入只从当前运行目录读取，结果写入当前
-        # 运行的 results/ 并更新 manifest。
+        # 显式输入带选择时摘要时，用阶段结果仓库重新加载并核对，不消费被替换的文件。
+        self.stage_result_repository = request.stage_result_repository
+        # 阶段记录器是请求契约的一部分（D1）：省略显式来源时输入才从当前运行目录读取，
+        # 结果写入当前运行的 results/ 并更新 manifest。
         self.stage_recorder = request.stage_recorder
         self._stage_open = False
         # 阶段成功提交后的自动归档入口；组装层总是注入。
@@ -216,39 +220,84 @@ class AmplifierMeasurementUseCase:
         return self.inputs.driver_enabled
 
     def _load_loss_data(self) -> Mapping[str, Any]:
-        """解析本次运行实际消费的线损输入。
+        """解析本次测量实际消费的线损输入。
 
-        当前运行 manifest 是唯一输入来源：通过
-        :meth:`RunStageRecorder.verified_result_path` 强制校验
-        ``inputs/cable_loss.json`` 已完成且校验值一致（步骤 7 起该文件是指向阶段目录
-        权威结果的引用，校验会跟随引用核对阶段文件），绝不回退到全局兼容结果或按时间
-        扫描的“最新结果”读取。组合入口已在预检时读取并交出同一份对象时直接复用，避免
-        同一运行文件被读取两次。
-
-        该约束属于调用方的运行契约；``ResultInputReader`` 只读取调用方传入的显式路径，
-        不判断路径是否属于当前运行。
+        组合入口已在预检时读取并交出同一份对象时直接复用，避免同一运行文件被读取
+        两次。没有预检对象时，显式选择的阶段结果路径优先：带选择时摘要的路径会经
+        阶段结果仓库重新加载并核对，随后把**同一次读取**的正式结果转成线损文档；
+        省略显式来源的旧调用方才读取当前运行登记的 ``inputs/cable_loss.json``，并由
+        :meth:`RunStageRecorder.verified_result_path` 按 manifest 复核摘要。绝不回退到
+        全局兼容结果或按时间扫描的“最新结果”读取。
         """
         preloaded = self.request.calibration_inputs
         if preloaded is not None:
             return preloaded.loss_data
+        explicit = self._read_explicit_input(
+            self.request.cable_loss_path,
+            self.request.cable_loss_digest,
+            MeasurementStage.CABLE_LOSS,
+            label="线损",
+        )
+        if explicit is not None:
+            return explicit
         return self._read_run_input(STAGE_CABLE_LOSS)
 
     def _load_driver_mapping(self) -> DriverMappingInput | None:
-        """解析本次运行实际消费的驱动映射输入。
+        """解析本次测量实际消费的驱动映射输入。
 
-        驱动模式关闭时不要求映射文件存在，直接返回 ``None``；启用时强制校验
-        ``inputs/driver_mapping.json`` 已完成且校验值一致，并收敛为带目标网格的
-        正式输入对象。返回类型不是裸映射，避免下游把原始曲线误当成目标输入表。
-
-        组合入口在连接仪器前已完成同一份读取与结构校验时直接复用该对象，正式测量
-        消费的就正是入口校验过的目标表，不会因两次读取之间文件变化而漂移。
+        驱动模式关闭时不要求映射文件存在，直接返回 ``None``。启用时优先复用组合入口
+        预检的同一份对象；没有预检对象时按显式选择的阶段结果路径（带摘要时先核对）
+        读取，省略显式来源的旧调用方才读取当前运行登记的 ``inputs/driver_mapping.json``。
+        返回类型不是裸映射，避免下游把原始曲线误当成目标输入表。
         """
         if not self._driver_mode_enabled():
             return None
         preloaded = self.request.calibration_inputs
         if preloaded is not None:
             return preloaded.driver_mapping
+        explicit = self._read_explicit_input(
+            self.request.driver_mapping_path,
+            self.request.driver_mapping_digest,
+            MeasurementStage.DRIVER_MAPPING,
+            label="驱动映射",
+        )
+        if explicit is not None:
+            return explicit
         return self._read_run_input(STAGE_DRIVER_MAPPING)
+
+    def _read_explicit_input(
+        self,
+        path: Path | None,
+        digest: Any,
+        stage: MeasurementStage,
+        *,
+        label: str,
+    ) -> Any:
+        """按显式选择的阶段结果文件读取校准输入；未给出路径时返回 ``None``。
+
+        带摘要时先经阶段结果仓库加载并核对“内容仍是用户选择的那一份”，再用同一次
+        读取的正式结果构造输入，不做第二次文件读取；省略摘要只锁定路径，阶段契约
+        仍由仓库完整校验。
+        """
+        if path is None:
+            return None
+        if self.input_reader is None:
+            raise ValueError("主功放消费显式输入时必须注入 input_reader")
+        if digest is None:
+            if stage is MeasurementStage.CABLE_LOSS:
+                return self.input_reader.read_cable_loss(path)
+            return self.input_reader.read_driver_mapping(path)
+        repository = self.stage_result_repository
+        if repository is None:
+            raise ValueError(
+                "主功放消费带摘要的显式输入时必须注入 stage_result_repository"
+            )
+        loaded = load_selected_stage_result(
+            repository, stage, path, digest=digest, label=label
+        )
+        if stage is MeasurementStage.CABLE_LOSS:
+            return self.input_reader.read_cable_loss_result(loaded.result)
+        return self.input_reader.read_driver_mapping_result(loaded.result)
 
     def _read_run_input(self, stage: str) -> Mapping[str, Any] | DriverMappingInput:
         if self.input_reader is None:

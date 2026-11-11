@@ -5,6 +5,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication
 
+from application.dto.measurement_requests import StageResultDigest
 from presentation.qt.measurement_controller_contract import MeasurementCommand
 from presentation.qt.measurement_state import MeasurementKind
 from presentation.qt.measurement_worker_factories import (
@@ -32,8 +33,12 @@ class WorkerFactoryCommandTests(unittest.TestCase):
 
     def test_driver_mapping_factory_forwards_the_cable_loss_path(self):
         cable = Path("test_results") / "cable_loss" / "a.json"
+        digest = StageResultDigest(sha256="a" * 64, size_bytes=128)
         command = MeasurementCommand(
-            "config.json", _prepared_run(), cable_loss_path=cable
+            "config.json",
+            _prepared_run(),
+            cable_loss_path=cable,
+            cable_loss_digest=digest,
         )
 
         worker = build_measurement_worker_factories()[MeasurementKind.DRIVER_MAPPING](
@@ -42,15 +47,20 @@ class WorkerFactoryCommandTests(unittest.TestCase):
 
         self.assertIs(worker.prepared_run, command.prepared_run)
         self.assertEqual(worker.cable_loss_path, cable)
+        self.assertEqual(worker.cable_loss_digest, digest)
 
     def test_amplifier_factory_forwards_both_calibration_paths(self):
         cable = Path("test_results") / "cable_loss" / "a.json"
         mapping = Path("test_results") / "driver_mapping" / "b.json"
+        cable_digest = StageResultDigest(sha256="a" * 64, size_bytes=128)
+        mapping_digest = StageResultDigest(sha256="b" * 64, size_bytes=256)
         command = MeasurementCommand(
             "config.json",
             _prepared_run(),
             cable_loss_path=cable,
             driver_mapping_path=mapping,
+            cable_loss_digest=cable_digest,
+            driver_mapping_digest=mapping_digest,
         )
 
         worker = build_measurement_worker_factories()[MeasurementKind.AMPLIFIER](
@@ -59,6 +69,8 @@ class WorkerFactoryCommandTests(unittest.TestCase):
 
         self.assertEqual(worker.cable_loss_path, cable)
         self.assertEqual(worker.driver_mapping_path, mapping)
+        self.assertEqual(worker.cable_loss_digest, cable_digest)
+        self.assertEqual(worker.driver_mapping_digest, mapping_digest)
 
     def test_commands_without_selections_keep_the_run_reference_fallback(self):
         command = MeasurementCommand("config.json", _prepared_run())
@@ -68,8 +80,11 @@ class WorkerFactoryCommandTests(unittest.TestCase):
         amplifier_worker = factories[MeasurementKind.AMPLIFIER](command)
 
         self.assertIsNone(mapping_worker.cable_loss_path)
+        self.assertIsNone(mapping_worker.cable_loss_digest)
         self.assertIsNone(amplifier_worker.cable_loss_path)
+        self.assertIsNone(amplifier_worker.cable_loss_digest)
         self.assertIsNone(amplifier_worker.driver_mapping_path)
+        self.assertIsNone(amplifier_worker.driver_mapping_digest)
 
 
 if __name__ == "__main__":  # pragma: no cover

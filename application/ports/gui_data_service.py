@@ -40,6 +40,10 @@ class LoadedResultDto:
     ``result`` 已经是 ``application.dto`` 的正式结果对象：调用方拿到它就可以直接
     展示、绘图或导出，不需要也不允许再把结果当成 ``Mapping[str, Any]`` 读取。
     原始 JSON 只通过 ``ResultQueryPort.read_bytes()`` 逐字节导出。
+
+    ``sha256`` / ``size_bytes`` 是加载时读取到的文件事实。按阶段文件显式选择结果时，
+    调用方把这两个值带进启动链路，应用层据此复核文件在选择之后没有被替换；历史浏览
+    入口不要求它们，因此保持可选。
     """
 
     result_id: str
@@ -49,6 +53,8 @@ class LoadedResultDto:
     # 页面不解析 ``result_id``，也不接触文件系统路径。
     run_id: str | None = None
     source_result: str | None = None
+    sha256: str | None = None
+    size_bytes: int | None = None
 
 
 class ConfigurationPort(Protocol):
@@ -84,7 +90,9 @@ class ResultQueryPort(Protocol):
 
         ``path`` 必须直接位于该阶段的独立结果目录；阶段边界、JSON、结果类型、
         schema 和状态由阶段结果仓库校验。实现不扫描目录、不查找最新文件，失败时
-        抛出 ``ValueError``（含 ``StageResultError``）或 ``OSError``。
+        抛出 ``ValueError``（含 ``StageResultError``）或 ``OSError``。返回值必须
+        携带同一次读取得到的 ``sha256`` 与 ``size_bytes``，供启动链路复核文件在
+        用户选择之后没有被替换。
         """
         ...
 

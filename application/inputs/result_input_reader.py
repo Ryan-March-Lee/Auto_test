@@ -13,6 +13,7 @@ from typing import Any, Mapping
 
 from application.dto import (
     DriverMappingInput,
+    MeasurementResult,
     MeasurementType,
     measurement_result_from_document,
 )
@@ -101,6 +102,34 @@ class ResultInputReader(ResultInputReaderPort):
         return self._driver_mapping_input(
             self.repository.load(self._explicit_path(path))
         )
+
+    def read_cable_loss_result(self, result: MeasurementResult) -> Mapping[str, Any]:
+        """校验**已经加载**的正式线损结果，不再触碰文件系统。
+
+        组装层按显式路径经阶段结果仓库加载并核对摘要后，用本入口把同一份已解析结果
+        转成交付给用例的线损文档。这样校验对象与消费对象来自同一次读取，文件在两次
+        读取之间被替换也不会造成来源漂移。
+        """
+        return self._cable_loss_input(self._result_document(result, "线损"))
+
+    def read_driver_mapping_result(
+        self, result: MeasurementResult
+    ) -> DriverMappingInput:
+        """把已经加载的正式驱动映射结果收敛为目标网格输入，不再读取文件。"""
+        return self._driver_mapping_input(
+            self._result_document(result, "驱动映射")
+        )
+
+    @staticmethod
+    def _result_document(
+        result: MeasurementResult, label: str
+    ) -> Mapping[str, Any]:
+        if not isinstance(result, MeasurementResult):
+            raise ValueError(
+                f"{label}输入必须已经加载为正式测量结果，"
+                f"收到 {type(result).__name__}"
+            )
+        return result.to_dict()
 
 
 __all__ = ["ResultInputReader"]

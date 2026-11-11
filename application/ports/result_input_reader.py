@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Mapping, Protocol, runtime_checkable
 from .types import PathLike
 
 if TYPE_CHECKING:  # pragma: no cover - 仅类型标注，避免 dto/ports 运行时循环导入
-    from application.dto.measurement_results import DriverMappingInput
+    from application.dto.measurement_results import DriverMappingInput, MeasurementResult
 
 
 @runtime_checkable
@@ -27,6 +27,14 @@ class ResultInputReader(Protocol):
 
     def read_driver_mapping(self, path: PathLike) -> "DriverMappingInput":
         """Load the validated two-layer driver-mapping input from the path."""
+
+    def read_cable_loss_result(self, result: "MeasurementResult") -> Mapping[str, Any]:
+        """Validate an already-loaded formal cable-loss result without re-reading."""
+
+    def read_driver_mapping_result(
+        self, result: "MeasurementResult"
+    ) -> "DriverMappingInput":
+        """Turn an already-loaded formal driver-mapping result into its target input."""
 
 
 __all__ = ["ResultInputReader"]

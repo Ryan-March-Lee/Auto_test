@@ -19,6 +19,7 @@ from application.dto import (
     generate_measurement_id,
 )
 from application.measurements.services import DriverPowerMappingService
+from application.inputs.explicit_stage_input import load_selected_stage_result
 from application.ports.measurement_session import CleanupRecord
 from application.ports.stage_result_repository import MeasurementStage
 from application.run_stages import StageResultNotRecorded
@@ -69,8 +70,8 @@ class DriverPowerMappingUseCase:
                 "DriverPowerMappingUseCase 必须由应用组装层注入 stage_result_repository"
             )
         self.input_reader = request.input_reader
-        # 阶段记录器是请求契约的一部分（D1）：线损输入只从当前运行目录读取，映射结果
-        # 的引用登记到 inputs/driver_mapping.json 并更新 manifest。
+        # 阶段记录器是请求契约的一部分（D1）：省略显式来源时线损输入才从当前运行
+        # 目录读取；映射结果的引用登记到 inputs/driver_mapping.json 并更新 manifest。
         self.stage_recorder = request.stage_recorder
         self._stage_open = False
         # 阶段成功提交后的自动归档入口；组装层总是注入。
@@ -172,16 +173,29 @@ class DriverPowerMappingUseCase:
         :meth:`RunStageRecorder.verified_result_path` 复核摘要。绝不按时间扫描其它
         运行目录或“最新结果”。
 
-        显式来源的归属由调用方负责；``ResultInputReader`` 只读取调用方传入的显式
-        路径，不判断路径是否属于当前运行。
+        显式路径带选择时摘要时，这里用注入的阶段结果仓库重新加载并核对摘要——调用方
+        绕过组装层直接构造请求时同样不会消费被替换的文件；随后把**同一次读取**得到
+        的正式结果直接转成线损文档，不再按路径二次读取。省略摘要只表示旧调用方锁定
+        路径，阶段契约仍会被完整校验。
         """
         if self.input_reader is None:
             raise ValueError("DriverPowerMappingUseCase 必须注入 input_reader")
         preloaded = self.request.loss_data
         if preloaded is not None:
             return preloaded
-        if self.request.cable_loss_path is not None:
-            return self.input_reader.read_cable_loss(self.request.cable_loss_path)
+        path = self.request.cable_loss_path
+        if path is not None:
+            digest = self.request.cable_loss_digest
+            if digest is None:
+                return self.input_reader.read_cable_loss(path)
+            loaded = load_selected_stage_result(
+                self.stage_result_repository,
+                MeasurementStage.CABLE_LOSS,
+                path,
+                digest=digest,
+                label="线损",
+            )
+            return self.input_reader.read_cable_loss_result(loaded.result)
         return self.input_reader.read_cable_loss(
             self.stage_recorder.verified_result_path(STAGE_CABLE_LOSS)
         )

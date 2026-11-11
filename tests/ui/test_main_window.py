@@ -670,6 +670,28 @@ class DriverMappingCableLossSelectionTests(unittest.TestCase):
         )
         return MainWindow, window, page, logs
 
+    def test_result_without_file_facts_does_not_become_a_selection(self):
+        """缺少摘要的结果无法在启动时复核，不能留下“看起来能开始”的选择。"""
+        loaded = SimpleNamespace(
+            result_id="stage::cable_loss::20261111T010203Z_a1b2c3d4",
+            filename="20261111T010203Z_a1b2c3d4.json",
+            result=SimpleNamespace(created_at="2026-11-11T01:02:03+00:00"),
+        )
+        results = Mock()
+        results.load_stage_result.return_value = loaded
+        MainWindow, window, page, logs = self._window(results)
+        selected = str(Path("test_results") / "cable_loss" / loaded.filename)
+
+        with patch(
+            "presentation.qt.stage_result_selection.QFileDialog.getOpenFileName",
+            return_value=(selected, "JSON 文件 (*.json)"),
+        ):
+            MainWindow._load_driver_mapping_cable_loss(window)
+
+        page.show_loaded_cable_loss.assert_not_called()
+        self.assertEqual(len(logs), 1)
+        self.assertIn("缺少文件摘要", logs[0])
+
     def test_cancelled_selection_keeps_the_page_unchanged(self):
         results = Mock()
         MainWindow, window, page, logs = self._window(results)
@@ -691,6 +713,8 @@ class DriverMappingCableLossSelectionTests(unittest.TestCase):
             result_id="stage::cable_loss::20261111T010203Z_a1b2c3d4",
             filename="20261111T010203Z_a1b2c3d4.json",
             result=SimpleNamespace(created_at="2026-11-11T01:02:03+00:00"),
+            sha256="a" * 64,
+            size_bytes=128,
         )
         results = Mock()
         results.load_stage_result.return_value = loaded
@@ -714,6 +738,8 @@ class DriverMappingCableLossSelectionTests(unittest.TestCase):
             path=selected,
             filename=loaded.filename,
             created_at=loaded.result.created_at,
+            sha256=loaded.sha256,
+            size_bytes=loaded.size_bytes,
         )
         self.assertEqual(logs, [])
 
@@ -776,6 +802,8 @@ class AmplifierCalibrationInputSelectionTests(unittest.TestCase):
             result_id="stage::cable_loss::20261111T010203Z_a1b2c3d4",
             filename="20261111T010203Z_a1b2c3d4.json",
             result=SimpleNamespace(created_at="2026-11-11T01:02:03+00:00"),
+            sha256="a" * 64,
+            size_bytes=128,
         )
         results = Mock()
         results.load_stage_result.return_value = loaded
@@ -799,6 +827,8 @@ class AmplifierCalibrationInputSelectionTests(unittest.TestCase):
             path=selected,
             filename=loaded.filename,
             created_at=loaded.result.created_at,
+            sha256=loaded.sha256,
+            size_bytes=loaded.size_bytes,
         )
         page.show_loaded_driver_mapping.assert_not_called()
         self.assertEqual(logs, [])
@@ -828,6 +858,8 @@ class AmplifierCalibrationInputSelectionTests(unittest.TestCase):
             result_id="stage::driver_mapping::20261110T050607Z_0f1e2d3c",
             filename="20261110T050607Z_0f1e2d3c.json",
             result=SimpleNamespace(created_at="2026-11-10T05:06:07+00:00"),
+            sha256="b" * 64,
+            size_bytes=256,
         )
         results = Mock()
         results.load_stage_result.return_value = loaded
@@ -851,6 +883,8 @@ class AmplifierCalibrationInputSelectionTests(unittest.TestCase):
             path=selected,
             filename=loaded.filename,
             created_at=loaded.result.created_at,
+            sha256=loaded.sha256,
+            size_bytes=loaded.size_bytes,
         )
         # 两个入口互不覆盖：加载驱动映射不会改写线损选择。
         page.show_loaded_cable_loss.assert_not_called()

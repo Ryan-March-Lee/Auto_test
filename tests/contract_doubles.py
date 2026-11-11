@@ -268,7 +268,7 @@ def amplifier_inputs(
 
 
 class MappingInputReader:
-    """测量输入读取器替身：按阶段返回固定文档，并记下被读取的路径。"""
+    """测量输入读取器替身：按阶段返回固定文档，并记下被读取的路径/结果。"""
 
     def __init__(
         self,
@@ -281,6 +281,7 @@ class MappingInputReader:
         self.driver_mapping = driver_mapping
         self.error = error
         self.paths: list[Path] = []
+        self.results: list[tuple[str, Any]] = []
 
     def read_cable_loss(self, path: Any) -> Any:
         self.paths.append(Path(path))
@@ -296,6 +297,25 @@ class MappingInputReader:
             raise self.error
         if self.driver_mapping is None:
             raise FileNotFoundError(f"驱动映射输入不存在: {path}")
+        return self._driver_mapping()
+
+    def read_cable_loss_result(self, result: Any) -> Any:
+        self.results.append(("cable_loss", result))
+        if self.error is not None:
+            raise self.error
+        if self.cable_loss is None:
+            raise FileNotFoundError("线损输入不存在")
+        return self.cable_loss
+
+    def read_driver_mapping_result(self, result: Any) -> Any:
+        self.results.append(("driver_mapping", result))
+        if self.error is not None:
+            raise self.error
+        if self.driver_mapping is None:
+            raise FileNotFoundError("驱动映射输入不存在")
+        return self._driver_mapping()
+
+    def _driver_mapping(self) -> Any:
         if isinstance(self.driver_mapping, DriverMappingInput):
             return self.driver_mapping
         return _driver_mapping_input(self.driver_mapping)

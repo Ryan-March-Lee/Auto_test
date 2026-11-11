@@ -281,6 +281,7 @@ class DriverMappingWorker(BaseWorker):
         *,
         prepared_run,
         cable_loss_path=None,
+        cable_loss_digest=None,
         sleep_fn=None,
         measurement_port=None,
         measurement_factory=None,
@@ -292,6 +293,8 @@ class DriverMappingWorker(BaseWorker):
         self.prepared_run = prepared_run
         # 页面在点击开始时冻结的显式线损来源；None 表示旧调用方走运行引用。
         self.cable_loss_path = cable_loss_path
+        # 选择时的文件事实，随路径原样交给测量工厂复核。
+        self.cable_loss_digest = cable_loss_digest
 
     def run(self) -> None:
         self._run_measurement("开始驱动功放映射测量...", "create_driver_mapping_measurement", "驱动映射测量")
@@ -311,6 +314,7 @@ class DriverMappingWorker(BaseWorker):
                     return
                 self._service = create_measurement(prepared_run=prepared,
                     cable_loss_path=self.cable_loss_path,
+                    cable_loss_digest=self.cable_loss_digest,
                     progress_callback=self.signals.progress.emit, message_callback=self.signals.message.emit,
                     data_callback=self.signals.data_update.emit, sleep_fn=self.sleep_fn,
                     measurement_port=self.measurement_port)
@@ -344,6 +348,8 @@ class AmplifierWorker(BaseWorker):
         prepared_run,
         cable_loss_path=None,
         driver_mapping_path=None,
+        cable_loss_digest=None,
+        driver_mapping_digest=None,
         sleep_fn=None,
         measurement_port=None,
         measurement_factory=None,
@@ -356,6 +362,9 @@ class AmplifierWorker(BaseWorker):
         # 页面在点击开始时冻结的显式校准来源；None 表示旧调用方走运行引用。
         self.cable_loss_path = cable_loss_path
         self.driver_mapping_path = driver_mapping_path
+        # 选择时的文件事实，随路径原样交给测量工厂复核。
+        self.cable_loss_digest = cable_loss_digest
+        self.driver_mapping_digest = driver_mapping_digest
 
     def run(self) -> None:
         try:
@@ -373,6 +382,8 @@ class AmplifierWorker(BaseWorker):
                 self._service = create_measurement(prepared_run=prepared,
                     cable_loss_path=self.cable_loss_path,
                     driver_mapping_path=self.driver_mapping_path,
+                    cable_loss_digest=self.cable_loss_digest,
+                    driver_mapping_digest=self.driver_mapping_digest,
                     progress_callback=self.signals.progress.emit, message_callback=self.signals.message.emit,
                     data_callback=self.signals.data_update.emit, sleep_fn=self.sleep_fn,
                     measurement_port=self.measurement_port)

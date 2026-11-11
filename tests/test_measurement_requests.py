@@ -15,6 +15,7 @@ from application.dto import (
     MeasurementStatus,
     MeasurementType,
 )
+from application.dto.measurement_requests import StageResultDigest
 from application.inputs import ResultInputReader
 from application.run_service import configuration_snapshot
 from domain.configuration.models import (
@@ -426,6 +427,36 @@ class MeasurementRequestInputPathTests(unittest.TestCase):
                     self._request(cable_loss_path=value)
                 with self.assertRaisesRegex(ValueError, "driver_mapping_path"):
                     self._request(driver_mapping_path=value)
+
+    def test_digests_default_to_none_and_require_their_path(self):
+        request = self._request()
+        self.assertIsNone(request.cable_loss_digest)
+        self.assertIsNone(request.driver_mapping_digest)
+        digest = StageResultDigest(sha256="a" * 64, size_bytes=10)
+        with self.assertRaisesRegex(ValueError, "cable_loss_path"):
+            self._request(cable_loss_digest=digest)
+        with self.assertRaisesRegex(ValueError, "driver_mapping_path"):
+            self._request(driver_mapping_digest=digest)
+
+    def test_digests_are_kept_with_their_paths(self):
+        cable = Path("test_results") / "cable_loss" / "20260101T000000Z_abcd.json"
+        digest = StageResultDigest(sha256="a" * 64, size_bytes=10)
+        request = self._request(cable_loss_path=cable, cable_loss_digest=digest)
+        self.assertEqual(request.cable_loss_digest, digest)
+
+    def test_digest_contract_rejects_invalid_facts(self):
+        cases = (
+            ("x", 1),
+            ("a" * 63, 1),
+            ("A" * 64, 1),
+            ("a" * 64, -1),
+            ("a" * 64, True),
+            ("a" * 64, "10"),
+        )
+        for sha256, size_bytes in cases:
+            with self.subTest(sha256=sha256, size_bytes=size_bytes):
+                with self.assertRaises(ValueError):
+                    StageResultDigest(sha256=sha256, size_bytes=size_bytes)
 
 
 class DriverMappingRequestLossDataTests(unittest.TestCase):

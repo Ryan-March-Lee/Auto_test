@@ -33,6 +33,7 @@ def _driver_mapping_factory(command: MeasurementCommand, *, measurement_port: An
     return DriverMappingWorker(
         prepared_run=command.prepared_run,
         cable_loss_path=command.cable_loss_path,
+        cable_loss_digest=command.cable_loss_digest,
         measurement_port=measurement_port,
     )
 
@@ -42,6 +43,8 @@ def _amplifier_factory(command: MeasurementCommand, *, measurement_port: Any = N
         prepared_run=command.prepared_run,
         cable_loss_path=command.cable_loss_path,
         driver_mapping_path=command.driver_mapping_path,
+        cable_loss_digest=command.cable_loss_digest,
+        driver_mapping_digest=command.driver_mapping_digest,
         measurement_port=measurement_port,
     )
 

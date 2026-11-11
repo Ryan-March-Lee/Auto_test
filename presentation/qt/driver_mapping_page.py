@@ -24,6 +24,7 @@ from .measurement_start_facade import (
     is_busy,
 )
 from application.dto import DriverPowerMappingMeasurementResult
+from application.dto.measurement_requests import StageResultDigest
 from .archival_page import ArchivalPageMixin
 from .measurement_controls import (
     MeasurementAction,
@@ -202,6 +203,7 @@ class DriverMappingPage(
                 MeasurementKind.DRIVER_MAPPING,
                 self._run_provider(),
                 cable_loss_path=self._selected_cable_loss_path(),
+                cable_loss_digest=self._selected_cable_loss_digest(),
             ),
             controller=self.controller,
             confirm_connection=self._confirm_start_connection,
@@ -228,16 +230,26 @@ class DriverMappingPage(
         self._connection_dialog_factory("driver_mapping", self).exec()
 
     def show_loaded_cable_loss(
-        self, *, path: str, filename: str, created_at: str
+        self,
+        *,
+        path: str,
+        filename: str,
+        created_at: str,
+        sha256: str,
+        size_bytes: int,
     ) -> None:
         """记录用户显式选择的线损结果，并回显来源文件与测量时间。
 
         文件内容、阶段目录边界与结果类型已由应用层校验；页面只保存窗口交回的事实，
-        不读取文件，也不把这里的显示当成测量输入的第二次校验。日志只说“已选择”，
-        不暗示正在运行（或下一次）测量已经消费了这份文件。
+        不读取文件，也不把这里的显示当成测量输入的第二次校验。``sha256`` 与
+        ``size_bytes`` 是选择那一刻的文件事实，启动时由应用层复核文件没有被替换。
+        日志只说“已选择”，不暗示正在运行（或下一次）测量已经消费了这份文件。
         """
         self._cable_loss_selection = StageResultSelection(
-            path=path, filename=filename, created_at=created_at
+            path=path,
+            filename=filename,
+            created_at=created_at,
+            digest=StageResultDigest(sha256=sha256, size_bytes=size_bytes),
         )
         self._sync_cable_loss_label()
         self._log_callback(
@@ -254,6 +266,11 @@ class DriverMappingPage(
         """启动时冻结的线损来源；页面没有选择时为 ``None``（由页面先行拦下）。"""
         selection = self._cable_loss_selection
         return None if selection is None else selection.path
+
+    def _selected_cable_loss_digest(self) -> StageResultDigest | None:
+        """启动时冻结的选择时文件事实；与路径一起进入启动请求。"""
+        selection = self._cable_loss_selection
+        return None if selection is None else selection.digest
 
     def _sync_cable_loss_label(self) -> None:
         selection = self._cable_loss_selection

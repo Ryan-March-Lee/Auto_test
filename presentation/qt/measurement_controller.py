@@ -144,6 +144,8 @@ class MeasurementController:
                 options=command.options,
                 cable_loss_path=command.cable_loss_path,
                 driver_mapping_path=command.driver_mapping_path,
+                cable_loss_digest=command.cable_loss_digest,
+                driver_mapping_digest=command.driver_mapping_digest,
             )
             worker = factory(effective_command, measurement_port=self._measurement_port)
             self._worker = worker

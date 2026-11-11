@@ -11,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from presentation.qt.measurement_controller_contract import MeasurementCommand
+from application.dto.measurement_requests import StageResultDigest
 from presentation.qt.measurement_start_facade import (
     BUSY_MESSAGE,
     MeasurementStartFacade,
@@ -104,12 +105,16 @@ class MeasurementStartFacadeTests(unittest.TestCase):
     def test_ready_command_carries_the_selected_stage_inputs(self):
         cable = Path("test_results") / "cable_loss" / "20260101T000000Z_abcd.json"
         mapping = Path("test_results") / "driver_mapping" / "20260102T000000Z_ef01.json"
+        cable_digest = StageResultDigest(sha256="a" * 64, size_bytes=100)
+        mapping_digest = StageResultDigest(sha256="b" * 64, size_bytes=200)
         decision = self.facade.prepare(
             lambda: StartMeasurementRequest(
                 MeasurementKind.AMPLIFIER,
                 _prepared_run(),
                 cable_loss_path=str(cable),
                 driver_mapping_path=mapping,
+                cable_loss_digest=cable_digest,
+                driver_mapping_digest=mapping_digest,
             ),
             controller=self.controller,
             confirm_connection=lambda: True,
@@ -120,6 +125,21 @@ class MeasurementStartFacadeTests(unittest.TestCase):
         self.assertEqual(decision.command.driver_mapping_path, mapping)
         self.assertIsInstance(decision.command.cable_loss_path, Path)
         self.assertIsInstance(decision.command.driver_mapping_path, Path)
+        self.assertEqual(decision.command.cable_loss_digest, cable_digest)
+        self.assertEqual(decision.command.driver_mapping_digest, mapping_digest)
+
+    def test_digest_without_its_path_is_rejected_before_the_command(self):
+        digest = StageResultDigest(sha256="a" * 64, size_bytes=100)
+        with self.assertRaisesRegex(ValueError, "只能在同时给出"):
+            StartMeasurementRequest(
+                MeasurementKind.DRIVER_MAPPING,
+                _prepared_run(),
+                cable_loss_digest=digest,
+            )
+        with self.assertRaisesRegex(ValueError, "只能在同时给出"):
+            MeasurementCommand(
+                "config.json", _prepared_run(), driver_mapping_digest=digest
+            )
 
     def test_blank_selected_paths_are_rejected_before_the_command(self):
         with self.assertRaisesRegex(ValueError, "cable_loss_path"):

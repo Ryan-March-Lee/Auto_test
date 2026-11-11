@@ -235,11 +235,15 @@ class AmplifierPageArchivalLogTests(unittest.TestCase):
             path="test_results/cable_loss/cable.json",
             filename="cable.json",
             created_at="2026-11-11T01:02:03+00:00",
+            sha256="a" * 64,
+            size_bytes=128,
         )
         self.page.show_loaded_driver_mapping(
             path="test_results/driver_mapping/driver.json",
             filename="driver.json",
             created_at="2026-11-10T05:06:07+00:00",
+            sha256="b" * 64,
+            size_bytes=256,
         )
         # 选择日志不属于本类要验证的归档提示。
         self.logs.clear()
@@ -512,6 +516,8 @@ class DriverMappingPageArchivalLogTests(unittest.TestCase):
             path="test_results/cable_loss/20261111T010203Z_a1b2c3d4.json",
             filename="20261111T010203Z_a1b2c3d4.json",
             created_at="2026-11-11T01:02:03+00:00",
+            sha256="a" * 64,
+            size_bytes=128,
         )
 
     def test_success_and_failure_prompts_are_logged(self):

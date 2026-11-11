@@ -15,6 +15,7 @@ from app.cancellation import CancellationToken
 from app.events import EventSink
 from domain.models import RunContext
 from domain.configuration.models import RunConfiguration
+from domain.run.models import SHA256_PATTERN
 from application.ports.result_repository import MeasurementResultRepository
 from application.ports.result_input_reader import ResultInputReader
 from application.ports.measurement_session import SafetyCleanupPort
@@ -65,6 +66,57 @@ def coerce_input_path(value: Any, field_name: str) -> Path | None:
 
 
 @dataclass(frozen=True)
+class StageResultDigest:
+    """用户**选择阶段结果那一刻**观察到的文件事实。
+
+    显式输入路径只能表达“选过哪个文件”，无法表达“选的是哪一份内容”：同目录下的
+    合法结果可以被另一份同样合法的结果替换。因此显式输入还要携带选择时的
+    SHA-256 与文件大小，启动时由组装层重新加载并核对；不一致就拒绝启动，而不是
+    消费用户没有选择的内容。摘要与大小都来自阶段结果仓库的同一次读取，UI 不自行
+    计算，也不用修改时间参与判断。
+    """
+
+    sha256: str
+    size_bytes: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.sha256, str) or not SHA256_PATTERN.fullmatch(
+            self.sha256
+        ):
+            raise ValueError("阶段结果摘要必须是 64 位小写十六进制 sha256")
+        if (
+            isinstance(self.size_bytes, bool)
+            or not isinstance(self.size_bytes, int)
+            or self.size_bytes < 0
+        ):
+            raise ValueError("阶段结果大小必须是非负整数")
+
+
+def coerce_stage_digest(
+    value: Any,
+    path: Path | None,
+    *,
+    field_name: str,
+    path_name: str,
+) -> StageResultDigest | None:
+    """校验显式输入的选择时摘要；摘要不能脱离它所属的路径单独存在。
+
+    省略摘要表示旧调用方只锁定路径（启动时仍会完整校验阶段契约，但不比较选择时
+    的文件事实）。给出摘要时必须同时给出路径，否则“这份摘要属于哪个文件”无从谈起。
+    """
+    if value is None:
+        return None
+    if not isinstance(value, StageResultDigest):
+        raise ValueError(
+            f"{field_name} 必须是 StageResultDigest 或 None，"
+            f"收到 {type(value).__name__}"
+        )
+    if path is None:
+        raise ValueError(f"{field_name} 只能在同时给出 {path_name} 时使用")
+    return value
+
+
+@dataclass(frozen=True)
 class MeasurementRequest:
     """Common, fully assembled input for one measurement execution.
 
@@ -79,7 +131,10 @@ class MeasurementRequest:
     ``cable_loss_path`` / ``driver_mapping_path`` 是用户在页面上显式选择的阶段结果
     文件。它们与 ``run_id`` 无关，也不会由运行目录推断；组装层在连接仪器前按该路径
     加载并校验输入（步骤 14、15），省略时保持 ``None`` 并沿用运行引用兼容路径。
-    这里只负责让请求清晰表达来源，并把空路径/非法类型挡在构造期。
+
+    ``cable_loss_digest`` / ``driver_mapping_digest`` 是用户选择那一刻的文件事实
+    （SHA-256 与大小）：给出时组装层必须在启动前重新加载并核对，被替换或改动的文件
+    不会被消费。摘要只能与对应路径一起使用；省略摘要表示旧调用方只锁定路径。
     """
 
     configuration: RunConfiguration
@@ -101,6 +156,9 @@ class MeasurementRequest:
     # 显式输入来源（步骤 13）：页面选择的阶段结果文件，与运行身份无关。
     cable_loss_path: Path | None = None
     driver_mapping_path: Path | None = None
+    # 选择时的文件事实：启动前复核同一份内容，防止“选的是 A、测的是 B”。
+    cable_loss_digest: StageResultDigest | None = None
+    driver_mapping_digest: StageResultDigest | None = None
     # 阶段正式结果的独立仓库：步骤 7 起线损、步骤 8 起驱动映射的结果分别写入
     # ``test_results/cable_loss/``、``test_results/driver_mapping/``，运行目录只
     # 登记引用。组装层必须为会产生正式结果的用例注入它。
@@ -195,6 +253,26 @@ class MeasurementRequest:
             "driver_mapping_path",
             coerce_input_path(self.driver_mapping_path, "driver_mapping_path"),
         )
+        object.__setattr__(
+            self,
+            "cable_loss_digest",
+            coerce_stage_digest(
+                self.cable_loss_digest,
+                self.cable_loss_path,
+                field_name="cable_loss_digest",
+                path_name="cable_loss_path",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "driver_mapping_digest",
+            coerce_stage_digest(
+                self.driver_mapping_digest,
+                self.driver_mapping_path,
+                field_name="driver_mapping_digest",
+                path_name="driver_mapping_path",
+            ),
+        )
 
 
 @dataclass(frozen=True)
@@ -209,9 +287,11 @@ class CableLossMeasurementRequest(MeasurementRequest):
 class DriverPowerMappingRequest(MeasurementRequest):
     """Inputs for driver-power mapping.
 
-    ``cable_loss_path`` 是页面显式选择的线损结果文件；``loss_data`` 是组装层在连接
-    仪器前按该路径加载、校验过的同一份线损文档。两者同时出现时用例直接复用
-    ``loss_data``，不再读文件；省略路径时仍按当前运行登记的引用读取。
+    ``cable_loss_path`` 是页面显式选择的线损结果文件；``cable_loss_digest`` 是选择
+    那一刻的 SHA-256 与文件大小；``loss_data`` 是组装层在连接仪器前按该路径加载、
+    核对摘要并校验过的同一份线损文档。三者同时出现时用例直接复用 ``loss_data``，
+    不再读文件；只有 ``cable_loss_path`` 而无摘要时按旧调用方处理；省略显式来源时
+    仍按当前运行登记的引用读取。
     """
 
     measurement_type: MeasurementType | str = MeasurementType.DRIVER_POWER_MAPPING
@@ -256,8 +336,9 @@ class AmplifierMeasurementRequest(MeasurementRequest):
     ``calibration_inputs`` 是组合入口预检时已读取的同一份线损/驱动映射；省略时用例
     仍按当前运行目录读取，行为与旧调用方一致。
 
-    ``cable_loss_path`` / ``driver_mapping_path`` 是显式校准输入来源；组合入口按它们
-    加载并在连接仪器前完成结构、频率与目标网格校验，省略时保持运行目录兼容。
+    ``cable_loss_path`` / ``driver_mapping_path`` 是显式校准输入来源，
+    ``*_digest`` 是选择那一刻的文件事实；组合入口按它们加载、核对摘要并在连接仪器
+    前完成结构、频率与目标网格校验，省略时保持运行目录兼容。
     """
 
     measurement_type: MeasurementType | str = MeasurementType.AMPLIFIER

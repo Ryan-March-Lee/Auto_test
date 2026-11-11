@@ -27,7 +27,11 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
 
-from application.dto.measurement_requests import coerce_input_path
+from application.dto.measurement_requests import (
+    StageResultDigest,
+    coerce_input_path,
+    coerce_stage_digest,
+)
 
 from .measurement_controller_contract import START_METHODS, MeasurementCommand
 from .measurement_state import MeasurementKind
@@ -70,8 +74,9 @@ class StartMeasurementRequest:
     """页面提交的启动意图：测量类型 + 当前运行契约 + 显式校准输入来源。
 
     页面在用户点击“开始”时读取 ``run_provider`` 得到当前运行，并把页面上已选择的
-    阶段结果路径一起冻结进请求；这里不缓存运行对象，也不回读控件。路径与 ``run_id``
-    无关，允许来自其它运行，空路径/非法类型在构造期就按字段名拒绝。
+    阶段结果路径与选择时的文件事实一起冻结进请求；这里不缓存运行对象，也不回读控件。
+    路径与 ``run_id`` 无关，允许来自其它运行，空路径/非法类型在构造期就按字段名拒绝。
+    摘要只能与对应路径一起出现：启动时应用层据此复核文件没有被替换。
 
     ``prepared_run`` 是否满足契约由 :meth:`MeasurementStartFacade.prepare`
     判定，因为“没有运行”是用户可修正的问题，不是构造错误。
@@ -81,19 +86,37 @@ class StartMeasurementRequest:
     prepared_run: Any
     cable_loss_path: Path | str | None = None
     driver_mapping_path: Path | str | None = None
+    cable_loss_digest: StageResultDigest | None = None
+    driver_mapping_digest: StageResultDigest | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.kind, MeasurementKind):
             raise TypeError("kind 必须是 MeasurementKind")
+        cable_loss_path = coerce_input_path(self.cable_loss_path, "cable_loss_path")
+        driver_mapping_path = coerce_input_path(
+            self.driver_mapping_path, "driver_mapping_path"
+        )
+        object.__setattr__(self, "cable_loss_path", cable_loss_path)
+        object.__setattr__(self, "driver_mapping_path", driver_mapping_path)
         object.__setattr__(
             self,
-            "cable_loss_path",
-            coerce_input_path(self.cable_loss_path, "cable_loss_path"),
+            "cable_loss_digest",
+            coerce_stage_digest(
+                self.cable_loss_digest,
+                cable_loss_path,
+                field_name="cable_loss_digest",
+                path_name="cable_loss_path",
+            ),
         )
         object.__setattr__(
             self,
-            "driver_mapping_path",
-            coerce_input_path(self.driver_mapping_path, "driver_mapping_path"),
+            "driver_mapping_digest",
+            coerce_stage_digest(
+                self.driver_mapping_digest,
+                driver_mapping_path,
+                field_name="driver_mapping_digest",
+                path_name="driver_mapping_path",
+            ),
         )
 
 
@@ -241,6 +264,8 @@ class MeasurementStartFacade:
             prepared_run=request.prepared_run,
             cable_loss_path=request.cable_loss_path,
             driver_mapping_path=request.driver_mapping_path,
+            cable_loss_digest=request.cable_loss_digest,
+            driver_mapping_digest=request.driver_mapping_digest,
         )
         return self._decision(
             StartMeasurementStatus.READY,

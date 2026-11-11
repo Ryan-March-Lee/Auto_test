@@ -10,6 +10,7 @@ from presentation.qt.measurement_state import (
     StageResultSelection,
 )
 from application.dto import MeasurementStatus as ApplicationMeasurementStatus
+from application.dto.measurement_requests import StageResultDigest
 
 
 class MeasurementStateTests(unittest.TestCase):
@@ -116,8 +117,10 @@ class MeasurementStateTests(unittest.TestCase):
             path="test_results/cable_loss/a.json",
             filename="a.json",
             created_at="2026-11-11T01:02:03+00:00",
+            digest=StageResultDigest(sha256="a" * 64, size_bytes=12),
         )
         self.assertEqual(selection.filename, "a.json")
+        self.assertEqual(selection.digest.size_bytes, 12)
         for name in ("path", "filename", "created_at"):
             with self.subTest(field=name), self.assertRaises(ValueError):
                 StageResultSelection(
@@ -127,6 +130,19 @@ class MeasurementStateTests(unittest.TestCase):
                 StageResultSelection(
                     **{**selection.__dict__, name: None}
                 )
+        with self.assertRaises(TypeError):
+            StageResultSelection(
+                path=selection.path,
+                filename=selection.filename,
+                created_at=selection.created_at,
+                digest=None,
+            )
+
+    def test_selection_digest_must_come_from_the_stage_repository(self):
+        with self.assertRaises(ValueError):
+            StageResultDigest(sha256="not-a-digest", size_bytes=1)
+        with self.assertRaises(ValueError):
+            StageResultDigest(sha256="a" * 64, size_bytes=-1)
 
 
 if __name__ == "__main__":

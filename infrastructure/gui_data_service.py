@@ -238,6 +238,8 @@ class ResultQueryAdapter:
             ),
             filename=loaded.path.name,
             result=loaded.result,
+            sha256=loaded.sha256,
+            size_bytes=loaded.size_bytes,
         )
 
     def latest_result(self, result_type: str) -> LoadedResultDto:

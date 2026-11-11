@@ -12,6 +12,8 @@ from application.dto import (
 )
 from application.measurements import AmplifierMeasurementUseCase
 from application.measurements.amplifier_test import AMPLIFIER_RESULT_PATH
+from application.dto.measurement_requests import StageResultDigest
+from application.run_stages import StageInputUnavailable
 from domain.configuration.models import (
     RunConfiguration,
     RunResourceMapping,
@@ -63,7 +65,19 @@ CABLE_LOSSES = {
 }
 
 
-def _request(instrument, *, token=None, repository=None, recorder=None, reader=None):
+def _request(
+    instrument,
+    *,
+    token=None,
+    repository=None,
+    recorder=None,
+    reader=None,
+    stage_repository=None,
+    cable_loss_path=None,
+    cable_loss_digest=None,
+    driver_mapping_path=None,
+    driver_mapping_digest=None,
+):
     configuration = {
         "test_frequencies": [1.0],
         "attenuator": {"type": "10dB"},
@@ -84,6 +98,11 @@ def _request(instrument, *, token=None, repository=None, recorder=None, reader=N
         cancellation_token=token,
         result_repository=repository or _Repository(),
         input_reader=reader or MappingInputReader(cable_loss={"cable_losses": CABLE_LOSSES}),
+        stage_result_repository=stage_repository,
+        cable_loss_path=cable_loss_path,
+        cable_loss_digest=cable_loss_digest,
+        driver_mapping_path=driver_mapping_path,
+        driver_mapping_digest=driver_mapping_digest,
         safety_options={"owns_measurement_port": True},
     )
 
@@ -206,6 +225,57 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
 
         self.assertIs(use_case.loss_data, loss_data)
         self.assertIsNone(use_case.driver_mapping)
+
+    def test_explicit_cable_loss_path_is_used_without_preloaded_inputs(self):
+        """没有预检对象时，显式选择（含摘要）仍是校准输入的权威来源。"""
+        reader = MappingInputReader(cable_loss={"cable_losses": CABLE_LOSSES})
+        selected = Path("test_results") / "cable_loss" / "20260101T000000Z_abcd.json"
+        digest = StageResultDigest(sha256="a" * 64, size_bytes=32)
+        sentinel = object()
+        loaded = SimpleNamespace(
+            sha256="a" * 64, size_bytes=32, path=selected, result=sentinel
+        )
+        stage_repository = SimpleNamespace(load=lambda stage, path: loaded)
+
+        use_case = AmplifierMeasurementUseCase(
+            _request(
+                _Instrument(),
+                reader=reader,
+                stage_repository=stage_repository,
+                cable_loss_path=selected,
+                cable_loss_digest=digest,
+            ),
+            sleep_fn=lambda _: None,
+        )
+
+        self.assertEqual(use_case.loss_data, {"cable_losses": CABLE_LOSSES})
+        self.assertIsNone(use_case.driver_mapping)
+        self.assertEqual(reader.paths, [])
+        self.assertEqual(reader.results, [("cable_loss", sentinel)])
+
+    def test_replaced_explicit_cable_loss_is_rejected_before_measurement(self):
+        reader = MappingInputReader(cable_loss={"cable_losses": CABLE_LOSSES})
+        selected = Path("test_results") / "cable_loss" / "20260101T000000Z_abcd.json"
+        digest = StageResultDigest(sha256="a" * 64, size_bytes=32)
+        loaded = SimpleNamespace(
+            sha256="b" * 64, size_bytes=32, path=selected, result=object()
+        )
+        stage_repository = SimpleNamespace(load=lambda stage, path: loaded)
+
+        with self.assertRaisesRegex(StageInputUnavailable, "已被修改或替换"):
+            AmplifierMeasurementUseCase(
+                _request(
+                    _Instrument(),
+                    reader=reader,
+                    stage_repository=stage_repository,
+                    cable_loss_path=selected,
+                    cable_loss_digest=digest,
+                ),
+                sleep_fn=lambda _: None,
+            )
+
+        self.assertEqual(reader.paths, [])
+        self.assertEqual(reader.results, [])
 
     def test_completes_and_saves_structured_result(self):
         instrument = _Instrument()

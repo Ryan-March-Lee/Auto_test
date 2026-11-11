@@ -3,6 +3,8 @@
 页面只发出“用户想加载某类结果”的意图；本模块负责打开文件选择器并把选中的路径
 交给应用层。文件选择器只给出路径，阶段目录边界、JSON、正式 DTO、类型、状态、
 schema 与身份全部由阶段结果仓库校验，这里不扫描目录，也不回退到“最新结果”。
+应用层返回的 SHA-256 与大小会随路径一起交回页面：测量启动时据此复核文件在用户
+选择之后没有被替换，缺少这两项事实的选择不会变成可启动的输入。
 """
 
 from __future__ import annotations
@@ -78,12 +80,29 @@ def _choose_and_show(
     directory: Any,
     show: Callable[..., Any],
 ) -> None:
-    """选文件、按显式路径加载，再把来源信息交回页面；取消/失败保持页面原样。"""
+    """选文件、按显式路径加载，再把来源信息与文件事实交回页面。
+
+    页面保存路径、来源显示信息和选择时的摘要；取消或失败保持页面原样。缺少摘要说明
+    查询实现没有返回可复核的文件事实，这份选择不能进入测量启动链路，因此按加载失败
+    处理，而不是留下一个“看起来能开始”的空壳选择。
+    """
     selected = _choose(window, stage, title=title, label=label, directory=directory)
     if selected is None:
         return
     path, loaded = selected
-    show(path=path, filename=loaded.filename, created_at=loaded.result.created_at)
+    sha256 = getattr(loaded, "sha256", None)
+    size_bytes = getattr(loaded, "size_bytes", None)
+    if sha256 is None or size_bytes is None:
+        logger.warning("阶段结果 %s 缺少文件摘要，不能作为测量输入", loaded.filename)
+        window.add_log_message(f"加载{label}失败: 结果缺少文件摘要")
+        return
+    show(
+        path=path,
+        filename=loaded.filename,
+        created_at=loaded.result.created_at,
+        sha256=sha256,
+        size_bytes=size_bytes,
+    )
 
 
 def load_cable_loss_result(window: Any) -> None:

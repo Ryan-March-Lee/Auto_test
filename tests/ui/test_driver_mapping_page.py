@@ -122,6 +122,8 @@ class DriverMappingPageTests(unittest.TestCase):
             path=f"test_results/cable_loss/{filename}",
             filename=filename,
             created_at=created_at,
+            sha256="a" * 64,
+            size_bytes=128,
         )
 
     def test_start_forwards_explicit_command_after_preparation(self):
@@ -137,6 +139,8 @@ class DriverMappingPageTests(unittest.TestCase):
             command.cable_loss_path,
             Path("test_results") / "cable_loss" / "20261111T010203Z_a1b2c3d4.json",
         )
+        self.assertEqual(command.cable_loss_digest.sha256, "a" * 64)
+        self.assertEqual(command.cable_loss_digest.size_bytes, 128)
         self.assertIsNone(command.driver_mapping_path)
         self.assertEqual(self.clears, [True])
 

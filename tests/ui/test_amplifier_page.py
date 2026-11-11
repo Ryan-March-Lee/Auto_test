@@ -112,6 +112,8 @@ class AmplifierPageTests(unittest.TestCase):
             path=f"test_results/cable_loss/{filename}",
             filename=filename,
             created_at=created_at,
+            sha256="a" * 64,
+            size_bytes=128,
         )
 
     def _select_driver_mapping(
@@ -123,6 +125,8 @@ class AmplifierPageTests(unittest.TestCase):
             path=f"test_results/driver_mapping/{filename}",
             filename=filename,
             created_at=created_at,
+            sha256="b" * 64,
+            size_bytes=256,
         )
 
     def _select_both_inputs(self) -> None:
@@ -147,6 +151,10 @@ class AmplifierPageTests(unittest.TestCase):
             / "driver_mapping"
             / "20261110T050607Z_0f1e2d3c.json",
         )
+        self.assertEqual(command.cable_loss_digest.sha256, "a" * 64)
+        self.assertEqual(command.cable_loss_digest.size_bytes, 128)
+        self.assertEqual(command.driver_mapping_digest.sha256, "b" * 64)
+        self.assertEqual(command.driver_mapping_digest.size_bytes, 256)
 
     def test_start_ignores_a_stale_mapping_selection_when_driver_is_disabled(self):
         self._select_both_inputs()
@@ -160,6 +168,7 @@ class AmplifierPageTests(unittest.TestCase):
             Path("test_results") / "cable_loss" / "20261111T010203Z_a1b2c3d4.json",
         )
         self.assertIsNone(command.driver_mapping_path)
+        self.assertIsNone(command.driver_mapping_digest)
 
     def test_missing_current_run_does_not_start_measurement(self):
         self._select_both_inputs()

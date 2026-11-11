@@ -15,7 +15,11 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Callable, Mapping, Protocol, runtime_checkable
 
-from application.dto.measurement_requests import coerce_input_path
+from application.dto.measurement_requests import (
+    StageResultDigest,
+    coerce_input_path,
+    coerce_stage_digest,
+)
 
 from .measurement_state import (
     MeasurementKind,
@@ -54,7 +58,8 @@ class MeasurementCommand:
 
     ``cable_loss_path`` / ``driver_mapping_path`` 是页面在点击开始时冻结的显式校准
     输入来源。命令只保存已规范化的路径，不读文件、不判断阶段归属；阶段目录边界、
-    正式结果契约与硬件前校验由应用组装层完成。
+    正式结果契约与硬件前校验由应用组装层完成。``*_digest`` 是同一时刻的 SHA-256 与
+    文件大小，随命令原样送到测量工厂，用于复核文件没有被替换。
     """
 
     config_path: str
@@ -62,6 +67,8 @@ class MeasurementCommand:
     options: Mapping[str, Any] = field(default_factory=dict)
     cable_loss_path: Path | str | None = None
     driver_mapping_path: Path | str | None = None
+    cable_loss_digest: StageResultDigest | None = None
+    driver_mapping_digest: StageResultDigest | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.config_path, str) or not self.config_path.strip():
@@ -76,15 +83,31 @@ class MeasurementCommand:
                 "运行仓储与 hardware_connection_path()）；请先创建或重新加载运行"
             )
         object.__setattr__(self, "options", _freeze(self.options))
+        cable_loss_path = coerce_input_path(self.cable_loss_path, "cable_loss_path")
+        driver_mapping_path = coerce_input_path(
+            self.driver_mapping_path, "driver_mapping_path"
+        )
+        object.__setattr__(self, "cable_loss_path", cable_loss_path)
+        object.__setattr__(self, "driver_mapping_path", driver_mapping_path)
         object.__setattr__(
             self,
-            "cable_loss_path",
-            coerce_input_path(self.cable_loss_path, "cable_loss_path"),
+            "cable_loss_digest",
+            coerce_stage_digest(
+                self.cable_loss_digest,
+                cable_loss_path,
+                field_name="cable_loss_digest",
+                path_name="cable_loss_path",
+            ),
         )
         object.__setattr__(
             self,
-            "driver_mapping_path",
-            coerce_input_path(self.driver_mapping_path, "driver_mapping_path"),
+            "driver_mapping_digest",
+            coerce_stage_digest(
+                self.driver_mapping_digest,
+                driver_mapping_path,
+                field_name="driver_mapping_digest",
+                path_name="driver_mapping_path",
+            ),
         )
 
 

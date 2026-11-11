@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from application.dto.measurement_requests import StageResultDigest
 from .archival_page import ArchivalPageMixin
 from .measurement_controls import (
     MeasurementAction,
@@ -214,6 +215,8 @@ class AmplifierPage(
                 self._run_provider(),
                 cable_loss_path=self._selected_cable_loss_path(),
                 driver_mapping_path=self._selected_driver_mapping_path(),
+                cable_loss_digest=self._selected_cable_loss_digest(),
+                driver_mapping_digest=self._selected_driver_mapping_digest(),
             ),
             controller=self.controller,
             confirm_connection=self._confirm_start_connection,
@@ -264,16 +267,26 @@ class AmplifierPage(
         self._connection_dialog_factory(diagram, self).exec()
 
     def show_loaded_cable_loss(
-        self, *, path: str, filename: str, created_at: str
+        self,
+        *,
+        path: str,
+        filename: str,
+        created_at: str,
+        sha256: str,
+        size_bytes: int,
     ) -> None:
         """记录用户显式选择的线损结果，并回显来源文件与测量时间。
 
         文件内容、阶段目录边界与结果类型已由应用层校验；页面只保存窗口交回的事实，
-        不读取文件，也不把这里的显示当成测量输入的第二次校验。日志只说“已选择”，
-        不暗示正在运行（或下一次）测量已经消费了这份文件。
+        不读取文件，也不把这里的显示当成测量输入的第二次校验。``sha256`` 与
+        ``size_bytes`` 是选择那一刻的文件事实，启动时由应用层复核文件没有被替换。
+        日志只说“已选择”，不暗示正在运行（或下一次）测量已经消费了这份文件。
         """
         self._cable_loss_selection = StageResultSelection(
-            path=path, filename=filename, created_at=created_at
+            path=path,
+            filename=filename,
+            created_at=created_at,
+            digest=StageResultDigest(sha256=sha256, size_bytes=size_bytes),
         )
         self._sync_cable_loss_label()
         self._log_callback(
@@ -282,11 +295,20 @@ class AmplifierPage(
         )
 
     def show_loaded_driver_mapping(
-        self, *, path: str, filename: str, created_at: str
+        self,
+        *,
+        path: str,
+        filename: str,
+        created_at: str,
+        sha256: str,
+        size_bytes: int,
     ) -> None:
         """记录用户显式选择的驱动映射结果；与线损选择互不覆盖。"""
         self._driver_mapping_selection = StageResultSelection(
-            path=path, filename=filename, created_at=created_at
+            path=path,
+            filename=filename,
+            created_at=created_at,
+            digest=StageResultDigest(sha256=sha256, size_bytes=size_bytes),
         )
         self._sync_driver_input_availability()
         self._log_callback(
@@ -318,6 +340,17 @@ class AmplifierPage(
             return None
         selection = self._driver_mapping_selection
         return None if selection is None else selection.path
+
+    def _selected_cable_loss_digest(self) -> StageResultDigest | None:
+        selection = self._cable_loss_selection
+        return None if selection is None else selection.digest
+
+    def _selected_driver_mapping_digest(self) -> StageResultDigest | None:
+        """与 ``_selected_driver_mapping_path`` 保持同一可见性规则。"""
+        if not self._driver_mode_provider():
+            return None
+        selection = self._driver_mapping_selection
+        return None if selection is None else selection.digest
 
     def _sync_cable_loss_label(self) -> None:
         selection = self._cable_loss_selection

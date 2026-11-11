@@ -11,6 +11,7 @@ from enum import Enum
 from types import MappingProxyType
 from typing import Any, Mapping
 
+from application.dto.measurement_requests import StageResultDigest
 from application.dto.measurement_results import MeasurementStatus
 from application.lifecycle import MeasurementLifecycle
 
@@ -63,12 +64,15 @@ class StageResultSelection:
 
     ``path`` 是文件选择器给出的阶段结果文件路径；页面只把它当作不透明输入保存，
     不读取、不解析，也不用它替代应用层的阶段/类型/schema 校验。``filename`` 与
-    ``created_at`` 只用于向用户回显来源文件和测量时间。
+    ``created_at`` 只用于向用户回显来源文件和测量时间。``digest`` 是选择那一刻由
+    阶段结果仓库给出的 SHA-256 与文件大小：启动时组装层据此复核文件没有被替换，
+    页面不自行计算摘要。
     """
 
     path: str
     filename: str
     created_at: str
+    digest: StageResultDigest
 
     def __post_init__(self) -> None:
         for name in ("path", "filename", "created_at"):
@@ -77,6 +81,8 @@ class StageResultSelection:
                 raise TypeError(f"{name} 必须是字符串")
             if not value.strip():
                 raise ValueError(f"{name} 不能为空")
+        if not isinstance(self.digest, StageResultDigest):
+            raise TypeError("digest 必须是 StageResultDigest")
 
 
 @dataclass(frozen=True)

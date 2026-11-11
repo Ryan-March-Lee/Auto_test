@@ -254,6 +254,7 @@ class GuiWorkerTests(unittest.TestCase):
         worker = DriverMappingWorker(
             prepared_run=self._contract_run(),
             cable_loss_path="test_results/cable_loss/20260101T000000Z_abcd.json",
+            cable_loss_digest="digest-cable",
             sleep_fn=lambda _: None,
             measurement_factory=lambda *_args, **kwargs: calls.append(kwargs)
             or service,
@@ -264,6 +265,7 @@ class GuiWorkerTests(unittest.TestCase):
             calls[0]["cable_loss_path"],
             "test_results/cable_loss/20260101T000000Z_abcd.json",
         )
+        self.assertEqual(calls[0]["cable_loss_digest"], "digest-cable")
         self.assertNotIn("driver_mapping_path", calls[0])
 
     def test_amplifier_worker_forwards_both_selected_paths(self):
@@ -275,6 +277,8 @@ class GuiWorkerTests(unittest.TestCase):
             driver_mapping_path=(
                 "test_results/driver_mapping/20260102T000000Z_ef01.json"
             ),
+            cable_loss_digest="digest-cable",
+            driver_mapping_digest="digest-mapping",
             sleep_fn=lambda _: None,
             measurement_factory=lambda *_args, **kwargs: calls.append(kwargs)
             or service,
@@ -289,6 +293,8 @@ class GuiWorkerTests(unittest.TestCase):
             calls[0]["driver_mapping_path"],
             "test_results/driver_mapping/20260102T000000Z_ef01.json",
         )
+        self.assertEqual(calls[0]["cable_loss_digest"], "digest-cable")
+        self.assertEqual(calls[0]["driver_mapping_digest"], "digest-mapping")
 
     def test_measurement_workers_publish_structured_results(self):
         cases = (

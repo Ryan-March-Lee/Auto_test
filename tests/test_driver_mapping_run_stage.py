@@ -2,9 +2,10 @@
 
 覆盖验收标准：
 
-- 驱动映射只从当前运行目录读取已完成的 ``inputs/cable_loss.json``，当前运行
-  缺失线损结果时在硬件动作前失败（输入切换留给步骤 14）。
-- 另一个运行目录或全局兼容副本的线损数据不会被自动使用。
+- 省略显式来源时，驱动映射只从当前运行目录读取已完成的
+  ``inputs/cable_loss.json``，当前运行缺失线损结果时在硬件动作前失败；
+- 另一个运行目录或全局兼容副本的线损数据不会被自动使用；用户显式选择其它运行的
+  阶段结果（含选择时摘要）后才会消费它（步骤 14）。
 - 完成的映射结果写入 ``test_results/driver_mapping/<measurement_id>.json``；
   运行目录只保存引用文档并登记 manifest，结果脱离原运行目录仍可读取。
 - 旧版单层 ``power_mapping`` 仍由正式结果读取器按既有规则拒绝。
@@ -26,10 +27,14 @@ from app.gui_runtime import (
     prepare_configuration,
 )
 from application.dto import (
+    CableLossMeasurementResult,
+    CableLossRow,
     DriverPowerMappingRequest,
+    generate_measurement_id,
     measurement_result_from_document,
     validate_generated_measurement_id,
 )
+from application.dto.measurement_requests import StageResultDigest
 from application.inputs import ResultInputReader
 from application.measurements import DriverPowerMappingUseCase
 from application.ports.stage_result_repository import MeasurementStage
@@ -233,6 +238,18 @@ class DriverMappingRunStageTests(unittest.TestCase):
         )
         return recorder
 
+    def _saved_stage_cable_loss(self, *, run_id=RUN_ID):
+        """把一份正式线损结果写入阶段目录（不登记运行引用）。"""
+        result = CableLossMeasurementResult(
+            run_id=run_id,
+            measurement_id=generate_measurement_id(),
+            points=tuple(
+                CableLossRow(frequency_ghz=frequency, cable_losses=values)
+                for frequency, values in CABLE_LOSSES.items()
+            ),
+        )
+        return self.stage_repository.save(MeasurementStage.CABLE_LOSS, result)
+
     def _stage_result_files(self):
         directory = self.paths.driver_mapping_results_dir
         if not directory.is_dir():
@@ -261,6 +278,8 @@ class DriverMappingRunStageTests(unittest.TestCase):
         recorder=None,
         stage_repository=None,
         cable_loss_path=None,
+        cable_loss_digest=None,
+        loss_data=None,
     ):
         layout = self.repository.layout(run_id)
         instrument = instrument or _Instrument()
@@ -286,6 +305,8 @@ class DriverMappingRunStageTests(unittest.TestCase):
             stage_recorder=recorder or self._recorder(run_id),
             cancellation_token=token,
             cable_loss_path=cable_loss_path,
+            cable_loss_digest=cable_loss_digest,
+            loss_data=loss_data,
             safety_options={"owns_measurement_port": True},
         )
 
@@ -590,19 +611,25 @@ class DriverMappingRunStageTests(unittest.TestCase):
             (self.base / "runs" / RUN_ID / DRIVER_MAPPING_INPUT_PATH).exists()
         )
 
-    def test_explicit_loss_data_does_not_bypass_current_run_input(self):
+    def test_preloaded_loss_data_is_consumed_without_the_run_input(self):
+        """组合入口预检过的线损文档随请求复用，用例不再要求当前运行登记线损。
+
+        这正是组装层必须在连接仪器前完成显式文件校验的原因：一旦交出 ``loss_data``，
+        用例就不再读取运行引用。
+        """
         self._create_run()
         instrument = _Instrument()
+        loss_data = {"cable_losses": CABLE_LOSSES}
 
-        with self.assertRaises(StageInputUnavailable):
-            DriverPowerMappingUseCase(
-                self._request(instrument=instrument),
-                sleep_fn=lambda _: None,
-            )
+        use_case = DriverPowerMappingUseCase(
+            self._request(instrument=instrument, loss_data=loss_data),
+            sleep_fn=lambda _: None,
+        )
 
-        self.assertEqual(instrument.measured, 0)
+        self.assertIs(use_case.loss_data, loss_data)
+        use_case.measure_all_frequencies()
         self.assertEqual(
-            self.repository.load_manifest(RUN_ID).stage(STAGE_DRIVER_MAPPING).status,
+            self.repository.load_manifest(RUN_ID).stage(STAGE_CABLE_LOSS).status,
             StageStatus.PENDING,
         )
 
@@ -629,16 +656,20 @@ class DriverMappingRunStageTests(unittest.TestCase):
         """显式选择另一个运行的阶段结果是唯一的跨运行入口（步骤 14）。
 
         没有显式路径时当前运行不会自动使用其它运行的数据（上一个用例）；显式选择
-        线损文件后按该路径读取，当前运行自己的线损阶段仍保持原状态。
+        线损阶段文件并给出选择时摘要后按该路径加载并核对，当前运行自己的线损阶段仍
+        保持原状态。
         """
         self._create_run()
-        self._create_run(OTHER_RUN_ID)
-        self._complete_cable_loss(OTHER_RUN_ID)
-        selected = self._recorder(OTHER_RUN_ID).verified_result_path(STAGE_CABLE_LOSS)
+        reference = self._saved_stage_cable_loss(run_id=OTHER_RUN_ID)
+        digest = StageResultDigest(reference.sha256, reference.size_bytes)
         instrument = _Instrument()
 
         use_case = DriverPowerMappingUseCase(
-            self._request(instrument=instrument, cable_loss_path=selected),
+            self._request(
+                instrument=instrument,
+                cable_loss_path=reference.path,
+                cable_loss_digest=digest,
+            ),
             sleep_fn=lambda _: None,
         )
 
@@ -649,6 +680,30 @@ class DriverMappingRunStageTests(unittest.TestCase):
             self.repository.load_manifest(RUN_ID).stage(STAGE_CABLE_LOSS).status,
             StageStatus.PENDING,
         )
+
+    def test_replaced_other_run_cable_loss_is_rejected_before_measurement(self):
+        """选择后阶段文件被替换：摘要不再匹配，测量开始前就失败。"""
+        self._create_run()
+        reference = self._saved_stage_cable_loss(run_id=OTHER_RUN_ID)
+        digest = StageResultDigest(reference.sha256, reference.size_bytes)
+        document = json.loads(reference.path.read_text(encoding="utf-8"))
+        document["cable_losses"] = {
+            "1.0": {"cable1": 9.0, "cable2": 9.0, "cable3": 9.0, "cable4": 9.0}
+        }
+        reference.path.write_text(json.dumps(document), encoding="utf-8")
+        instrument = _Instrument()
+
+        with self.assertRaisesRegex(StageInputUnavailable, "已被修改或替换"):
+            DriverPowerMappingUseCase(
+                self._request(
+                    instrument=instrument,
+                    cable_loss_path=reference.path,
+                    cable_loss_digest=digest,
+                ),
+                sleep_fn=lambda _: None,
+            )
+
+        self.assertEqual(instrument.measured, 0)
 
     def test_global_compatibility_result_is_not_used_as_input(self):
         compat = self.base / "test_results" / "cable_loss_results.json"

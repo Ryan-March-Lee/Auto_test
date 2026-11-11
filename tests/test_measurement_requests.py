@@ -374,6 +374,59 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
             )
 
 
+class MeasurementRequestInputPathTests(unittest.TestCase):
+    """步骤 13：请求显式表达校准输入来源，且不依赖运行身份。"""
+
+    def _request(self, **overrides):
+        arguments = {
+            "configuration": {},
+            "context": SimpleNamespace(run_id="run-request"),
+            "run_directory": Path("runs") / "run-request",
+            "measurement_port": object(),
+            "stage_recorder": RecordingStageRecorder("run-request"),
+        }
+        arguments.update(overrides)
+        return CableLossMeasurementRequest(**arguments)
+
+    def test_input_paths_default_to_none_and_are_not_derived_from_run_id(self):
+        request = self._request()
+        self.assertIsNone(request.cable_loss_path)
+        self.assertIsNone(request.driver_mapping_path)
+
+    def test_input_paths_are_normalized_to_path_objects(self):
+        cable_loss = Path("test_results") / "cable_loss" / "20260101T000000Z_abcd.json"
+        request = self._request(
+            cable_loss_path=f"  {cable_loss}  ",
+            driver_mapping_path=str(Path("elsewhere") / "mapping.json"),
+        )
+        self.assertEqual(request.cable_loss_path, cable_loss)
+        self.assertEqual(
+            request.driver_mapping_path, Path("elsewhere") / "mapping.json"
+        )
+        self.assertIsInstance(request.cable_loss_path, Path)
+        self.assertIsInstance(request.driver_mapping_path, Path)
+
+    def test_empty_input_path_is_rejected_with_the_field_name(self):
+        for value in ("", "   "):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "cable_loss_path"):
+                    self._request(cable_loss_path=value)
+                with self.assertRaisesRegex(ValueError, "driver_mapping_path"):
+                    self._request(driver_mapping_path=value)
+        with self.assertRaisesRegex(ValueError, "cable_loss_path"):
+            self._request(cable_loss_path=Path(""))
+        with self.assertRaisesRegex(ValueError, "driver_mapping_path"):
+            self._request(driver_mapping_path=Path("/"))
+
+    def test_non_path_input_is_rejected(self):
+        for value in (123, object(), ["path"]):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "cable_loss_path"):
+                    self._request(cable_loss_path=value)
+                with self.assertRaisesRegex(ValueError, "driver_mapping_path"):
+                    self._request(driver_mapping_path=value)
+
+
 class RunContractSnapshotCheckTests(unittest.TestCase):
     """连接仪器前按登记的硬件快照读取：这里不替换任何前置校验。"""
 

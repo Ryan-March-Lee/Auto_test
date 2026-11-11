@@ -49,6 +49,7 @@ from application.dto import (
     CableLossMeasurementRequest,
     DriverPowerMappingRequest,
 )
+from application.dto.measurement_requests import coerce_input_path
 from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService
 
 
@@ -371,11 +372,21 @@ def _input_reader_for(repository: Any) -> Any:
     return ResultInputReader(repository)
 
 
-def _request_kwargs(prepared_run: PreparedRun, callbacks: dict[str, Any]) -> dict[str, Any]:
+def _request_kwargs(
+    prepared_run: PreparedRun,
+    callbacks: dict[str, Any],
+    *,
+    cable_loss_path: Path | None = None,
+    driver_mapping_path: Path | None = None,
+) -> dict[str, Any]:
     """Build the shared request inputs at the application composition boundary.
 
     阶段记录器与自动归档是运行契约的组成部分：运行契约已校验，因此这里**无条件**
     装配，不再有“没有运行就没有阶段记录/交付产物”的分支。
+
+    ``cable_loss_path`` / ``driver_mapping_path`` 是页面显式选择的阶段结果文件
+    （步骤 13）。它们与 ``run_id`` 无关，调用方必须原样给出；工厂已在连接仪器前用
+    :func:`coerce_input_path` 校验过类型与空值。
     """
     port = callbacks.get("measurement_port")
     if port is None:
@@ -400,6 +411,9 @@ def _request_kwargs(prepared_run: PreparedRun, callbacks: dict[str, Any]) -> dic
         "result_repository": repository,
         # 所有运行只接受显式输入路径；无路径兼容读取已在步骤 B3 删除。
         "input_reader": callbacks.get("input_reader") or _input_reader_for(repository),
+        # 页面显式选择的校准输入来源（步骤 13）；与运行身份无关。
+        "cable_loss_path": cable_loss_path,
+        "driver_mapping_path": driver_mapping_path,
         # 正式结果写入独立阶段目录，运行目录只登记引用（步骤 7）。
         "stage_result_repository": (
             callbacks.get("stage_result_repository")
@@ -445,13 +459,23 @@ def create_cable_loss_measurement(*, prepared_run: PreparedRun, **callbacks: Any
         raise
 
 
-def create_driver_mapping_measurement(*, prepared_run: PreparedRun, **callbacks: Any) -> Any:
-    """装配驱动映射测量用例：运行契约是唯一权威。
+def create_driver_mapping_measurement(
+    *,
+    prepared_run: PreparedRun,
+    cable_loss_path: Path | str | None = None,
+    **callbacks: Any,
+) -> Any:
+    """装配驱动映射测量用例：运行契约是唯一运行权威，线损可显式选择。
 
     与其它测量工厂一样，本函数不解析、也不接收硬件配置路径，端口由
     :func:`connect_instruments` 按运行快照装配（D12）。
+
+    ``cable_loss_path`` 是页面选中的线损阶段结果文件。路径在连接仪器前完成类型与
+    空值校验，并原样进入请求；按显式路径加载与结构校验由步骤 14 接入用例。
     """
     prepared_run = require_run_contract(prepared_run)
+    # 显式输入来源先于任何快照校验/仪器连接确定：空路径或非法类型不会付出连接代价。
+    cable_loss_path = coerce_input_path(cable_loss_path, "cable_loss_path")
     callbacks.update(
         run_id=prepared_run.context.run_id,
         run_directory=prepared_run.run_directory,
@@ -470,7 +494,9 @@ def create_driver_mapping_measurement(*, prepared_run: PreparedRun, **callbacks:
         callbacks["owns_measurement_port"] = owned_port
         callbacks.setdefault("result_repository", FileMeasurementResultRepository(paths=callbacks.get("paths") or DEFAULT_PATHS))
         callbacks.setdefault("event_sink", _CallbackEventSink(callbacks))
-        request = DriverPowerMappingRequest(**_request_kwargs(prepared_run, callbacks))
+        request = DriverPowerMappingRequest(
+            **_request_kwargs(prepared_run, callbacks, cable_loss_path=cable_loss_path)
+        )
         return DriverPowerMappingUseCase(request, sleep_fn=callbacks.get("sleep_fn"))
     except Exception:
         if owned_port:
@@ -480,13 +506,28 @@ def create_driver_mapping_measurement(*, prepared_run: PreparedRun, **callbacks:
         raise
 
 
-def create_amplifier_measurement(*, prepared_run: PreparedRun, **callbacks: Any) -> Any:
-    """装配主功放测量用例：运行契约是唯一权威。
+def create_amplifier_measurement(
+    *,
+    prepared_run: PreparedRun,
+    cable_loss_path: Path | str | None = None,
+    driver_mapping_path: Path | str | None = None,
+    **callbacks: Any,
+) -> Any:
+    """装配主功放测量用例：运行契约是唯一运行权威，校准输入可显式选择。
 
     与其它测量工厂一样，本函数不解析、也不接收硬件配置路径，端口由
     :func:`connect_instruments` 按运行快照装配（D12）。
+
+    ``cable_loss_path`` / ``driver_mapping_path`` 是页面选中的阶段结果文件。两个
+    路径在连接仪器前完成类型与空值校验，并原样进入请求；按显式路径加载与结构校验
+    由步骤 15 接入组合入口的预检。
     """
     prepared_run = require_run_contract(prepared_run)
+    # 显式校准输入来源先于任何快照校验/仪器连接确定：空路径或非法类型不会付出连接代价。
+    cable_loss_path = coerce_input_path(cable_loss_path, "cable_loss_path")
+    driver_mapping_path = coerce_input_path(
+        driver_mapping_path, "driver_mapping_path"
+    )
     callbacks.update(
         run_id=prepared_run.context.run_id,
         run_directory=prepared_run.run_directory,
@@ -521,7 +562,12 @@ def create_amplifier_measurement(*, prepared_run: PreparedRun, **callbacks: Any)
         callbacks["input_reader"] = input_reader
         callbacks.setdefault("event_sink", _CallbackEventSink(callbacks))
         request = AmplifierMeasurementRequest(
-            **_request_kwargs(prepared_run, callbacks),
+            **_request_kwargs(
+                prepared_run,
+                callbacks,
+                cable_loss_path=cable_loss_path,
+                driver_mapping_path=driver_mapping_path,
+            ),
             inputs=inputs,
             # 预检已经读取并校验过同一份校准输入；用例直接复用，不再二次读取。
             calibration_inputs=calibration_inputs,

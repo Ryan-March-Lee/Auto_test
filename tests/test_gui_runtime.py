@@ -266,6 +266,65 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
                 connect.assert_not_called()
                 self.assertEqual(port.close_calls, [])
 
+    def test_cable_loss_factory_does_not_invent_explicit_input_paths(self):
+        with patch("app.gui_runtime.connect_instruments", return_value=_Port()), patch(
+            "app.gui_runtime.CableLossUseCase", return_value=object()
+        ) as use_case:
+            create_cable_loss_measurement(prepared_run=_prepared_run())
+
+        request = use_case.call_args.args[0]
+        self.assertIsNone(request.cable_loss_path)
+        self.assertIsNone(request.driver_mapping_path)
+
+    def test_driver_mapping_factory_forwards_the_explicit_cable_loss_path(self):
+        cable = Path("selected") / "cable_loss" / "20260101T000000Z_abcd.json"
+        expected = object()
+        with patch("app.gui_runtime.connect_instruments", return_value=_Port()), patch(
+            "app.gui_runtime.DriverPowerMappingUseCase", return_value=expected
+        ) as use_case:
+            result = create_driver_mapping_measurement(
+                prepared_run=_prepared_run(), cable_loss_path=str(cable)
+            )
+
+        self.assertIs(result, expected)
+        request = use_case.call_args.args[0]
+        # 路径原样进入请求：与运行身份无关，也不从运行目录推断。
+        self.assertEqual(request.cable_loss_path, cable)
+        self.assertIsNone(request.driver_mapping_path)
+        self.assertEqual(request.run_id, "run-assembly-test")
+
+    def test_amplifier_factory_forwards_explicit_calibration_paths(self):
+        cable = Path("selected") / "cable_loss" / "20260101T000000Z_abcd.json"
+        mapping = Path("selected") / "driver_mapping" / "20260102T000000Z_ef01.json"
+        expected = object()
+        with patch("app.gui_runtime.connect_instruments", return_value=_Port()), patch(
+            "app.gui_runtime.AmplifierMeasurementUseCase", return_value=expected
+        ) as use_case:
+            result = create_amplifier_measurement(
+                prepared_run=_prepared_run(),
+                cable_loss_path=cable,
+                driver_mapping_path=str(mapping),
+            )
+
+        self.assertIs(result, expected)
+        request = use_case.call_args.args[0]
+        self.assertIsInstance(request, AmplifierMeasurementRequest)
+        self.assertEqual(request.cable_loss_path, cable)
+        self.assertEqual(request.driver_mapping_path, mapping)
+
+    def test_factories_reject_blank_input_paths_before_opening_instruments(self):
+        cases = (
+            (create_driver_mapping_measurement, "cable_loss_path", "   "),
+            (create_amplifier_measurement, "cable_loss_path", ""),
+            (create_amplifier_measurement, "driver_mapping_path", "  "),
+        )
+        for factory, field, value in cases:
+            with self.subTest(factory=factory.__name__, field=field):
+                with patch("app.gui_runtime.connect_instruments") as connect:
+                    with self.assertRaisesRegex(ValueError, field):
+                        factory(prepared_run=_prepared_run(), **{field: value})
+                connect.assert_not_called()
+
     def test_all_measurement_factories_inject_the_same_external_port(self):
         port = _Port()
         expected = object()

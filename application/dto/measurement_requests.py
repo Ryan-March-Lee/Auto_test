@@ -28,6 +28,42 @@ if TYPE_CHECKING:  # pragma: no cover - 仅用于类型标注，避免运行时�
     from instrument.ports import MeasurementInstrumentPort
 
 
+def coerce_input_path(value: Any, field_name: str) -> Path | None:
+    """把请求中的显式输入路径规范化为 :class:`pathlib.Path`。
+
+    显式路径是用户/页面选择的结果文件，**不**能由 ``run_id`` 推断，因此这里只做
+    类型与空值校验，不查找、不扫描、也不改写调用方给出的位置：
+
+    - 省略（``None``）表示没有显式输入，保持 ``None``；
+    - 字符串去掉首尾空白后必须非空，并转成 ``Path``；
+    - 空路径、目录根等没有文件名的值直接拒绝，避免把“没有选择”伪装成路径；
+    - 文件是否存在、是否位于阶段目录、JSON 与结果契约由加载边界校验。
+
+    组合根在连接仪器**之前**调用本函数，使空路径或类型错误在硬件动作前失败。
+    """
+    if value is None:
+        return None
+    if isinstance(value, Path):
+        candidate = value
+    elif isinstance(value, str):
+        text = value.strip()
+        if not text:
+            raise ValueError(
+                f"{field_name} 不能为空字符串；没有显式输入时应省略该字段"
+            )
+        candidate = Path(text)
+    else:
+        raise ValueError(
+            f"{field_name} 必须是 pathlib.Path 或字符串，"
+            f"收到 {type(value).__name__}"
+        )
+    if candidate == Path(".") or not candidate.name:
+        raise ValueError(
+            f"{field_name} 必须是结果文件路径，不能是空路径或目录根: {candidate!r}"
+        )
+    return candidate
+
+
 @dataclass(frozen=True)
 class MeasurementRequest:
     """Common, fully assembled input for one measurement execution.
@@ -39,6 +75,11 @@ class MeasurementRequest:
     ``stage_recorder`` 是**必填关键字字段**：正式测量必须绑定到一次运行，由它登记
     阶段状态与结果引用；没有阶段记录器的请求在构造期就被拒绝（D1）。阶段 7 起线损、
     阶段 8 起驱动映射的正式结果正文写入独立阶段目录，运行目录只保存引用文档。
+
+    ``cable_loss_path`` / ``driver_mapping_path`` 是用户在页面上显式选择的阶段结果
+    文件（步骤 13）。它们与 ``run_id`` 无关，也不会由运行目录推断；省略时保持
+    ``None``，后续步骤（14、15）在连接仪器前按该路径加载并校验输入。这里只负责让
+    请求清晰表达来源，并把空路径/非法类型挡在构造期。
     """
 
     configuration: RunConfiguration
@@ -57,6 +98,9 @@ class MeasurementRequest:
     cancellation_token: CancellationToken | None = None
     result_repository: MeasurementResultRepository | None = None
     input_reader: ResultInputReader | None = None
+    # 显式输入来源（步骤 13）：页面选择的阶段结果文件，与运行身份无关。
+    cable_loss_path: Path | None = None
+    driver_mapping_path: Path | None = None
     # 阶段正式结果的独立仓库：步骤 7 起线损、步骤 8 起驱动映射的结果分别写入
     # ``test_results/cable_loss/``、``test_results/driver_mapping/``，运行目录只
     # 登记引用。组装层必须为会产生正式结果的用例注入它。
@@ -141,6 +185,16 @@ class MeasurementRequest:
             "close_rf_on_cleanup": True,
             "power_cleanup_required": True,
         }))
+        object.__setattr__(
+            self,
+            "cable_loss_path",
+            coerce_input_path(self.cable_loss_path, "cable_loss_path"),
+        )
+        object.__setattr__(
+            self,
+            "driver_mapping_path",
+            coerce_input_path(self.driver_mapping_path, "driver_mapping_path"),
+        )
 
 
 @dataclass(frozen=True)
@@ -153,7 +207,11 @@ class CableLossMeasurementRequest(MeasurementRequest):
 
 @dataclass(frozen=True)
 class DriverPowerMappingRequest(MeasurementRequest):
-    """Inputs for driver-power mapping; its cable-loss input comes from the run."""
+    """Inputs for driver-power mapping.
+
+    ``cable_loss_path`` 是页面显式选择的线损结果文件；步骤 14 起用例按它加载，
+    省略时仍按当前运行登记的引用读取。
+    """
 
     measurement_type: MeasurementType | str = MeasurementType.DRIVER_POWER_MAPPING
     _expected_measurement_type: ClassVar[MeasurementType] = MeasurementType.DRIVER_POWER_MAPPING
@@ -187,6 +245,9 @@ class AmplifierMeasurementRequest(MeasurementRequest):
 
     ``calibration_inputs`` 是组合入口预检时已读取的同一份线损/驱动映射；省略时用例
     仍按当前运行目录读取，行为与旧调用方一致。
+
+    ``cable_loss_path`` / ``driver_mapping_path`` 是本步新增的显式校准输入来源；
+    步骤 15 起组合入口按它们加载并在连接仪器前完成结构校验，省略时保持运行目录兼容。
     """
 
     measurement_type: MeasurementType | str = MeasurementType.AMPLIFIER

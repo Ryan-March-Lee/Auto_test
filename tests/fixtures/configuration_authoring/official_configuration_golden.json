@@ -1,6 +1,6 @@
 {
   "description": "1.2 配置编写基线：每条 expected 是当前 authoring 对 input 生成的完整文档（1.1 功率扫描重写为单段 power_scan_plans，1.2 多段计划原样透传）。",
-  "source": "1.2 contract (docs/DUT功率扫描计划多段重构计划.md 2.2)；2026-11 阶段二步骤 2.1-2.4；阶段五步骤 5.4 补 multi_plan_scan_1_2",
+  "source": "1.2 contract (signal_source.power_scan_plans)；2026-11 阶段二步骤 2.1-2.4；阶段五步骤 5.4 补 multi_plan_scan_1_2",
   "cases": [
     {
       "name": "flat_minimal",

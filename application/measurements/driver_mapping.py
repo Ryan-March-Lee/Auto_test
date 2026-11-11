@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -15,9 +16,12 @@ from application.dto import (
     DriverPowerMappingRequest,
     MeasurementResult,
     MeasurementStatus,
+    generate_measurement_id,
 )
 from application.measurements.services import DriverPowerMappingService
 from application.ports.measurement_session import CleanupRecord
+from application.ports.stage_result_repository import MeasurementStage
+from application.run_stages import StageResultNotRecorded
 from domain.run.models import STAGE_CABLE_LOSS, STAGE_DRIVER_MAPPING
 
 
@@ -25,11 +29,12 @@ logger = logging.getLogger(__name__)
 
 
 class DriverPowerMappingUseCase:
-    """Coordinate driver mapping with run-directory inputs and persistence.
+    """Coordinate driver mapping with explicit inputs and stage-directory persistence.
 
-    只消费**当前运行**显式登记的线损输入 ``inputs/cable_loss.json``，并把映射结果
-    写回同一运行的 ``inputs/driver_mapping.json``；当前运行线损阶段未完成时在硬件
-    动作前失败。运行目录是唯一输入来源，绝不回退到按时间扫描的“最新结果”读取。
+    只消费**当前运行**显式登记的线损输入 ``inputs/cable_loss.json``，并把完成的映射
+    结果写入独立阶段目录 ``test_results/driver_mapping/``；当前运行只会登记指向该
+    阶段文件的引用文档，不再保存同一正式结果的第二份副本。当前运行线损阶段未完成时
+    在硬件动作前失败。运行目录是唯一输入来源，绝不回退到按时间扫描的“最新结果”读取。
     """
 
     def __init__(
@@ -54,9 +59,16 @@ class DriverPowerMappingUseCase:
         self.safety_cleanup = request.safety_cleanup
         if self.safety_cleanup is None:
             raise ValueError("DriverPowerMappingUseCase 必须由应用组装层注入 safety_cleanup")
+        # 阶段结果仓库是正式结果写入边界（步骤 8）：结果写入独立阶段目录，运行
+        # manifest 只登记引用。
+        self.stage_result_repository = request.stage_result_repository
+        if self.stage_result_repository is None:
+            raise ValueError(
+                "DriverPowerMappingUseCase 必须由应用组装层注入 stage_result_repository"
+            )
         self.input_reader = request.input_reader
         # 阶段记录器是请求契约的一部分（D1）：线损输入只从当前运行目录读取，映射结果
-        # 写入 inputs/driver_mapping.json 并更新 manifest。
+        # 的引用登记到 inputs/driver_mapping.json 并更新 manifest。
         self.stage_recorder = request.stage_recorder
         self._stage_open = False
         # 阶段成功提交后的自动归档入口；组装层总是注入。
@@ -171,11 +183,13 @@ class DriverPowerMappingUseCase:
         self.stage_recorder.start(STAGE_DRIVER_MAPPING)
         self._stage_open = True
 
-    def _record_complete(self, result: MeasurementResult) -> Any:
-        """把完成的映射结果写入当前运行并登记为 ``completed``。"""
-        reference = self.stage_recorder.complete(STAGE_DRIVER_MAPPING, result.to_dict())
+    def _record_complete(self, reference: Any) -> Any:
+        """把阶段结果引用登记到当前运行 manifest。"""
+        run_reference = self.stage_recorder.complete_with_stage_result(
+            STAGE_DRIVER_MAPPING, reference
+        )
         self._stage_open = False
-        return reference
+        return run_reference
 
     def _record_failure(self, error: Exception) -> None:
         if not self._stage_open:
@@ -204,20 +218,51 @@ class DriverPowerMappingUseCase:
     # -- 运行契约：结果持久化 ----------------------------------------------
 
     def _save(self, result: MeasurementResult) -> MeasurementResult:
-        """运行契约运行：权威结果写入 ``inputs/driver_mapping.json``。
+        """正式完成保存：结果写入 ``driver_mapping/``，运行 manifest 只登记引用。
 
-        运行目录结果是本次运行的权威来源：先原子提交并登记 manifest，返回值只暴露该
-        权威路径；不再同时写全局兼容副本。正式结果提交后立即触发自动归档：驱动映射
-        没有 CSV/报告交付产物，因此按契约登记为 ``not_applicable``。
+        顺序固定为“构造带身份的正式 DTO → 原子写入阶段目录 → 登记运行引用”，
+        因此阶段目录文件是正式结果的权威来源，运行目录不再复制同一份结果。目标网格
+        与原始实测点都保留在正式 DTO 中：前者是后续测量的目标输入，后者是审计依据。
+        阶段文件保存与引用登记是两个提交边界：阶段文件已提交后登记失败，不删除这份
+        正式结果，而是以 :class:`StageResultNotRecorded` 明确报告“结果已保存、运行
+        引用登记失败”，错误说明里给出阶段文件位置；这份结果仍可通过阶段结果仓库
+        的显式路径加载或阶段目录列举找到，不依赖运行 manifest。阶段结果提交后立即
+        触发自动归档：驱动映射没有 CSV/报告交付产物，因此按契约登记为
+        ``not_applicable``。
         """
-        reference = self._record_complete(result)
+        formal = self._formal_result(result)
+        stage_reference = self.stage_result_repository.save(
+            MeasurementStage.DRIVER_MAPPING, formal
+        )
+        try:
+            self._record_complete(stage_reference)
+        except Exception as error:
+            # 已提交的正式结果不能因为运行记账失败而被删除或隐藏：删除本身也可能
+            # 失败，而且会丢掉一次已完成的测量。调用方据异常消息提示结果位置。
+            raise StageResultNotRecorded(
+                STAGE_DRIVER_MAPPING,
+                stage_reference,
+                str(error) or error.__class__.__name__,
+            ) from error
         self.last_archival_outcome = archive_completed_stage(
             self.archival_service,
             run_id=self.run_id,
             stage=STAGE_DRIVER_MAPPING,
         )
-        archive_path = Path(self.run_directory) / reference.path
-        return result.with_saved_result(archive_path=str(archive_path))
+        return formal.with_saved_result(archive_path=str(stage_reference.path))
+
+    @staticmethod
+    def _formal_result(
+        result: MeasurementResult,
+    ) -> DriverPowerMappingMeasurementResult:
+        """为新正式结果分配自身身份；已带身份的结果保持不变。"""
+        if not isinstance(result, DriverPowerMappingMeasurementResult):
+            raise ValueError(
+                "DriverPowerMappingUseCase 只能保存 DriverPowerMappingMeasurementResult"
+            )
+        if result.measurement_id is not None:
+            return result
+        return replace(result, measurement_id=generate_measurement_id())
 
 
 def _service_config(configuration: Any) -> Mapping[str, Any]:

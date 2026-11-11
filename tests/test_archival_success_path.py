@@ -302,8 +302,11 @@ class SuccessPathArchivalTests(unittest.TestCase):
             measurement_port=instrument,
             safety_cleanup=safety_cleanup_for(instrument),
             result_repository=self.result_repository,
+            stage_result_repository=self.stage_repository,
             input_reader=ResultInputReader(self.result_repository),
-            stage_recorder=RunStageRecorder(self.repository, RUN_ID),
+            stage_recorder=RunStageRecorder(
+                self.repository, RUN_ID, stage_results=self.stage_repository
+            ),
             archival_service=archival,
             safety_options={"owns_measurement_port": True},
         )

@@ -1,11 +1,19 @@
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from app.cancellation import CancellationToken, MeasurementCancelled
-from application.dto import DriverPowerMappingRequest
+from application.dto import (
+    DriverPowerMappingRequest,
+    validate_generated_measurement_id,
+)
 from application.measurements import DriverPowerMappingUseCase
-from application.run_stages import StageInputUnavailable
+from application.ports.stage_result_repository import (
+    MeasurementStage,
+    StageResultReference,
+)
+from application.run_stages import StageInputUnavailable, StageResultNotRecorded
 from app.events import RealtimeDataEvent
 from domain.run.models import STAGE_CABLE_LOSS, STAGE_DRIVER_MAPPING
 from tests.contract_doubles import MappingInputReader, RecordingStageRecorder
@@ -58,6 +66,78 @@ class _Repository:
         return SimpleNamespace(run_directory=Path("saved-run"))
 
 
+class _StageRepository:
+    """阶段结果仓库替身：记录正式结果，返回可构造的阶段引用。"""
+
+    def __init__(self):
+        self.calls = []
+
+    def save(self, stage, result):
+        self.calls.append((stage, result))
+        return StageResultReference(
+            stage=stage,
+            measurement_id=result.measurement_id,
+            path=Path("stage-results")
+            / MeasurementStage.DRIVER_MAPPING.value
+            / f"{result.measurement_id}.json",
+            sha256="0" * 64,
+            size_bytes=0,
+        )
+
+
+class _FailingStageRepository:
+    """阶段结果仓库替身：正式结果写入阶段目录时失败。"""
+
+    def __init__(self, error):
+        self.error = error
+        self.calls = []
+
+    def save(self, stage, result):
+        self.calls.append((stage, result))
+        raise self.error
+
+
+class _OrderedStageRepository(_StageRepository):
+    """记录“阶段目录写入”在保存顺序中的位置。"""
+
+    def __init__(self, order):
+        super().__init__()
+        self.order = order
+
+    def save(self, stage, result):
+        self.order.append("stage-save")
+        return super().save(stage, result)
+
+
+class _OrderedCompleteRecorder(RecordingStageRecorder):
+    """记录“运行引用登记”在保存顺序中的位置。"""
+
+    def __init__(self, run_id, order):
+        super().__init__(run_id)
+        self.order = order
+
+    def complete_with_stage_result(
+        self, stage, reference, *, description=None, now=None
+    ):
+        self.order.append("register-reference")
+        return super().complete_with_stage_result(
+            stage, reference, description=description, now=now
+        )
+
+
+class _FailingCompleteRecorder(RecordingStageRecorder):
+    """引用登记失败的记录器替身：阶段文件已写入，运行记账失败。"""
+
+    def __init__(self, run_id, error):
+        super().__init__(run_id)
+        self.error = error
+
+    def complete_with_stage_result(
+        self, stage, reference, *, description=None, now=None
+    ):
+        raise self.error
+
+
 def _request(
     instrument,
     *,
@@ -66,6 +146,7 @@ def _request(
     events=None,
     token=None,
     repository=None,
+    stage_repository=None,
     frequencies=(1.0,),
 ):
     configuration = {
@@ -89,6 +170,7 @@ def _request(
         event_sink=events,
         cancellation_token=token,
         result_repository=repository or _Repository(),
+        stage_result_repository=stage_repository or _StageRepository(),
         input_reader=reader or MappingInputReader(cable_loss=CABLE_LOSS),
         safety_options={"owns_measurement_port": True},
     )
@@ -99,8 +181,14 @@ class DriverPowerMappingUseCaseTests(unittest.TestCase):
         instrument = _Instrument()
         events = _Events()
         recorder = RecordingStageRecorder("run-mapping")
+        stage_repository = _StageRepository()
         use_case = DriverPowerMappingUseCase(
-            _request(instrument, recorder=recorder, events=events),
+            _request(
+                instrument,
+                recorder=recorder,
+                events=events,
+                stage_repository=stage_repository,
+            ),
             sleep_fn=lambda _: None,
         )
 
@@ -108,14 +196,22 @@ class DriverPowerMappingUseCaseTests(unittest.TestCase):
 
         self.assertEqual(result, use_case.last_result)
         self.assertIn("1.0", use_case.power_mapping)
-        # 结果只写当前运行：阶段提交到记录器，路径指向本次运行目录。
+        # 正式结果先写入独立阶段目录：带测量身份，运行目录只登记引用。
+        [(stage, saved)] = stage_repository.calls
+        self.assertIs(stage, MeasurementStage.DRIVER_MAPPING)
+        self.assertEqual(
+            saved.measurement_id,
+            validate_generated_measurement_id(result.measurement_id),
+        )
         self.assertEqual(
             recorder.result_paths(),
             {STAGE_DRIVER_MAPPING: f"inputs/{STAGE_DRIVER_MAPPING}.json"},
         )
+        [(reference_stage, reference)] = recorder.stage_references
+        self.assertEqual(reference_stage, STAGE_DRIVER_MAPPING)
+        self.assertEqual(reference.measurement_id, result.measurement_id)
         self.assertEqual(
-            result.result_reference["archive_path"],
-            str(Path("run-directory") / "inputs" / f"{STAGE_DRIVER_MAPPING}.json"),
+            result.result_reference["archive_path"], str(reference.path)
         )
         self.assertEqual(use_case.run_directory, Path("run-directory"))
         self.assertTrue(any(isinstance(event, RealtimeDataEvent) for event in events.events))
@@ -155,6 +251,112 @@ class DriverPowerMappingUseCaseTests(unittest.TestCase):
         request = _request(None)
         with self.assertRaisesRegex(ValueError, "注入 measurement_port"):
             DriverPowerMappingUseCase(request)
+
+    def test_stage_result_repository_is_required(self):
+        request = _request(_Instrument())
+        request = DriverPowerMappingRequest(
+            configuration=request.configuration,
+            context=request.context,
+            run_directory=request.run_directory,
+            measurement_port=request.measurement_port,
+            stage_recorder=request.stage_recorder,
+            safety_cleanup=request.safety_cleanup,
+            result_repository=request.result_repository,
+            input_reader=request.input_reader,
+        )
+        with self.assertRaisesRegex(ValueError, "stage_result_repository"):
+            DriverPowerMappingUseCase(request)
+
+    def test_registration_failure_keeps_the_saved_stage_result(self):
+        """阶段文件已提交后登记失败：不撤销正式结果，错误说明给出结果位置。"""
+        stage_repository = _StageRepository()
+        recorder = _FailingCompleteRecorder("run-mapping", OSError("registry down"))
+        use_case = DriverPowerMappingUseCase(
+            _request(
+                _Instrument(),
+                recorder=recorder,
+                stage_repository=stage_repository,
+            ),
+            sleep_fn=lambda _: None,
+        )
+
+        with self.assertRaisesRegex(StageResultNotRecorded, "已保存到") as caught:
+            use_case.measure_all_frequencies()
+
+        reference = caught.exception.reference
+        self.assertIs(reference.stage, MeasurementStage.DRIVER_MAPPING)
+        self.assertEqual(
+            reference.measurement_id,
+            validate_generated_measurement_id(reference.measurement_id),
+        )
+        # 正式结果没有被删除：仓库替身记录了实际写入的阶段结果。
+        [(_stage, saved)] = stage_repository.calls
+        self.assertEqual(saved.measurement_id, reference.measurement_id)
+        # 运行阶段没有停在 running，也没有被误记成 completed。
+        self.assertEqual(
+            [stage for stage, _error in recorder.failed], [STAGE_DRIVER_MAPPING]
+        )
+        self.assertEqual(recorder.completed, [])
+
+    def test_stage_directory_save_failure_does_not_register_or_archive(self):
+        """阶段目录写入失败时，没有正式结果可登记，也不应触发归档。"""
+        recorder = RecordingStageRecorder("run-mapping")
+        stage_repository = _FailingStageRepository(OSError("disk full"))
+        archived = []
+
+        with patch(
+            "application.measurements.driver_mapping.archive_completed_stage",
+            side_effect=lambda *args, **kwargs: archived.append((args, kwargs)),
+        ):
+            with self.assertRaisesRegex(OSError, "disk full"):
+                DriverPowerMappingUseCase(
+                    _request(
+                        _Instrument(),
+                        recorder=recorder,
+                        stage_repository=stage_repository,
+                    ),
+                    sleep_fn=lambda _: None,
+                ).measure_all_frequencies()
+
+        [(stage, saved)] = stage_repository.calls
+        self.assertIs(stage, MeasurementStage.DRIVER_MAPPING)
+        # 身份在写盘前已分配，因此失败调用也携带可追溯的正式身份。
+        self.assertEqual(
+            saved.measurement_id,
+            validate_generated_measurement_id(saved.measurement_id),
+        )
+        # 没有阶段文件，就不允许登记引用，也不允许把阶段收敛为 completed。
+        self.assertEqual(recorder.stage_references, [])
+        self.assertEqual(recorder.completed, [])
+        self.assertEqual(
+            [stage for stage, _error in recorder.failed], [STAGE_DRIVER_MAPPING]
+        )
+        self.assertEqual(archived, [])
+
+    def test_formal_result_is_saved_before_registration_and_archival(self):
+        """保存顺序固定：阶段目录写入 → 运行引用登记 → 自动归档。"""
+        order = []
+        stage_repository = _OrderedStageRepository(order)
+        recorder = _OrderedCompleteRecorder("run-mapping", order)
+
+        def archive(*_args, **_kwargs):
+            order.append("archive")
+            return None
+
+        with patch(
+            "application.measurements.driver_mapping.archive_completed_stage",
+            side_effect=archive,
+        ):
+            DriverPowerMappingUseCase(
+                _request(
+                    _Instrument(),
+                    recorder=recorder,
+                    stage_repository=stage_repository,
+                ),
+                sleep_fn=lambda _: None,
+            ).measure_all_frequencies()
+
+        self.assertEqual(order, ["stage-save", "register-reference", "archive"])
 
     def test_reader_reads_the_current_run_input_path(self):
         reader = MappingInputReader(cable_loss=CABLE_LOSS)

@@ -161,7 +161,7 @@ def summarize_archival_running(kind: MeasurementKind | str) -> ArchivalSummary:
     label = _kind_label(kind)
     return ArchivalSummary(
         headline=f"{label}测量结束后将自动归档结果",
-        detail="完成后正式结果与交付产物会自动写入当前运行，无需再手动导出。",
+        detail="完成后正式结果会保存到独立结果目录，交付产物自动归档，无需再手动导出。",
         tone=TONE_INFO,
     )
 
@@ -171,7 +171,7 @@ def summarize_archival_saving(kind: MeasurementKind | str) -> ArchivalSummary:
     label = _kind_label(kind)
     return ArchivalSummary(
         headline=f"{label}扫描结束，正在保存结果并生成交付产物…",
-        detail="正式结果写入当前运行、交付产物生成完成后，这里会自动更新。",
+        detail="正式结果保存、交付产物生成完成后，这里会自动更新。",
         tone=TONE_INFO,
     )
 
@@ -186,7 +186,7 @@ def summarize_archival_missing(
     else:
         detail = (
             f"运行 {run_id} 的交付产物状态未知；"
-            "请查看日志或“历史运行”页确认，正式结果仍以运行目录为准。"
+            "请查看日志或“历史运行”页确认；正式结果以其保存位置为准。"
         )
     return ArchivalSummary(
         headline=f"{label}结果已保存，但未收到归档结果",

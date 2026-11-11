@@ -89,6 +89,7 @@ BROAD_CATCH_BASELINE = {
     "application/measurements/driver_mapping.py": (
         "DriverPowerMappingUseCase.measure_all_frequencies#1",
         "DriverPowerMappingUseCase._try_record#1",
+        "DriverPowerMappingUseCase._save#1",
     ),
     "application/run_service.py": (
         "create_run_snapshot#1",

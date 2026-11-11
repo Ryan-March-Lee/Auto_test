@@ -73,10 +73,11 @@ def contract_run(
 class RecordingStageRecorder:
     """阶段记录器替身：满足用例所需接口，记录调用而不触碰磁盘。
 
-    正式测量链路的结果只能落在运行目录，因此用例测试必须注入一个记录器；本替身
-    提供与 :class:`application.run_stages.RunStageRecorder` 相同的方法签名，并把
-    每次调用记在 ``started`` / ``completed`` / ``failed`` / ``cancelled`` /
-    ``skipped`` / ``verified`` 里，便于断言“结果只写当前运行”。
+    正式测量链路必须绑定一次运行并由它登记阶段状态与结果引用，因此用例测试必须
+    注入一个记录器；本替身提供与 :class:`application.run_stages.RunStageRecorder`
+    相同的方法签名，并把每次调用记在 ``started`` / ``completed`` / ``failed`` /
+    ``cancelled`` / ``skipped`` / ``verified`` / ``stage_references`` 里，便于断言
+    “正式结果写入阶段目录、运行目录只登记引用”。
 
     ``missing_stages`` 指定的阶段在 :meth:`verified_result_path` 上抛出
     :class:`application.run_stages.StageInputUnavailable`，用于“前置输入缺失必须

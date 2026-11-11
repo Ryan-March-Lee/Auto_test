@@ -36,15 +36,16 @@ class MeasurementRequest:
     的类型契约；运行时能力校验由测量服务在构造阶段完成，请求 DTO 不导入具体
     设备实现，也不把类型标注当作运行时保证。
 
-    ``stage_recorder`` 是**必填关键字字段**：正式测量只允许在 ``runs/<run_id>/``
-    运行目录内产生结果，没有阶段记录器的请求在构造期就被拒绝（D1）。
+    ``stage_recorder`` 是**必填关键字字段**：正式测量必须绑定到一次运行，由它登记
+    阶段状态与结果引用；没有阶段记录器的请求在构造期就被拒绝（D1）。阶段 7 起线损、
+    阶段 8 起驱动映射的正式结果正文写入独立阶段目录，运行目录只保存引用文档。
     """
 
     configuration: RunConfiguration
     context: RunContext
     run_directory: Path
     measurement_port: MeasurementInstrumentPort
-    # 运行目录阶段记录器：结果写入当前运行并更新 manifest，因此不可省略。
+    # 运行目录阶段记录器：登记阶段状态与结果引用并更新 manifest，因此不可省略。
     stage_recorder: "RunStageRecorder" = field(kw_only=True)
     safety_cleanup: SafetyCleanupPort | None = None
     measurement_type: MeasurementType | str = "measurement"
@@ -56,8 +57,9 @@ class MeasurementRequest:
     cancellation_token: CancellationToken | None = None
     result_repository: MeasurementResultRepository | None = None
     input_reader: ResultInputReader | None = None
-    # 阶段正式结果的独立仓库：步骤 7 起线损结果写入 ``test_results/cable_loss/``，
-    # 运行目录只登记引用。组装层必须为会产生正式结果的用例注入它。
+    # 阶段正式结果的独立仓库：步骤 7 起线损、步骤 8 起驱动映射的结果分别写入
+    # ``test_results/cable_loss/``、``test_results/driver_mapping/``，运行目录只
+    # 登记引用。组装层必须为会产生正式结果的用例注入它。
     stage_result_repository: "StageResultRepository | None" = None
     # 阶段成功提交后的自动归档服务；组装层总是注入，省略时只是不生成交付产物。
     archival_service: "ResultArchivalService | None" = None

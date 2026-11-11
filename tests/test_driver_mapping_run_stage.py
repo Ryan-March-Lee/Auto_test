@@ -1,15 +1,17 @@
-"""步骤 5 测试：把驱动映射的输入和结果迁移到运行目录契约。
+"""步骤 8 测试：驱动映射结果写入独立阶段目录。
 
 覆盖验收标准：
 
 - 驱动映射只从当前运行目录读取已完成的 ``inputs/cable_loss.json``，当前运行
-  缺失线损结果时在硬件动作前失败。
+  缺失线损结果时在硬件动作前失败（输入切换留给步骤 14）。
 - 另一个运行目录或全局兼容副本的线损数据不会被自动使用。
-- 映射结果写入当前运行的 ``inputs/driver_mapping.json``，更新 manifest，并可以
-  通过当前运行目录单独加载。
+- 完成的映射结果写入 ``test_results/driver_mapping/<measurement_id>.json``；
+  运行目录只保存引用文档并登记 manifest，结果脱离原运行目录仍可读取。
+- 旧版单层 ``power_mapping`` 仍由正式结果读取器按既有规则拒绝。
 """
 
 import json
+import shutil
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -23,10 +25,20 @@ from app.gui_runtime import (
     create_driver_mapping_measurement,
     prepare_configuration,
 )
-from application.dto import DriverPowerMappingRequest
+from application.dto import (
+    DriverPowerMappingRequest,
+    measurement_result_from_document,
+    validate_generated_measurement_id,
+)
 from application.inputs import ResultInputReader
 from application.measurements import DriverPowerMappingUseCase
-from application.run_stages import RunStageRecorder, StageInputUnavailable
+from application.ports.stage_result_repository import MeasurementStage
+from application.run_stages import (
+    STAGE_RESULT_REFERENCE_SCHEMA,
+    RunStageRecorder,
+    StageInputUnavailable,
+    StageResultNotRecorded,
+)
 from domain.run.models import (
     CABLE_LOSS_INPUT_PATH,
     DRIVER_MAPPING_INPUT_PATH,
@@ -38,6 +50,7 @@ from domain.run.models import (
 )
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 from infrastructure.persistence.run_repository import RunRepository
+from infrastructure.persistence.stage_result_repository import FileStageResultRepository
 from infrastructure.filesystem.paths import PathService
 from application.configuration_authoring import author_official_configuration
 from tests.fakes import safety_cleanup_for
@@ -159,6 +172,16 @@ class _UnwritableResultRepository:
     """正式运行只写运行目录结果；该对象不提供任何结果写入能力。"""
 
 
+class _FailingStageResultRepository:
+    """把正式结果写入阶段目录时失败；不产生任何阶段文件。"""
+
+    def __init__(self, error):
+        self.error = error
+
+    def save(self, _stage, _result):
+        raise self.error
+
+
 class _FailingCommitRepository:
     """把驱动映射阶段提交为 completed 时的 manifest 写入注入失败。"""
 
@@ -184,6 +207,7 @@ class DriverMappingRunStageTests(unittest.TestCase):
         self.result_repository = FileMeasurementResultRepository(
             results_directory=self.base / "test_results"
         )
+        self.stage_repository = FileStageResultRepository(paths=self.paths)
 
     def _create_run(self, run_id=RUN_ID):
         layout, _manifest = self.repository.create_run(
@@ -191,9 +215,16 @@ class DriverMappingRunStageTests(unittest.TestCase):
         )
         return layout
 
+    def _recorder(self, run_id=RUN_ID, *, repository=None):
+        return RunStageRecorder(
+            repository or self.repository,
+            run_id,
+            stage_results=self.stage_repository,
+        )
+
     def _complete_cable_loss(self, run_id=RUN_ID, *, cable_losses=CABLE_LOSSES):
         """在指定运行目录写入并登记已完成的线损输入。"""
-        recorder = RunStageRecorder(self.repository, run_id)
+        recorder = self._recorder(run_id)
         recorder.start(STAGE_CABLE_LOSS, now=CREATED_AT)
         recorder.complete(
             STAGE_CABLE_LOSS,
@@ -202,8 +233,33 @@ class DriverMappingRunStageTests(unittest.TestCase):
         )
         return recorder
 
+    def _stage_result_files(self):
+        directory = self.paths.driver_mapping_results_dir
+        if not directory.is_dir():
+            return []
+        return sorted(path.name for path in directory.iterdir())
+
+    def _stage_result_path(self, measurement_id):
+        return self.paths.driver_mapping_results_dir / f"{measurement_id}.json"
+
+    def _read_mapping_stage_document(self, run_directory):
+        """跟随运行目录的引用文档读取阶段目录中的权威映射结果。"""
+        pointer = json.loads(
+            (run_directory / DRIVER_MAPPING_INPUT_PATH).read_text(encoding="utf-8")
+        )
+        self.assertEqual(pointer["schema"], STAGE_RESULT_REFERENCE_SCHEMA)
+        self.assertNotIn("target_mapping", pointer)
+        return json.loads(Path(pointer["path"]).read_text(encoding="utf-8"))
+
     def _request(
-        self, run_id=RUN_ID, *, instrument=None, token=None, repository=None
+        self,
+        run_id=RUN_ID,
+        *,
+        instrument=None,
+        token=None,
+        repository=None,
+        recorder=None,
+        stage_repository=None,
     ):
         layout = self.repository.layout(run_id)
         instrument = instrument or _Instrument()
@@ -225,7 +281,8 @@ class DriverMappingRunStageTests(unittest.TestCase):
             safety_cleanup=safety_cleanup_for(instrument),
             result_repository=repository or self.result_repository,
             input_reader=ResultInputReader(self.result_repository),
-            stage_recorder=RunStageRecorder(self.repository, run_id),
+            stage_result_repository=stage_repository or self.stage_repository,
+            stage_recorder=recorder or self._recorder(run_id),
             cancellation_token=token,
             safety_options={"owns_measurement_port": True},
         )
@@ -248,22 +305,52 @@ class DriverMappingRunStageTests(unittest.TestCase):
             ),
         )
 
-    # -- 结果归属当前运行 --------------------------------------------------
+    # -- 结果归属独立阶段目录 ----------------------------------------------
 
-    def test_completed_mapping_belongs_to_current_run(self):
+    def test_completed_mapping_belongs_to_the_stage_directory(self):
         layout = self._create_run()
         self._complete_cable_loss()
         use_case = DriverPowerMappingUseCase(self._request(), sleep_fn=lambda _: None)
 
         result = use_case.measure_all_frequencies()
 
-        result_path = layout.run_directory / DRIVER_MAPPING_INPUT_PATH
-        self.assertTrue(result_path.is_file())
-        payload = json.loads(result_path.read_text(encoding="utf-8"))
-        self.assertEqual(payload["run_id"], RUN_ID)
-        self.assertIn("raw_points", payload)
-        self.assertIn("target_mapping", payload)
-        self.assertEqual(payload["schema_version"], "2.0")
+        identity = validate_generated_measurement_id(result.measurement_id)
+        stage_path = self._stage_result_path(identity)
+        self.assertTrue(stage_path.is_file())
+        document = json.loads(stage_path.read_text(encoding="utf-8"))
+        self.assertEqual(document["run_id"], RUN_ID)
+        self.assertEqual(document["measurement_id"], identity)
+        self.assertIn("raw_points", document)
+        self.assertIn("target_mapping", document)
+        self.assertEqual(document["schema_version"], "2.0")
+        # 双层契约都保留：目标网格是正式输入，原始点是审计依据。
+        self.assertEqual(
+            document["target_mapping"]["1.0"],
+            [
+                {
+                    "target_input_power_dbm": -20.0,
+                    "source_power_dbm": -21.0,
+                    "driver_output_power_dbm": -20.0,
+                }
+            ],
+        )
+        parsed = measurement_result_from_document(document)
+        self.assertEqual(parsed.measurement_id, identity)
+        self.assertIs(
+            parsed.measurement_type,
+            MeasurementStage.DRIVER_MAPPING.measurement_type,
+        )
+
+        # 运行目录只有引用文档：路径、身份与摘要指向阶段目录文件，不含结果正文。
+        reference_path = layout.run_directory / DRIVER_MAPPING_INPUT_PATH
+        self.assertTrue(reference_path.is_file())
+        pointer = json.loads(reference_path.read_text(encoding="utf-8"))
+        self.assertEqual(pointer["schema"], STAGE_RESULT_REFERENCE_SCHEMA)
+        self.assertEqual(pointer["stage"], MeasurementStage.DRIVER_MAPPING.value)
+        self.assertEqual(pointer["measurement_id"], identity)
+        self.assertEqual(Path(pointer["path"]), stage_path)
+        self.assertNotIn("raw_points", pointer)
+        self.assertNotIn("target_mapping", pointer)
 
         manifest = self.repository.load_manifest(RUN_ID)
         self.assertEqual(manifest.status, RunStatus.RUNNING)
@@ -275,20 +362,23 @@ class DriverMappingRunStageTests(unittest.TestCase):
         self.assertIn(DRIVER_MAPPING_INPUT_PATH, registered)
         self.assertIsNotNone(registered[DRIVER_MAPPING_INPUT_PATH].sha256)
         self.assertEqual(
-            registered[DRIVER_MAPPING_INPUT_PATH].size_bytes, result_path.stat().st_size
+            registered[DRIVER_MAPPING_INPUT_PATH].size_bytes,
+            reference_path.stat().st_size,
         )
-        self.assertEqual(result.result_reference["archive_path"], str(result_path))
+        self.assertEqual(
+            result.result_reference["archive_path"], str(stage_path)
+        )
         # 线损阶段不受驱动映射结果写入影响。
         self.assertEqual(manifest.stage(STAGE_CABLE_LOSS).status, StageStatus.COMPLETED)
 
     def test_completed_mapping_is_a_formal_input(self):
         """步骤 4.2：完整扫描生成目标表，可直接作为正式驱动输入读取。"""
 
-        layout = self._create_run()
+        self._create_run()
         self._complete_cable_loss()
         DriverPowerMappingUseCase(self._request(), sleep_fn=lambda _: None).measure_all_frequencies()
 
-        result_path = layout.run_directory / DRIVER_MAPPING_INPUT_PATH
+        result_path = self._recorder().verified_result_path(STAGE_DRIVER_MAPPING)
         driver_input = ResultInputReader(self.result_repository).read_driver_mapping(
             result_path
         )
@@ -301,6 +391,106 @@ class DriverMappingRunStageTests(unittest.TestCase):
             [point.target_input_power_dbm for point in driver_input.target_points],
             [-20.0],
         )
+
+    def test_stage_reference_resolves_back_to_the_stage_file(self):
+        self._create_run()
+        self._complete_cable_loss()
+        result = DriverPowerMappingUseCase(
+            self._request(), sleep_fn=lambda _: None
+        ).measure_all_frequencies()
+
+        verified = self._recorder().verified_result_path(STAGE_DRIVER_MAPPING)
+
+        self.assertEqual(verified, self._stage_result_path(result.measurement_id))
+        loaded = self.stage_repository.load(
+            MeasurementStage.DRIVER_MAPPING, verified
+        )
+        self.assertEqual(loaded.result.measurement_id, result.measurement_id)
+
+    def test_stage_result_survives_run_directory_removal(self):
+        """验收标准：结果脱离原运行目录仍可读取。"""
+        layout = self._create_run()
+        self._complete_cable_loss()
+        result = DriverPowerMappingUseCase(
+            self._request(), sleep_fn=lambda _: None
+        ).measure_all_frequencies()
+        stage_path = self._stage_result_path(result.measurement_id)
+
+        shutil.rmtree(layout.run_directory)
+
+        loaded = self.stage_repository.load(
+            MeasurementStage.DRIVER_MAPPING, stage_path
+        )
+        self.assertEqual(loaded.result.measurement_id, result.measurement_id)
+        self.assertEqual(loaded.result.run_id, RUN_ID)
+        self.assertEqual(loaded.result.status.value, "completed")
+        self.assertTrue(loaded.result.target_points)
+        self.assertTrue(loaded.result.raw_points)
+
+    def test_legacy_power_mapping_document_is_rejected_as_input(self):
+        """旧版单层 ``power_mapping`` 仍按既有规则拒绝，不当作目标网格。"""
+        legacy = self.base / "legacy_driver_mapping.json"
+        legacy.write_text(
+            json.dumps(
+                {
+                    "run_id": RUN_ID,
+                    "measurement_type": "driver_power_mapping",
+                    "power_mapping": {"1.0": {"-20": -20.0}},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(ValueError, "power_mapping"):
+            ResultInputReader(self.result_repository).read_driver_mapping(legacy)
+
+    def test_replaced_stage_file_is_rejected_before_consumption(self):
+        self._create_run()
+        self._complete_cable_loss()
+        result = DriverPowerMappingUseCase(
+            self._request(), sleep_fn=lambda _: None
+        ).measure_all_frequencies()
+        stage_path = self._stage_result_path(result.measurement_id)
+        stage_path.write_text(
+            json.dumps(
+                {
+                    "measurement_type": "driver_power_mapping",
+                    "status": "completed",
+                    "run_id": RUN_ID,
+                    "measurement_id": result.measurement_id,
+                    "created_at": "2026-10-22T15:30:00+00:00",
+                    "raw_points": {},
+                    "target_mapping": {},
+                    "schema_version": "2.0",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(StageInputUnavailable, "已被替换"):
+            self._recorder().verified_result_path(STAGE_DRIVER_MAPPING)
+
+    def test_legacy_run_result_document_keeps_its_run_path(self):
+        """旧运行目录中的完整结果文档没有引用标记，仍按原路径返回。"""
+        layout = self._create_run()
+        recorder = RunStageRecorder(self.repository, RUN_ID)
+        recorder.start(STAGE_DRIVER_MAPPING, now=CREATED_AT)
+        recorder.complete(
+            STAGE_DRIVER_MAPPING,
+            {
+                "run_id": RUN_ID,
+                "measurement_type": "driver_power_mapping",
+                "status": "completed",
+                "schema_version": "2.0",
+                "raw_points": {},
+                "target_mapping": {},
+            },
+            now=CREATED_AT,
+        )
+
+        verified = recorder.verified_result_path(STAGE_DRIVER_MAPPING)
+
+        self.assertEqual(verified, layout.run_directory / DRIVER_MAPPING_INPUT_PATH)
 
     def test_current_run_input_does_not_use_deprecated_latest_lookup(self):
         self._create_run()
@@ -365,13 +555,18 @@ class DriverMappingRunStageTests(unittest.TestCase):
     def test_global_compatibility_copy_is_not_written(self):
         self._create_run()
         self._complete_cable_loss()
-        DriverPowerMappingUseCase(self._request(), sleep_fn=lambda _: None).measure_all_frequencies()
+        result = DriverPowerMappingUseCase(
+            self._request(), sleep_fn=lambda _: None
+        ).measure_all_frequencies()
 
         self.assertEqual(
             list((self.base / "test_results").glob("driver_power_mapping_*.json")), []
         )
         self.assertTrue(
             (self.base / "runs" / RUN_ID / DRIVER_MAPPING_INPUT_PATH).is_file()
+        )
+        self.assertEqual(
+            self._stage_result_files(), [f"{result.measurement_id}.json"]
         )
 
     # -- 输入隔离与前置失败 ------------------------------------------------
@@ -477,6 +672,7 @@ class DriverMappingRunStageTests(unittest.TestCase):
         stage = manifest.stage(STAGE_DRIVER_MAPPING)
         self.assertEqual(stage.status, StageStatus.FAILED)
         self.assertIn("measurement failed", stage.error)
+        self.assertEqual(self._stage_result_files(), [])
         self.assertFalse((layout.run_directory / DRIVER_MAPPING_INPUT_PATH).exists())
 
     def test_cancelled_token_marks_stage_cancelled_without_result_file(self):
@@ -493,6 +689,7 @@ class DriverMappingRunStageTests(unittest.TestCase):
 
         manifest = self.repository.load_manifest(RUN_ID)
         self.assertEqual(manifest.stage(STAGE_DRIVER_MAPPING).status, StageStatus.CANCELLED)
+        self.assertEqual(self._stage_result_files(), [])
         self.assertFalse((layout.run_directory / DRIVER_MAPPING_INPUT_PATH).exists())
 
     def test_completed_stage_is_not_overwritten_by_later_failure_or_cancel(self):
@@ -525,7 +722,10 @@ class DriverMappingRunStageTests(unittest.TestCase):
         self.assertTrue(result_path.is_file())
         manifest = self.repository.load_manifest(RUN_ID)
         self.assertEqual(manifest.stage(STAGE_DRIVER_MAPPING).status, StageStatus.COMPLETED)
-        self.assertEqual(result.result_reference["archive_path"], str(result_path))
+        self.assertEqual(
+            result.result_reference["archive_path"],
+            str(self._stage_result_path(result.measurement_id)),
+        )
         self.assertNotIn("legacy_copy_path", result.result_reference)
 
     def test_commit_failure_rolls_back_result_and_keeps_stage_unfinished(self):
@@ -542,6 +742,119 @@ class DriverMappingRunStageTests(unittest.TestCase):
         self.assertFalse((layout.run_directory / DRIVER_MAPPING_INPUT_PATH).exists())
         manifest = self.repository.load_manifest(RUN_ID)
         self.assertEqual(manifest.stage(STAGE_DRIVER_MAPPING).status, StageStatus.RUNNING)
+
+    def test_stage_directory_save_failure_marks_stage_failed_without_result(self):
+        """阶段目录写入失败：不产生正式结果、不登记引用、阶段收敛为 failed。"""
+        layout = self._create_run()
+        self._complete_cable_loss()
+        use_case = DriverPowerMappingUseCase(
+            self._request(
+                stage_repository=_FailingStageResultRepository(OSError("disk full"))
+            ),
+            sleep_fn=lambda _: None,
+        )
+
+        with self.assertRaisesRegex(OSError, "disk full"):
+            use_case.measure_all_frequencies()
+
+        self.assertEqual(self._stage_result_files(), [])
+        self.assertFalse((layout.run_directory / DRIVER_MAPPING_INPUT_PATH).exists())
+        manifest = self.repository.load_manifest(RUN_ID)
+        stage = manifest.stage(STAGE_DRIVER_MAPPING)
+        self.assertEqual(stage.status, StageStatus.FAILED)
+        self.assertIn("disk full", stage.error)
+        self.assertNotIn(
+            DRIVER_MAPPING_INPUT_PATH, [item.path for item in manifest.inputs]
+        )
+
+    def test_registration_failure_keeps_the_formal_result_and_reports_it(self):
+        """阶段文件已保存、运行引用登记失败：保留正式结果，错误说明给出位置。"""
+        layout = self._create_run()
+        self._complete_cable_loss()
+        recorder = self._recorder(repository=_FailingCommitRepository(self.repository))
+        use_case = DriverPowerMappingUseCase(
+            self._request(recorder=recorder), sleep_fn=lambda _: None
+        )
+
+        with self.assertRaisesRegex(StageResultNotRecorded, "已保存到") as caught:
+            use_case.measure_all_frequencies()
+
+        reference = caught.exception.reference
+        self.assertIs(reference.stage, MeasurementStage.DRIVER_MAPPING)
+        self.assertEqual(
+            reference.path, self._stage_result_path(reference.measurement_id)
+        )
+        # 已提交的正式结果没有被删除或截断，阶段仓库仍能按正式契约读回。
+        self.assertTrue(reference.path.is_file())
+        loaded = self.stage_repository.load(
+            MeasurementStage.DRIVER_MAPPING, reference.path
+        )
+        self.assertEqual(loaded.result.measurement_id, reference.measurement_id)
+        self.assertEqual(loaded.result.status.value, "completed")
+
+        # 运行阶段仍收敛为 failed，但说明里给出阶段文件位置；引用文档已回滚。
+        manifest = self.repository.load_manifest(RUN_ID)
+        stage = manifest.stage(STAGE_DRIVER_MAPPING)
+        self.assertEqual(stage.status, StageStatus.FAILED)
+        self.assertIn(str(reference.path), stage.error)
+        self.assertFalse((layout.run_directory / DRIVER_MAPPING_INPUT_PATH).exists())
+        self.assertNotIn(
+            DRIVER_MAPPING_INPUT_PATH, [item.path for item in manifest.inputs]
+        )
+
+    def test_unregistered_stage_result_is_discoverable_in_the_stage_directory(self):
+        """登记失败的正式结果不依赖 manifest 也能在阶段目录中被发现和读取。"""
+        self._create_run()
+        self._complete_cable_loss()
+        recorder = self._recorder(repository=_FailingCommitRepository(self.repository))
+        use_case = DriverPowerMappingUseCase(
+            self._request(recorder=recorder), sleep_fn=lambda _: None
+        )
+
+        with self.assertRaises(StageResultNotRecorded) as caught:
+            use_case.measure_all_frequencies()
+
+        reference = caught.exception.reference
+        entries = self.stage_repository.list_results(
+            MeasurementStage.DRIVER_MAPPING
+        )
+        self.assertEqual(
+            [entry.reference.measurement_id for entry in entries],
+            [reference.measurement_id],
+        )
+        self.assertEqual(entries[0].reference.path, reference.path)
+        self.assertEqual(entries[0].run_id, RUN_ID)
+        self.assertEqual(entries[0].status.value, "completed")
+
+    def test_repeated_measurements_do_not_overwrite_old_results(self):
+        self._create_run(RUN_ID)
+        self._complete_cable_loss(RUN_ID)
+        first_result = DriverPowerMappingUseCase(
+            self._request(RUN_ID), sleep_fn=lambda _: None
+        ).measure_all_frequencies()
+
+        self._create_run(OTHER_RUN_ID)
+        self._complete_cable_loss(OTHER_RUN_ID)
+        second_result = DriverPowerMappingUseCase(
+            self._request(OTHER_RUN_ID), sleep_fn=lambda _: None
+        ).measure_all_frequencies()
+
+        self.assertNotEqual(first_result.measurement_id, second_result.measurement_id)
+        self.assertEqual(
+            self._stage_result_files(),
+            sorted(
+                [
+                    f"{first_result.measurement_id}.json",
+                    f"{second_result.measurement_id}.json",
+                ]
+            ),
+        )
+        first_document = json.loads(
+            self._stage_result_path(first_result.measurement_id).read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(first_document["run_id"], RUN_ID)
 
     # -- 组合入口端到端 ----------------------------------------------------
 
@@ -578,10 +891,13 @@ class DriverMappingRunStageTests(unittest.TestCase):
 
         run_directory = prepared.run_directory
         self.assertTrue((run_directory / CABLE_LOSS_INPUT_PATH).is_file())
-        mapping_path = run_directory / DRIVER_MAPPING_INPUT_PATH
-        self.assertTrue(mapping_path.is_file())
-        payload = json.loads(mapping_path.read_text(encoding="utf-8"))
+        self.assertTrue((run_directory / DRIVER_MAPPING_INPUT_PATH).is_file())
+        payload = self._read_mapping_stage_document(run_directory)
         self.assertEqual(payload["run_id"], RUN_ID)
+        self.assertEqual(
+            payload["measurement_id"],
+            validate_generated_measurement_id(payload["measurement_id"]),
+        )
         # 端到端：正式 1.2 配置 -> 映射服务 -> 目标表覆盖同一套目标功率点。
         self.assertEqual(
             [
@@ -589,6 +905,9 @@ class DriverMappingRunStageTests(unittest.TestCase):
                 for row in payload["target_mapping"]["2.4"]
             ],
             [float(value) for value in range(-10, 1)],
+        )
+        self.assertTrue(
+            self._stage_result_path(payload["measurement_id"]).is_file()
         )
 
         manifest = self.repository.load_manifest(RUN_ID)
@@ -622,8 +941,7 @@ class DriverMappingRunStageTests(unittest.TestCase):
         )
         mapping_case.measure_all_frequencies()
 
-        mapping_path = prepared.run_directory / DRIVER_MAPPING_INPUT_PATH
-        payload = json.loads(mapping_path.read_text(encoding="utf-8"))
+        payload = self._read_mapping_stage_document(prepared.run_directory)
         rows = payload["target_mapping"]["2.4"]
         self.assertEqual(
             [row["target_input_power_dbm"] for row in rows],
@@ -689,8 +1007,9 @@ class DriverMappingRunStageTests(unittest.TestCase):
         self._complete_cable_loss()
         DriverPowerMappingUseCase(self._request(), sleep_fn=lambda _: None).measure_all_frequencies()
 
-        authoritative = self.base / "runs" / RUN_ID / DRIVER_MAPPING_INPUT_PATH
-        payload = json.loads(authoritative.read_text(encoding="utf-8"))
+        payload = self._read_mapping_stage_document(
+            self.repository.layout(RUN_ID).run_directory
+        )
         self.assertNotIn("compatibility_copy", payload)
 
 

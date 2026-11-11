@@ -1911,7 +1911,8 @@ class MultiPlanGuiToMeasurementFlowTests(unittest.TestCase):
         mapping_case.measure_all_frequencies()
 
         mapping_path = frozen.run_directory / DRIVER_MAPPING_INPUT_PATH
-        mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
+        pointer = json.loads(mapping_path.read_text(encoding="utf-8"))
+        mapping = json.loads(Path(pointer["path"]).read_text(encoding="utf-8"))
         rows = mapping["target_mapping"]["2.4"]
         self.assertEqual(
             tuple(row["target_input_power_dbm"] for row in rows), self.TARGETS

@@ -197,6 +197,7 @@ class ArchivalFallbackSummaryTests(unittest.TestCase):
 
         self.assertEqual(summary.tone, TONE_INFO)
         self.assertIn("自动归档", summary.headline)
+        self.assertIn("独立结果目录", summary.detail)
         self.assertIn("无需再手动导出", summary.detail)
 
     def test_saving_summary_says_the_result_is_still_being_written(self):
@@ -204,6 +205,7 @@ class ArchivalFallbackSummaryTests(unittest.TestCase):
 
         self.assertEqual(summary.tone, TONE_INFO)
         self.assertIn("正在保存结果", summary.headline)
+        self.assertIn("正式结果保存", summary.detail)
         self.assertIn("自动更新", summary.detail)
 
     def test_missing_outcome_keeps_the_run_identifiable(self):

@@ -18,6 +18,10 @@
 行式 ``sweep_data``、测量类型与数据字段不匹配的文档一律 ``ValueError``，不存在按
 字段猜测历史格式的兼容路径。
 
+阶段结果文件名只由 :func:`measurement_result_filename` 从 ``measurement_id`` 构造，
+并可用 :func:`validate_measurement_result_filename` 校验；新身份由
+:func:`generate_measurement_id` 按 UTC 时间戳加随机短串生成，用户文本不参与路径构造。
+
 展示、报告与导出只使用本模块的显式属性（``report_rows()``、``sweep_rows()``、
 ``saturation_points()``），因此不需要把结果当成 ``Mapping[str, Any]`` 读取。
 
@@ -40,6 +44,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from types import MappingProxyType
 from typing import Any
+from uuid import uuid4
 
 from domain.measurement.values import CableLossProfile, Frequency
 
@@ -52,6 +57,24 @@ DRIVER_MAPPING_SCHEMA_VERSION = "2.0"
 # 和短横线，不能以符号开头，也不能包含 ``..``、路径分隔符或盘符。读取旧结果时
 # 字段可以缺失，但一旦出现就必须满足该约束，避免身份被当作路径片段使用。
 MEASUREMENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
+# 新流程生成的测量身份采用 ``<UTC 时间戳>_<随机短串>``；时间格式与运行 ID 保持一致。
+# 随机短串默认取完整 ``uuid4`` 的 128 位十六进制，写入端仍须独占创建并拒绝覆盖，
+# 不能把随机性当作唯一性约束。
+MEASUREMENT_ID_TIMESTAMP_FORMAT = "%Y%m%dT%H%M%SZ"
+GENERATED_MEASUREMENT_ID_PATTERN = re.compile(r"^[0-9]{8}T[0-9]{6}Z_[0-9a-f]{4,32}$")
+_MEASUREMENT_ID_TOKEN_PATTERN = re.compile(r"^[0-9a-f]{4,32}$")
+# 正式结果在阶段目录中的唯一文件后缀；文件名只能由测量身份加该后缀构成。
+MEASUREMENT_RESULT_SUFFIX = ".json"
+_WINDOWS_RESERVED_NAMES = frozenset(
+    {
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        *(f"COM{i}" for i in range(1, 10)),
+        *(f"LPT{i}" for i in range(1, 10)),
+    }
+)
 
 
 class MeasurementType(str, Enum):
@@ -140,8 +163,8 @@ def validate_measurement_id(value: Any) -> str:
     """校验结果自身身份的格式；只做通用安全约束，不生成身份。
 
     ``measurement_id`` 会进入阶段结果文件名，因此拒绝空值、首尾空白、路径片段和
-    盘符等可能改变路径含义的文本。具体生成规则（UTC 时间戳 + 随机短串）由后续的
-    文件名生成器负责。
+    盘符等可能改变路径含义的文本。新身份的生成规则见 :func:`generate_measurement_id`，
+    文件名构造只允许经 :func:`measurement_result_filename`。
     """
     if not isinstance(value, str):
         raise ValueError("measurement_id 必须是字符串")
@@ -153,6 +176,77 @@ def validate_measurement_id(value: Any) -> str:
             "不能以符号开头，也不能包含路径片段"
         )
     return value
+
+
+def generate_measurement_id(
+    now: datetime | None = None, *, token: str | None = None
+) -> str:
+    """按 ``<UTC 时间戳>_<随机短串>`` 生成结果自身身份。
+
+    身份只描述结果本身，与来源运行无关。``token`` 仅供测试注入；正式调用不传它，
+    由完整的 ``uuid4`` 提供 128 位随机后缀，极大降低并发碰撞概率；持久化端仍须
+    使用独占创建并在目标已存在时拒绝覆盖，不能把随机性当作唯一性约束。
+    时间必须带时区；传入的本地时间会先换算为 UTC。
+    """
+    moment = now if now is not None else datetime.now(timezone.utc)
+    if moment.tzinfo is None:
+        raise ValueError("时间必须带时区信息")
+    suffix = uuid4().hex if token is None else token
+    if not isinstance(suffix, str) or not _MEASUREMENT_ID_TOKEN_PATTERN.fullmatch(suffix):
+        raise ValueError("measurement_id 随机短串必须是 4-32 位小写十六进制")
+    stamp = moment.astimezone(timezone.utc).strftime(MEASUREMENT_ID_TIMESTAMP_FORMAT)
+    return validate_generated_measurement_id(f"{stamp}_{suffix}")
+
+
+def validate_generated_measurement_id(value: Any) -> str:
+    """校验生成型身份符合 ``<UTC 时间戳>_<随机短串>`` 且时间戳真实存在。"""
+    if not isinstance(value, str) or not GENERATED_MEASUREMENT_ID_PATTERN.fullmatch(value):
+        raise ValueError(
+            "生成的 measurement_id 必须形如 <UTC 时间戳>_<4-32 位小写十六进制>，"
+            "例如 20261111T010203Z_a1b2c3d4"
+        )
+    try:
+        datetime.strptime(value[:16], MEASUREMENT_ID_TIMESTAMP_FORMAT)
+    except ValueError as exc:
+        raise ValueError("生成的 measurement_id 包含无效 UTC 时间戳") from exc
+    return value
+
+
+def measurement_result_filename(measurement_id: Any) -> str:
+    """由测量身份构造正式结果文件名；文件名不接受身份之外的任何文本。
+
+    身份会先经过 :func:`validate_measurement_id`，因此调用方无法把用户输入、路径
+    片段或盘符拼进文件名。该函数只生成名字，是否已存在、写到哪里由仓储决定。
+    """
+    identity = validate_measurement_id(measurement_id)
+    if identity.split(".", 1)[0].upper() in _WINDOWS_RESERVED_NAMES:
+        raise ValueError("measurement_id 不能是 Windows 保留设备名")
+    return f"{identity}{MEASUREMENT_RESULT_SUFFIX}"
+
+
+def validate_measurement_result_filename(filename: Any) -> str:
+    """校验阶段结果文件名是 ``<measurement_id>.json`` 形式的纯文件名。
+
+    拒绝空值、首尾空白、空字符、路径分隔符、盘符、Windows 保留设备名、
+    ``.``/``..`` 片段和非 ``.json`` 后缀；通过校验后返回规范化文件名。只接受
+    小写 ``.json``，避免大小写不敏感文件系统上出现两个名字指向同一文件。
+    """
+    if not isinstance(filename, str) or not filename:
+        raise ValueError("测量结果文件名不能为空")
+    if filename != filename.strip():
+        raise ValueError("测量结果文件名不能包含首尾空白")
+    if "\x00" in filename:
+        raise ValueError("测量结果文件名不能包含空字符")
+    if "/" in filename or "\\" in filename or ":" in filename:
+        raise ValueError("测量结果文件名必须是纯文件名，不能包含路径或盘符")
+    if filename in {".", ".."}:
+        raise ValueError(f"测量结果文件名非法: {filename!r}")
+    if not filename.endswith(MEASUREMENT_RESULT_SUFFIX):
+        raise ValueError(
+            f"测量结果文件名必须使用 {MEASUREMENT_RESULT_SUFFIX} 后缀: {filename!r}"
+        )
+    identity = filename[: -len(MEASUREMENT_RESULT_SUFFIX)]
+    return measurement_result_filename(identity)
 
 
 # -- 结果数据 ---------------------------------------------------------------
@@ -1673,7 +1767,10 @@ def _validate_termination(value: Mapping[str, Any] | None, expected: str | None)
 
 __all__ = [
     "DRIVER_MAPPING_SCHEMA_VERSION",
+    "GENERATED_MEASUREMENT_ID_PATTERN",
     "MEASUREMENT_ID_PATTERN",
+    "MEASUREMENT_ID_TIMESTAMP_FORMAT",
+    "MEASUREMENT_RESULT_SUFFIX",
     "MeasurementType",
     "MeasurementStatus",
     "MeasurementResult",
@@ -1686,11 +1783,15 @@ __all__ = [
     "DriverMappingTargetPoint",
     "AmplifierCompressionPoint",
     "AmplifierFrequencyResult",
+    "generate_measurement_id",
     "measurement_result_from_document",
+    "measurement_result_filename",
     "measurement_type_for_result_type",
     "require_formal_result",
     "require_measurement_identity",
+    "validate_generated_measurement_id",
     "validate_measurement_id",
+    "validate_measurement_result_filename",
     "normalize_frequency_key",
     "freeze",
     "thaw",

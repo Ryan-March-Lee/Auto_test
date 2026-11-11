@@ -84,6 +84,7 @@ class DriverMappingPageTests(unittest.TestCase):
         self.controller = Controller()
         self.dialog = Dialog()
         self.prepared = []
+        self.dialogs = []
         self.logs = []
         self.errors = []
         self.realtime = []
@@ -96,7 +97,7 @@ class DriverMappingPageTests(unittest.TestCase):
         self.page = DriverMappingPage(
             config_path_provider=lambda: "config.json",
             run_provider=lambda: self.prepared.append(True) or self.run,
-            connection_dialog_factory=lambda *_: self.dialog,
+            connection_dialog_factory=lambda *_: self.dialogs.append(True) or self.dialog,
             plot_widget_factory=lambda parent: Plot(parent),
             realtime_data_callback=self.realtime.append,
             clear_realtime_callback=lambda: self.clears.append(True),
@@ -111,7 +112,19 @@ class DriverMappingPageTests(unittest.TestCase):
         self.assertEqual(self.controller.signals.message.slots, [])
         self.assertEqual(self.controller.signals.rejected.slots, [])
 
+    def _select_cable_loss(
+        self,
+        filename: str = "20261111T010203Z_a1b2c3d4.json",
+        created_at: str = "2026-11-11T01:02:03+00:00",
+    ) -> None:
+        self.page.show_loaded_cable_loss(
+            path=f"test_results/cable_loss/{filename}",
+            filename=filename,
+            created_at=created_at,
+        )
+
     def test_start_forwards_explicit_command_after_preparation(self):
+        self._select_cable_loss()
         self.page.start_measurement()
         self.assertEqual(self.prepared, [True])
         self.assertEqual(self.controller.calls[0][0], "start")
@@ -121,7 +134,38 @@ class DriverMappingPageTests(unittest.TestCase):
         self.assertIs(command.prepared_run, self.run)
         self.assertEqual(self.clears, [True])
 
+    def test_start_without_selected_cable_loss_does_not_connect_or_start(self):
+        self.page.start_measurement()
+        self.assertEqual(self.prepared, [])
+        self.assertEqual(self.dialogs, [])
+        self.assertEqual(self.controller.calls, [])
+        self.assertEqual(self.errors, ["请先加载驱动映射使用的线损测量结果"])
+        self.assertIn("未选择线损测量结果，驱动映射未启动", self.logs)
+        self.assertNotIn("开始驱动功放映射...", self.logs)
+
+    def test_a_busy_measurement_is_reported_before_the_missing_cable_loss(self):
+        # 另一页测量运行时“开始”按钮仍可能被点到：先报告更直接的原因，
+        # 不要误报线损缺失，也不要读取当前运行。
+        self.controller.state = type(
+            "State",
+            (),
+            {
+                "kind": MeasurementKind.CABLE_LOSS,
+                "status": MeasurementStatus.RUNNING,
+                "is_active": True,
+            },
+        )()
+        self.page.start_measurement()
+
+        self.assertEqual(self.prepared, [])
+        self.assertEqual(self.dialogs, [])
+        self.assertEqual(self.controller.calls, [])
+        self.assertEqual(self.errors, [])
+        self.assertIn("已有测量正在运行", self.logs)
+        self.assertNotIn("未选择线损测量结果，驱动映射未启动", self.logs)
+
     def test_missing_input_or_rejected_dialog_does_not_start(self):
+        self._select_cable_loss()
         self.page._run_provider = lambda: None
         self.page.start_measurement()
         self.assertEqual(self.controller.calls, [])
@@ -136,6 +180,7 @@ class DriverMappingPageTests(unittest.TestCase):
         self.assertEqual(self.controller.calls, [])
 
     def test_start_submits_to_the_controller_checked_before_the_dialog(self):
+        self._select_cable_loss()
         checked = self.controller
         replacement = Controller()
 
@@ -257,6 +302,7 @@ class DriverMappingPageTests(unittest.TestCase):
         self.assertEqual(self.logs, [])
 
     def test_repeated_start_is_rejected_before_preparation(self):
+        self._select_cable_loss()
         self.controller.state = type(
             "State", (), {"kind": MeasurementKind.DRIVER_MAPPING, "is_active": True}
         )()
@@ -264,6 +310,41 @@ class DriverMappingPageTests(unittest.TestCase):
         self.assertEqual(self.controller.calls, [])
         self.assertEqual(self.prepared, [])
         self.assertIn("已有测量正在运行", self.logs)
+
+    def test_load_button_only_emits_the_selection_request(self):
+        requests = []
+        self.page.load_cable_loss_requested.connect(lambda: requests.append(True))
+        self.page.load_cable_loss_btn.click()
+        self.assertEqual(requests, [True])
+
+    def test_loaded_cable_loss_shows_source_and_measurement_time(self):
+        filename = "20261111T010203Z_a1b2c3d4.json"
+        created_at = "2026-11-11T01:02:03+00:00"
+        self._select_cable_loss(filename, created_at)
+
+        selection = self.page.cable_loss_selection
+        self.assertIsNotNone(selection)
+        self.assertEqual(selection.path, f"test_results/cable_loss/{filename}")
+        self.assertEqual(selection.filename, filename)
+        self.assertEqual(selection.created_at, created_at)
+        label = self.page.cable_loss_source_label.text()
+        self.assertIn(filename, label)
+        self.assertIn(created_at, label)
+        self.assertIn(f"已选择驱动映射线损测量结果：{filename}", self.logs[-1])
+
+    def test_selection_survives_page_switch_and_can_be_replaced(self):
+        self._select_cable_loss("first.json", "2026-11-11T01:02:03+00:00")
+        self.page.on_deactivated()
+        self.page.on_activated()
+        self.assertEqual(self.page.cable_loss_selection.filename, "first.json")
+
+        self._select_cable_loss("second.json", "2026-11-12T04:05:06+00:00")
+        self.assertEqual(self.page.cable_loss_selection.filename, "second.json")
+        self.assertIn("second.json", self.page.cable_loss_source_label.text())
+
+    def test_without_a_selection_the_label_prompts_for_cable_loss(self):
+        self.assertIsNone(self.page.cable_loss_selection)
+        self.assertIn("未选择线损结果", self.page.cable_loss_source_label.text())
 
     def test_control_buttons_share_one_row(self):
         page = self.page

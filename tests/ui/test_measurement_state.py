@@ -7,6 +7,7 @@ from presentation.qt.measurement_state import (
     MeasurementResultReference,
     MeasurementStatus,
     MeasurementViewState,
+    StageResultSelection,
 )
 from application.dto import MeasurementStatus as ApplicationMeasurementStatus
 
@@ -108,6 +109,24 @@ class MeasurementStateTests(unittest.TestCase):
         self.assertEqual(stopped.status, MeasurementStatus.CANCELLED)
         with self.assertRaises(ValueError):
             stopped.run()
+
+
+    def test_stage_result_selection_requires_every_fact(self):
+        selection = StageResultSelection(
+            path="test_results/cable_loss/a.json",
+            filename="a.json",
+            created_at="2026-11-11T01:02:03+00:00",
+        )
+        self.assertEqual(selection.filename, "a.json")
+        for name in ("path", "filename", "created_at"):
+            with self.subTest(field=name), self.assertRaises(ValueError):
+                StageResultSelection(
+                    **{**selection.__dict__, name: "   "}
+                )
+            with self.subTest(field=name, kind="type"), self.assertRaises(TypeError):
+                StageResultSelection(
+                    **{**selection.__dict__, name: None}
+                )
 
 
 if __name__ == "__main__":

@@ -5,18 +5,24 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Callable
 
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QDialog,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QLabel,
     QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
-from .measurement_start_facade import MeasurementStartFacade, StartMeasurementRequest
+from .measurement_start_facade import (
+    MeasurementStartFacade,
+    StartMeasurementRequest,
+    is_busy,
+)
 from application.dto import DriverPowerMappingMeasurementResult
 from .archival_page import ArchivalPageMixin
 from .measurement_controls import (
@@ -26,6 +32,7 @@ from .measurement_controls import (
 from .measurement_state import (
     DriverMappingPageResultState,
     MeasurementKind,
+    StageResultSelection,
 )
 from .pages import PageControllerBindingMixin
 from .realtime_buffer import RealtimeMeasurementBuffer
@@ -42,6 +49,10 @@ class DriverMappingPage(
     RealtimePageMixin, ArchivalPageMixin, PageControllerBindingMixin, QWidget
 ):
     """驱动映射输入、接线确认、进度和结构化结果展示。"""
+
+    # 页面只发出“用户想加载线损结果”的意图；打开文件选择器和应用层校验都由窗口
+    # 负责，页面不持有路径服务，也不读取 JSON。
+    load_cable_loss_requested = Signal()
 
     def __init__(
         self,
@@ -61,6 +72,8 @@ class DriverMappingPage(
         PageControllerBindingMixin.__init__(self)
         QWidget.__init__(self)
         self._run_provider = run_provider
+        # 用户在本次会话里显式选择的线损结果；页面切换不清除，只有重新选择才替换。
+        self._cable_loss_selection: StageResultSelection | None = None
         self._start_facade = MeasurementStartFacade(
             config_path_provider=config_path_provider
         )
@@ -108,6 +121,9 @@ class DriverMappingPage(
         self.show_driver_diagram_btn = QPushButton("查看连接图")
         set_button_variant(self.show_driver_diagram_btn, "secondary")
         self.show_driver_diagram_btn.clicked.connect(self.show_connection_diagram)
+        self.load_cable_loss_btn = QPushButton("加载线损结果")
+        set_button_variant(self.load_cable_loss_btn, "secondary")
+        self.load_cable_loss_btn.clicked.connect(self.load_cable_loss_requested.emit)
         self.controls = MeasurementControlPresenter(
             MeasurementKind.DRIVER_MAPPING,
             {
@@ -124,8 +140,15 @@ class DriverMappingPage(
             )
         ):
             control_layout.addWidget(button, 0, column)
-        control_layout.addWidget(self.show_driver_diagram_btn, 1, 0, 1, 2)
+        control_layout.addWidget(self.load_cable_loss_btn, 1, 0, 1, 2)
+        control_layout.addWidget(self.show_driver_diagram_btn, 2, 0, 1, 2)
         left_layout.addWidget(control_group)
+        # 线损是驱动映射的前置输入：这里持续回显来源文件与测量时间，未选择时明确提示。
+        self.cable_loss_source_label = QLabel()
+        self.cable_loss_source_label.setObjectName("emptyHint")
+        self.cable_loss_source_label.setWordWrap(True)
+        left_layout.addWidget(self.cable_loss_source_label)
+        self._sync_cable_loss_label()
         self.archival_banner = self._build_archival_banner()
         left_layout.addWidget(self.archival_banner)
         # 进度与实时日志由窗口挂进这块容器，占满控制框以下的剩余高度。
@@ -157,6 +180,21 @@ class DriverMappingPage(
         self._connect_signal(signals.finished, self._on_finished)
 
     def start_measurement(self) -> None:
+        # 线损是驱动映射的前置输入：没有用户显式选择时不去读取运行目录或最新结果，
+        # 直接在当前页面拦下，避免先弹接线确认再失败。页面只判断“是否选过”，文件
+        # 内容与兼容性仍由应用层在测量开始前校验。
+        #
+        # 其它页面测量运行时，本页“开始”按钮仍可能被点到；此时先把顺序让给
+        # facade 统一报告“已有测量正在运行”，不要用线损缺失掩盖更直接的原因。
+        # 忙碌判据来自 facade 的 is_busy，页面不复制“什么算活动测量”。
+        if (
+            self.controller is not None
+            and not is_busy(self.controller)
+            and self._cable_loss_selection is None
+        ):
+            self._error_callback("请先加载驱动映射使用的线损测量结果")
+            self._log_callback("未选择线损测量结果，驱动映射未启动")
+            return
         # controller 只在 prepare 时读取一次：决策携带检查过的那个对象，接线对话框
         # 的嵌套事件循环返回后不会重新读取 self.controller。
         decision = self._start_facade.prepare(
@@ -186,6 +224,41 @@ class DriverMappingPage(
 
     def show_connection_diagram(self) -> None:
         self._connection_dialog_factory("driver_mapping", self).exec()
+
+    def show_loaded_cable_loss(
+        self, *, path: str, filename: str, created_at: str
+    ) -> None:
+        """记录用户显式选择的线损结果，并回显来源文件与测量时间。
+
+        文件内容、阶段目录边界与结果类型已由应用层校验；页面只保存窗口交回的事实，
+        不读取文件，也不把这里的显示当成测量输入的第二次校验。日志只说“已选择”，
+        不暗示正在运行（或下一次）测量已经消费了这份文件。
+        """
+        self._cable_loss_selection = StageResultSelection(
+            path=path, filename=filename, created_at=created_at
+        )
+        self._sync_cable_loss_label()
+        self._log_callback(
+            f"已选择驱动映射线损测量结果：{filename}"
+            f"（测量时间：{created_at}）"
+        )
+
+    @property
+    def cable_loss_selection(self) -> StageResultSelection | None:
+        """当前显式选择的线损结果；未选择时为 ``None``。"""
+        return self._cable_loss_selection
+
+    def _sync_cable_loss_label(self) -> None:
+        selection = self._cable_loss_selection
+        label = getattr(self, "cable_loss_source_label", None)
+        if label is None:
+            return
+        if selection is None:
+            label.setText("未选择线损结果：开始前请先加载线损测量结果")
+            return
+        label.setText(
+            f"线损来源：{selection.filename}\n测量时间：{selection.created_at}"
+        )
 
     @property
     def _realtime_data(self):

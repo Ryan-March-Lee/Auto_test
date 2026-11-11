@@ -690,6 +690,74 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIn("线损测量", visible_titles())
         self.assertIn("功放测试", visible_titles())
 
+    def test_driver_mapping_load_button_routes_to_the_stage_result_selector(self):
+        from application.ports.stage_result_repository import MeasurementStage
+
+        self._silence_dialogs()
+        window = self._window()
+        with patch(
+            "presentation.qt.main_window._choose_stage_result", return_value=None
+        ) as chooser:
+            window.driver_mapping_page.load_cable_loss_btn.click()
+            self.app.processEvents()
+
+        chooser.assert_called_once()
+        self.assertIs(chooser.call_args.args[0], window)
+        self.assertEqual(chooser.call_args.args[1], MeasurementStage.CABLE_LOSS)
+        self.assertIsNone(window.driver_mapping_page.cable_loss_selection)
+
+    def test_driver_mapping_accepts_an_existing_cable_loss_stage_file(self):
+        """真实阶段文件经窗口加载后落到页面：来源文件名与测量时间可见。"""
+        from application.dto import (
+            CableLossMeasurementResult,
+            CableLossRow,
+            generate_measurement_id,
+        )
+        from application.ports.stage_result_repository import MeasurementStage
+        from infrastructure.persistence.stage_result_repository import (
+            FileStageResultRepository,
+        )
+
+        self._silence_dialogs()
+        result = CableLossMeasurementResult(
+            run_id="run-driver-mapping",
+            measurement_id=generate_measurement_id(),
+            points=(
+                CableLossRow(frequency_ghz="3.5", cable_losses={"cable1": 1.25}),
+            ),
+        )
+        reference = FileStageResultRepository(paths=self.paths).save(
+            MeasurementStage.CABLE_LOSS, result
+        )
+        window = self._window()
+
+        with patch(
+            "presentation.qt.stage_result_selection.QFileDialog.getOpenFileName",
+            return_value=(str(reference.path), "JSON 文件 (*.json)"),
+        ):
+            window._load_driver_mapping_cable_loss()
+
+        page = window.driver_mapping_page
+        selection = page.cable_loss_selection
+        self.assertIsNotNone(selection)
+        self.assertEqual(selection.filename, reference.path.name)
+        self.assertEqual(selection.created_at, result.created_at)
+        self.assertIn(reference.path.name, page.cable_loss_source_label.text())
+        self.assertIn(result.created_at, page.cable_loss_source_label.text())
+
+    def test_driver_mapping_start_without_a_chosen_cable_loss_never_starts(self):
+        self._silence_dialogs()
+        window = self._window()
+        page = window.driver_mapping_page
+        errors = []
+        page._error_callback = errors.append
+
+        page.start_measurement()
+
+        self.assertEqual(errors, ["请先加载驱动映射使用的线损测量结果"])
+        self.assertFalse(window.measurement_controller.state.is_active)
+        self.assertIsNone(page.cable_loss_selection)
+
     def test_configuration_page_hides_progress_and_log_panel(self):
         """测试配置页只做配置与连接：进度与实时日志不出现，切页后挂回测量页左栏。"""
         self._silence_dialogs()

@@ -12,7 +12,6 @@ from typing import Any
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication,
-    QFileDialog,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -23,7 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from application.ports.stage_result_repository import MeasurementStage
-from infrastructure.logging.app_logging import get_logger, setup_logging
+from infrastructure.logging.app_logging import setup_logging
 from presentation.qt.application_coordinator import ApplicationCoordinator, RunFlowState
 from presentation.qt.composition import build_device_scanner_factory, default_paths
 from presentation.qt.configuration_editor import ConfigurationEditor
@@ -38,13 +37,12 @@ from presentation.qt.history_view_model import HistoryViewModel
 from presentation.qt.measurement_state import MeasurementKind, MeasurementResultReference
 from presentation.qt.pages import PageContext, build_pages
 from presentation.qt.realtime_plot import RealTimePlotWidget
+from presentation.qt.stage_result_selection import choose_stage_result
 from presentation.qt.status_panel import StatusPanel
 from presentation.qt.theme import apply_theme, build_stylesheet
 from presentation.qt.visualization_page import VisualizationPage
 from presentation.qt.welcome_page import WelcomePage, apply_test_mode, confirm_leave_configuration
 from presentation.qt.window_geometry import fit_window_to_screen
-
-logger = get_logger(__name__)
 
 # 全局样式表来自统一主题层：颜色、字号与控件外观只在 presentation.qt.theme 定义一次。
 APPLICATION_STYLE = build_stylesheet()
@@ -59,6 +57,15 @@ def apply_light_theme(app: QApplication) -> None:
     基准字体，保证未单独设置样式的区域也是浅底深字。
     """
     apply_theme(app)
+
+
+def _choose_stage_result(window, stage, *, title: str, label: str):
+    """打开文件选择器并按显式路径加载阶段结果；取消/失败返回 ``None``。"""
+    return choose_stage_result(
+        window, results=window.gui_data_service.results,
+        directory=window.paths.cable_loss_results_dir, stage=stage,
+        title=title, label=label, log=window.add_log_message,
+    )
 
 
 class MainWindow(QMainWindow):
@@ -335,6 +342,9 @@ class MainWindow(QMainWindow):
         # 驱动映射页只属于有驱放测试；欢迎页选择模式后再决定是否显示。
         self._driver_mapping_tab_index = self.tab_widget.indexOf(self.driver_mapping_page)
         self.cable_loss_page.load_result_requested.connect(self._load_cable_loss_result)
+        self.driver_mapping_page.load_cable_loss_requested.connect(
+            self._load_driver_mapping_cable_loss
+        )
 
     def _on_page_changed(self, index):
         """Keep page activation hooks aligned with the visible tab.
@@ -554,30 +564,14 @@ class MainWindow(QMainWindow):
         self._sync_finalize_entry()
 
     def _load_cable_loss_result(self):
-        """由用户显式选择线损结果文件；取消或失败都保留当前显示。
-
-        文件选择器只给出路径，阶段目录边界、JSON、结果类型、schema 和状态由应用层
-        阶段结果仓库校验。可预期的失败只有两类：用户取消选择，以及文件不可读/不是
-        正式线损结果（``OSError``/``ValueError``）；两者都通过日志呈现，不吞掉其他
-        程序错误。加载失败时页面保持原样，不覆盖已经显示的有效结果。
-        """
-        path, _selected_filter = QFileDialog.getOpenFileName(
-            self,
-            "选择线损测量结果",
-            str(self.paths.cable_loss_results_dir),
-            "JSON 文件 (*.json)",
+        """由用户显式选择线损结果文件；取消或失败都保留当前显示。"""
+        selected = _choose_stage_result(
+            self, MeasurementStage.CABLE_LOSS,
+            title="选择线损测量结果", label="线损测量结果",
         )
-        if not path:
-            self.add_log_message("已取消选择线损测量结果")
+        if selected is None:
             return
-        try:
-            loaded = self.gui_data_service.results.load_stage_result(
-                MeasurementStage.CABLE_LOSS, path
-            )
-        except (OSError, ValueError) as error:
-            logger.warning("加载线损测量结果失败: %s", error)
-            self.add_log_message(f"加载线损测量结果失败: {error}")
-            return
+        _path, loaded = selected
         self.cable_loss_page.show_loaded_result(
             MeasurementResultReference(
                 result_id=loaded.result_id,
@@ -586,6 +580,22 @@ class MainWindow(QMainWindow):
                 source="stage_result",
             ),
             filename=loaded.filename,
+        )
+
+    def _load_driver_mapping_cable_loss(self):
+        """显式选择驱动映射使用的线损结果；页面回显来源文件与测量时间。"""
+        selected = _choose_stage_result(
+            self, MeasurementStage.CABLE_LOSS,
+            title="选择驱动映射使用的线损测量结果",
+            label="驱动映射使用的线损测量结果",
+        )
+        if selected is None:
+            return
+        path, loaded = selected
+        self.driver_mapping_page.show_loaded_cable_loss(
+            path=path,
+            filename=loaded.filename,
+            created_at=loaded.result.created_at,
         )
 
     def refresh_history(self):

@@ -542,11 +542,17 @@ class MainWindowMigrationResidueTests(unittest.TestCase):
         self.assertNotIn("self.instruction_text", self.source)
         self.assertNotIn("driver_mode_changed", self.source)
 
-    def test_cable_loss_result_loading_declares_its_expected_failures(self):
-        method = self._method("_load_cable_loss_result")
+    def test_stage_result_loading_declares_its_expected_failures(self):
+        path = ROOT / "presentation" / "qt" / "stage_result_selection.py"
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+        function = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == "choose_stage_result"
+        )
         handlers = [
             ast.unparse(handler.type) if handler.type else None
-            for handler in ast.walk(method)
+            for handler in ast.walk(function)
             if isinstance(handler, ast.ExceptHandler)
         ]
         self.assertEqual(
@@ -582,7 +588,7 @@ class CableLossResultFileSelectionTests(unittest.TestCase):
         MainWindow, window, page, logs = self._window(results)
 
         with patch(
-            "presentation.qt.main_window.QFileDialog.getOpenFileName",
+            "presentation.qt.stage_result_selection.QFileDialog.getOpenFileName",
             return_value=("", ""),
         ):
             MainWindow._load_cable_loss_result(window)
@@ -606,7 +612,7 @@ class CableLossResultFileSelectionTests(unittest.TestCase):
         selected = str(Path("test_results") / "cable_loss" / loaded.filename)
 
         with patch(
-            "presentation.qt.main_window.QFileDialog.getOpenFileName",
+            "presentation.qt.stage_result_selection.QFileDialog.getOpenFileName",
             return_value=(selected, "JSON 文件 (*.json)"),
         ) as dialog:
             MainWindow._load_cable_loss_result(window)
@@ -635,7 +641,7 @@ class CableLossResultFileSelectionTests(unittest.TestCase):
         MainWindow, window, page, logs = self._window(results)
 
         with patch(
-            "presentation.qt.main_window.QFileDialog.getOpenFileName",
+            "presentation.qt.stage_result_selection.QFileDialog.getOpenFileName",
             return_value=("test_results/cable_loss/broken.json", "JSON"),
         ):
             MainWindow._load_cable_loss_result(window)
@@ -643,6 +649,90 @@ class CableLossResultFileSelectionTests(unittest.TestCase):
         page.show_loaded_result.assert_not_called()
         self.assertEqual(len(logs), 1)
         self.assertIn("加载线损测量结果失败", logs[0])
+        self.assertIn("cable_loss 阶段目录", logs[0])
+
+
+class DriverMappingCableLossSelectionTests(unittest.TestCase):
+    """步骤 11：驱动映射页通过文件选择器显式选择线损结果。"""
+
+    def _window(self, results):
+        from presentation.qt.main_window import MainWindow
+
+        logs = []
+        page = Mock()
+        window = SimpleNamespace(
+            paths=SimpleNamespace(
+                cable_loss_results_dir=Path("test_results") / "cable_loss"
+            ),
+            gui_data_service=SimpleNamespace(results=results),
+            driver_mapping_page=page,
+            add_log_message=logs.append,
+        )
+        return MainWindow, window, page, logs
+
+    def test_cancelled_selection_keeps_the_page_unchanged(self):
+        results = Mock()
+        MainWindow, window, page, logs = self._window(results)
+
+        with patch(
+            "presentation.qt.stage_result_selection.QFileDialog.getOpenFileName",
+            return_value=("", ""),
+        ):
+            MainWindow._load_driver_mapping_cable_loss(window)
+
+        results.load_stage_result.assert_not_called()
+        page.show_loaded_cable_loss.assert_not_called()
+        self.assertEqual(logs, ["已取消选择驱动映射使用的线损测量结果"])
+
+    def test_selected_file_is_loaded_and_its_source_is_shown(self):
+        from application.ports.stage_result_repository import MeasurementStage
+
+        loaded = SimpleNamespace(
+            result_id="stage::cable_loss::20261111T010203Z_a1b2c3d4",
+            filename="20261111T010203Z_a1b2c3d4.json",
+            result=SimpleNamespace(created_at="2026-11-11T01:02:03+00:00"),
+        )
+        results = Mock()
+        results.load_stage_result.return_value = loaded
+        MainWindow, window, page, logs = self._window(results)
+        selected = str(Path("test_results") / "cable_loss" / loaded.filename)
+
+        with patch(
+            "presentation.qt.stage_result_selection.QFileDialog.getOpenFileName",
+            return_value=(selected, "JSON 文件 (*.json)"),
+        ) as dialog:
+            MainWindow._load_driver_mapping_cable_loss(window)
+
+        _parent, title, directory, filters = dialog.call_args.args
+        self.assertEqual(title, "选择驱动映射使用的线损测量结果")
+        self.assertEqual(directory, str(window.paths.cable_loss_results_dir))
+        self.assertIn("*.json", filters)
+        results.load_stage_result.assert_called_once_with(
+            MeasurementStage.CABLE_LOSS, selected
+        )
+        page.show_loaded_cable_loss.assert_called_once_with(
+            path=selected,
+            filename=loaded.filename,
+            created_at=loaded.result.created_at,
+        )
+        self.assertEqual(logs, [])
+
+    def test_unreadable_or_wrong_result_keeps_the_page_unchanged(self):
+        results = Mock()
+        results.load_stage_result.side_effect = ValueError(
+            "阶段结果路径必须直接位于 cable_loss 阶段目录"
+        )
+        MainWindow, window, page, logs = self._window(results)
+
+        with patch(
+            "presentation.qt.stage_result_selection.QFileDialog.getOpenFileName",
+            return_value=("test_results/cable_loss/broken.json", "JSON"),
+        ):
+            MainWindow._load_driver_mapping_cable_loss(window)
+
+        page.show_loaded_cable_loss.assert_not_called()
+        self.assertEqual(len(logs), 1)
+        self.assertIn("加载驱动映射使用的线损测量结果失败", logs[0])
         self.assertIn("cable_loss 阶段目录", logs[0])
 
 

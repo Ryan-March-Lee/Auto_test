@@ -42,6 +42,16 @@ START_LABELS: Mapping[MeasurementKind, str] = MappingProxyType(
 )
 
 
+def is_busy(controller: Any) -> bool:
+    """“已有测量正在运行”的唯一判据。
+
+    页面在报告自己的输入前置条件（例如驱动映射缺少线损）之前也需要判断顺序：
+    忙碌时让 :meth:`MeasurementStartFacade.prepare` 统一报告 ``BUSY_MESSAGE``，
+    避免页面把“请先加载线损”当成真正原因。页面只调用本函数，不复制判据。
+    """
+    return bool(getattr(getattr(controller, "state", None), "is_active", False))
+
+
 class StartMeasurementStatus(str, Enum):
     """一次启动意图在前置条件检查中的结果。"""
 
@@ -184,8 +194,7 @@ class MeasurementStartFacade:
             raise TypeError("confirm_connection 必须可调用")
         if controller is None:
             return self._decision(StartMeasurementStatus.NO_CONTROLLER)
-        state = getattr(controller, "state", None)
-        if getattr(state, "is_active", False):
+        if is_busy(controller):
             return self._decision(
                 StartMeasurementStatus.BUSY,
                 controller=controller,
@@ -244,4 +253,5 @@ __all__ = [
     "StartMeasurementDecision",
     "StartMeasurementRequest",
     "StartMeasurementStatus",
+    "is_busy",
 ]

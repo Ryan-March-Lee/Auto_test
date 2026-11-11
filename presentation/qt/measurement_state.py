@@ -58,6 +58,28 @@ class MeasurementResultReference:
 
 
 @dataclass(frozen=True)
+class StageResultSelection:
+    """用户在页面上显式选择的阶段结果文件。
+
+    ``path`` 是文件选择器给出的阶段结果文件路径；页面只把它当作不透明输入保存，
+    不读取、不解析，也不用它替代应用层的阶段/类型/schema 校验。``filename`` 与
+    ``created_at`` 只用于向用户回显来源文件和测量时间。
+    """
+
+    path: str
+    filename: str
+    created_at: str
+
+    def __post_init__(self) -> None:
+        for name in ("path", "filename", "created_at"):
+            value = getattr(self, name)
+            if not isinstance(value, str):
+                raise TypeError(f"{name} 必须是字符串")
+            if not value.strip():
+                raise ValueError(f"{name} 不能为空")
+
+
+@dataclass(frozen=True)
 class MeasurementViewState:
     """测量页面共享的不可变状态快照。"""
 
@@ -158,6 +180,7 @@ __all__ = [
     "MeasurementKind",
     "MeasurementStatus",
     "MeasurementResultReference",
+    "StageResultSelection",
     "MeasurementViewState",
     "PageResultState",
     "CableLossPageResultState",

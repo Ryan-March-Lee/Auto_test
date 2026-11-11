@@ -495,6 +495,11 @@ class DriverMappingPageArchivalLogTests(unittest.TestCase):
             archival_run_id_provider=lambda: RUN_ID,
         )
         self.page.bind_controller(self.controller)
+        self.page.show_loaded_cable_loss(
+            path="test_results/cable_loss/20261111T010203Z_a1b2c3d4.json",
+            filename="20261111T010203Z_a1b2c3d4.json",
+            created_at="2026-11-11T01:02:03+00:00",
+        )
 
     def test_success_and_failure_prompts_are_logged(self):
         self.controller.signals.archival.emit(

@@ -17,6 +17,7 @@ from presentation.qt.measurement_start_facade import (
     StartMeasurementDecision,
     StartMeasurementRequest,
     StartMeasurementStatus,
+    is_busy,
 )
 from presentation.qt.measurement_state import MeasurementKind
 from presentation.qt.run_contract import is_valid_prepared_run
@@ -142,6 +143,14 @@ class MeasurementStartFacadeTests(unittest.TestCase):
         self.assertEqual(decision.status, StartMeasurementStatus.BUSY)
         self.assertEqual(reads, [])
         self.assertEqual(self.confirmed, [])
+
+    def test_is_busy_is_the_shared_active_measurement_predicate(self):
+        # 页面在报告自己的输入前置条件之前复用它，确保“已有测量在运行”不被
+        # 页面级提示掩盖；判据只有这一份实现。
+        self.assertTrue(is_busy(_Controller(is_active=True)))
+        self.assertFalse(is_busy(_Controller(is_active=False)))
+        self.assertFalse(is_busy(None))
+        self.assertFalse(is_busy(SimpleNamespace(state=None)))
 
     def test_invalid_run_reports_the_page_specific_message(self):
         expected = {

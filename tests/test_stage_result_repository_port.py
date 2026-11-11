@@ -266,6 +266,34 @@ class StageResultEntryTests(unittest.TestCase):
                 with self.assertRaises(StageResultError):
                     StageResultEntry(**values)
 
+    def test_entry_rejects_non_completed_status(self):
+        for status in (
+            MeasurementStatus.FAILED,
+            MeasurementStatus.CANCELLED,
+            MeasurementStatus.RUNNING,
+            "completed_pending",
+        ):
+            with self.subTest(status=status):
+                with self.assertRaises(StageResultError):
+                    StageResultEntry(
+                        reference=self.reference(),
+                        measurement_type=MeasurementType.AMPLIFIER,
+                        status=status,
+                        created_at="2026-11-11T01:02:03+00:00",
+                        run_id="20261111T010203Z_a1b2c3d4",
+                    )
+
+    def test_entry_accepts_completed_status_as_text(self):
+        entry = StageResultEntry(
+            reference=self.reference(),
+            measurement_type=MeasurementType.AMPLIFIER,
+            status=" completed ",
+            created_at="2026-11-11T01:02:03+00:00",
+            run_id="20261111T010203Z_a1b2c3d4",
+        )
+
+        self.assertIs(entry.status, MeasurementStatus.COMPLETED)
+
 
 class LoadedStageResultTests(unittest.TestCase):
     def reference(self, stage=MeasurementStage.CABLE_LOSS, measurement_id=NOW_ID):
@@ -300,6 +328,36 @@ class LoadedStageResultTests(unittest.TestCase):
             LoadedStageResult(
                 reference=self.reference(),
                 result=amplifier_result(),
+            )
+
+    def test_loaded_result_rejects_non_completed_status(self):
+        results = (
+            cable_loss_result(status=MeasurementStatus.RUNNING),
+            cable_loss_result(
+                status=MeasurementStatus.FAILED,
+                error="硬件断开",
+            ),
+            cable_loss_result(
+                status=MeasurementStatus.CANCELLED,
+                termination={"intent": "cancel", "reason": "用户取消"},
+            ),
+        )
+
+        for result in results:
+            with self.subTest(status=result.status.value):
+                with self.assertRaisesRegex(StageResultError, "completed"):
+                    LoadedStageResult(reference=self.reference(), result=result)
+
+    def test_loaded_result_requires_identity_and_save_time(self):
+        with self.assertRaisesRegex(StageResultError, "身份"):
+            LoadedStageResult(
+                reference=self.reference(),
+                result=cable_loss_result(None),
+            )
+        with self.assertRaisesRegex(StageResultError, "保存时间"):
+            LoadedStageResult(
+                reference=self.reference(),
+                result=cable_loss_result(created_at=None),
             )
 
 

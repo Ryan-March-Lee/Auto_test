@@ -291,7 +291,8 @@ class StageResultEntry:
 
     ``reference`` 携带路径、身份、摘要和大小；其余字段是列表展示所需的正式事实。
     实现只返回可读取的 ``completed`` 正式结果，损坏、未完成或类型不匹配的文件
-    直接跳过，不伪造占位记录。
+    直接跳过，不伪造占位记录。构造本结构本身也会拒绝非 ``completed`` 状态，
+    避免不同实现在“是否列举未完成结果”上产生分歧。
     """
 
     reference: StageResultReference
@@ -316,6 +317,10 @@ class StageResultEntry:
             )
         except ValueError as error:
             raise StageResultError(f"阶段结果条目包含未知类型或状态: {error}") from error
+        if status is not MeasurementStatus.COMPLETED:
+            raise StageResultError(
+                f"阶段结果条目只接受 completed 结果，收到 {status.value}"
+            )
         if kind is not self.reference.stage.measurement_type:
             raise StageResultError(
                 "结果类型与阶段不符："
@@ -350,8 +355,9 @@ class LoadedStageResult:
     """按显式路径加载得到的正式结果及其文件事实。
 
     ``reference`` 中的摘要和大小用于测量开始前的再次核对；``result`` 是已经过
-    schema、类型和状态校验的正式 DTO。字段不匹配（类型、阶段或测量身份）说明
-    端口实现违反了契约，构造时直接拒绝。
+    schema、类型、状态和身份校验的正式 DTO：必须是 ``completed`` 状态，且带
+    非空 ``measurement_id`` 与 ``created_at``。字段不匹配（类型、阶段、
+    测量身份或状态）说明端口实现违反了契约，构造时直接拒绝。
     """
 
     reference: StageResultReference
@@ -364,6 +370,16 @@ class LoadedStageResult:
             formal = require_formal_result(self.result)
         except ValueError as error:
             raise StageResultError(f"加载结果不是正式测量结果: {error}") from error
+        try:
+            require_measurement_identity(formal)
+        except ValueError as error:
+            raise StageResultError(
+                f"加载结果缺少测量身份或保存时间: {error}"
+            ) from error
+        if formal.status is not MeasurementStatus.COMPLETED:
+            raise StageResultError(
+                f"加载结果必须是 completed 状态: 收到 {formal.status.value}"
+            )
         if formal.measurement_type is not self.reference.stage.measurement_type:
             raise StageResultError(
                 "加载结果类型与阶段不符："

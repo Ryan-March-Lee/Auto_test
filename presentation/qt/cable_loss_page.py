@@ -145,6 +145,11 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
             header.setSectionResizeMode(column, QHeaderView.Stretch)
         self.cable_loss_empty_hint = QLabel("尚无测量结果：完成测量后每个频点会在此列出线缆损耗。")
         self.cable_loss_empty_hint.setObjectName("emptyHint")
+        # 用户通过文件选择器加载结果时，在这里显示来源文件名；新测量或清空后隐藏。
+        self.cable_loss_source_label = QLabel("")
+        self.cable_loss_source_label.setObjectName("emptyHint")
+        self.cable_loss_source_label.hide()
+        result_layout.addWidget(self.cable_loss_source_label)
         result_layout.addWidget(self.cable_loss_table, 1)
         result_layout.addWidget(self.cable_loss_empty_hint)
         layout.addWidget(result_group, 1)
@@ -235,9 +240,23 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
 
     def clear_results(self) -> None:
         self.cable_loss_table.setRowCount(0)
+        self._set_source_filename(None)
         self._clear_archival_summary()
         self._sync_empty_hint()
         self._log_callback("已清空上一次线损测量结果")
+
+    def _set_source_filename(self, filename: str | None) -> None:
+        """显示/隐藏已加载结果的来源文件名；清空时不给旧文件名留残影。"""
+        label = getattr(self, "cable_loss_source_label", None)
+        if label is None:
+            return
+        text = str(filename).strip() if filename is not None else ""
+        if text:
+            label.setText(f"来源文件：{text}")
+            label.show()
+        else:
+            label.clear()
+            label.hide()
 
     def _sync_empty_hint(self) -> None:
         """空表时给出说明，避免用户把空白表格当成“数据没显示出来”。"""
@@ -245,10 +264,26 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         if hint is not None:
             hint.setVisible(self.cable_loss_table.rowCount() == 0)
 
-    def show_loaded_result(self, reference: Any) -> None:
-        """显示由窗口/结果服务提供的结构化结果，不读取文件。"""
+    def show_loaded_result(self, reference: Any, *, filename: str | None = None) -> None:
+        """显示由窗口/结果服务提供的结构化结果，不读取文件。
+
+        ``filename`` 是用户通过文件选择器选中的来源文件；只在结果成功显示后保留，
+        失败时既不显示文件名，也不留下“已加载”的假象。
+        """
+        value = getattr(reference, "value", None)
+        if (
+            getattr(reference, "kind", None) is not MeasurementKind.CABLE_LOSS
+            or not isinstance(value, (CableLossPageResultState, CableLossMeasurementResult))
+        ):
+            # Validate before replacing the current selection. show_result emits the
+            # established error for an unsupported payload; a different result kind
+            # is simply ignored as before.
+            self.show_result(reference)
+            return
         self.clear_results()
-        self.show_result(reference)
+        if not self.show_result(reference):  # defensive if the display contract changes
+            return
+        self._set_source_filename(filename)
         self._log_callback(f"已加载线损测量结果，共 {self.cable_loss_table.rowCount()} 个频点")
 
     def update_realtime(self, data: Any) -> None:
@@ -264,9 +299,9 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         self.cable_loss_table.resizeColumnsToContents()
         self._sync_empty_hint()
 
-    def show_result(self, reference: Any) -> None:
+    def show_result(self, reference: Any) -> bool:
         if getattr(reference, "kind", None) is not MeasurementKind.CABLE_LOSS:
-            return
+            return False
         value = getattr(reference, "value", None)
         if isinstance(value, CableLossPageResultState):
             for item in value.rows:
@@ -281,6 +316,8 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
                 )
         else:
             self._error_callback("线损测量结果不是正式结果模型，无法显示")
+            return False
+        return True
 
     def _find_or_add_row(self, frequency: str) -> int:
         for row in range(self.cable_loss_table.rowCount()):

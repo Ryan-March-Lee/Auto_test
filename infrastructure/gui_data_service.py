@@ -41,7 +41,10 @@ from application.ports.gui_data_service import (
     ResultFileDto,
 )
 from application.ports.run_history import RunHistoryRepository
-from application.ports.stage_result_repository import StageResultRepository
+from application.ports.stage_result_repository import (
+    MeasurementStage,
+    StageResultRepository,
+)
 from application.run_stages import resolve_stage_result_reference
 from analysis.visualization import DataVisualization
 from infrastructure.config.json_config_repository import JsonConfigurationRepository
@@ -105,15 +108,16 @@ class JsonConfigurationAdapter:
 
 
 class ResultQueryAdapter:
-    """只读的正式运行结果查询适配器。
+    """只读的正式运行结果查询与显式阶段文件加载适配器。
 
-    唯一数据源是运行目录：列表、按标识读取、最新结果和导出全部走运行 manifest
-    登记并校验过的结果。每条结果在返回前都会解析为正式结果 DTO；无法解析的文档
-    （非正式 schema、拆分明细文件、被篡改文件）既不会出现在列表里，也不会被读取。
+    历史列表、按标识读取、最新运行结果和导出走运行 manifest 登记并校验过的结果。
+    用户显式选择阶段文件时，``load_stage_result()`` 只加载调用方给出的路径，不
+    扫描目录、不选择最新文件，也不回退到其它结果。返回结果均解析为正式结果 DTO。
 
     步骤 7 起的阶段正式结果保存在独立阶段目录：运行目录里登记的是一份引用文档，
     适配器按引用读取阶段目录中的权威结果（阶段边界、正式 DTO、摘要与大小都由注入的
-    阶段结果仓库校验）。这只是过渡期的读取兼容，不提供阶段目录扫描或“最新文件”查找。
+    阶段结果仓库校验）。此引用读取用于运行历史兼容；显式文件加载也委托同一仓库
+    校验阶段目录边界、正式 DTO 与结果身份。
     """
 
     _LABELS = {
@@ -215,6 +219,26 @@ class ResultQueryAdapter:
         if loaded is not None:
             return loaded.path.read_bytes()
         return self.run_history.read_bytes(run_id, relative_path)
+
+    def load_stage_result(
+        self, stage: MeasurementStage | str, path: str
+    ) -> LoadedResultDto:
+        """按用户显式选择的阶段目录文件加载正式结果。
+
+        文件选择器只负责给出路径；阶段目录边界、文件存在性、JSON、正式 DTO、
+        类型/状态/身份与 schema 都由阶段结果仓库校验。适配器不扫描目录，也不在
+        失败时回退到“最新结果”，因此一次选择只会读取用户选中的那份文件。
+        """
+        if self.stage_results is None:
+            raise ValueError("阶段结果仓储未装配，无法按文件加载正式结果")
+        loaded = self.stage_results.load(stage, path)
+        return LoadedResultDto(
+            result_id=(
+                f"stage::{loaded.reference.stage.value}::{loaded.measurement_id}"
+            ),
+            filename=loaded.path.name,
+            result=loaded.result,
+        )
 
     def latest_result(self, result_type: str) -> LoadedResultDto:
         """返回最新的**可校验**正式运行结果。

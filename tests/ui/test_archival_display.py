@@ -9,6 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QDialog, QGroupBox, QWidget
 
+from application.dto import CableLossMeasurementResult, CableLossRow
 from application.dto.archival import (
     ArchivalOutcome,
     ArchivalTestStatus,
@@ -436,7 +437,18 @@ class CableLossPageArchivalLogTests(unittest.TestCase):
     def test_loading_a_historical_result_clears_the_archive_summary(self):
         self.page.start_measurement()
         self.page.show_loaded_result(
-            type("Reference", (), {"kind": MeasurementKind.CABLE_LOSS, "value": None})()
+            type(
+                "Reference",
+                (),
+                {
+                    "kind": MeasurementKind.CABLE_LOSS,
+                    "value": CableLossMeasurementResult(
+                        run_id=RUN_ID,
+                        status=MeasurementStatus.COMPLETED,
+                        points=(CableLossRow(frequency_ghz="3.5"),),
+                    ),
+                },
+            )()
         )
 
         self.assertIsNone(self.page._archival_summary)

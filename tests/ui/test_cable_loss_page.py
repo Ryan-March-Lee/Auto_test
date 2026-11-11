@@ -224,6 +224,74 @@ class CableLossPageTests(unittest.TestCase):
         self.assertEqual(self.page.cable_loss_table.item(0, 1).text(), "1.111")
         self.assertEqual(self.page.cable_loss_table.item(0, 4).text(), "4.444")
 
+    def test_loaded_result_shows_the_selected_source_filename(self):
+        self.page.show_loaded_result(
+            MeasurementResultReference(
+                "loaded-result",
+                MeasurementKind.CABLE_LOSS,
+                CableLossMeasurementResult(
+                    run_id="run-cable-loss",
+                    status=MeasurementStatus.COMPLETED,
+                    points=(CableLossRow(frequency_ghz="3.5"),),
+                ),
+                source="stage_result",
+            ),
+            filename="20261111T010203Z_a1b2c3d4.json",
+        )
+
+        self.assertFalse(self.page.cable_loss_source_label.isHidden())
+        self.assertIn(
+            "20261111T010203Z_a1b2c3d4.json",
+            self.page.cable_loss_source_label.text(),
+        )
+
+    def test_invalid_loaded_result_preserves_the_current_selection(self):
+        self.page.show_loaded_result(
+            MeasurementResultReference(
+                "loaded-result",
+                MeasurementKind.CABLE_LOSS,
+                CableLossMeasurementResult(
+                    run_id="run-cable-loss",
+                    status=MeasurementStatus.COMPLETED,
+                    points=(CableLossRow(frequency_ghz="3.5"),),
+                ),
+                source="stage_result",
+            ),
+            filename="valid-result.json",
+        )
+
+        self.page.show_loaded_result(
+            MeasurementResultReference(
+                "invalid-result", MeasurementKind.CABLE_LOSS, object(), source="stage_result"
+            ),
+            filename="invalid-result.json",
+        )
+
+        self.assertEqual(self.page.cable_loss_table.rowCount(), 1)
+        self.assertEqual(self.page.cable_loss_table.item(0, 0).text(), "3.5")
+        self.assertEqual(self.page.cable_loss_source_label.text(), "来源文件：valid-result.json")
+        self.assertIn("不是正式结果模型", self.errors[-1])
+
+    def test_new_measurement_clears_the_selected_source_filename(self):
+        self.page.show_loaded_result(
+            MeasurementResultReference(
+                "loaded-result",
+                MeasurementKind.CABLE_LOSS,
+                CableLossMeasurementResult(
+                    run_id="run-cable-loss",
+                    status=MeasurementStatus.COMPLETED,
+                    points=(CableLossRow(frequency_ghz="3.5"),),
+                ),
+                source="stage_result",
+            ),
+            filename="20261111T010203Z_a1b2c3d4.json",
+        )
+
+        self.page.clear_results()
+
+        self.assertTrue(self.page.cable_loss_source_label.isHidden())
+        self.assertEqual(self.page.cable_loss_source_label.text(), "")
+
     def test_control_buttons_follow_the_shared_state_binding(self):
         self.assertEqual(
             self.page.controls.supported_actions,

@@ -7,12 +7,12 @@
 
 import logging
 import sys
-from datetime import datetime, timezone
 from typing import Any
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication,
+    QFileDialog,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from application.ports.stage_result_repository import MeasurementStage
 from infrastructure.logging.app_logging import get_logger, setup_logging
 from presentation.qt.application_coordinator import ApplicationCoordinator, RunFlowState
 from presentation.qt.composition import build_device_scanner_factory, default_paths
@@ -553,28 +554,39 @@ class MainWindow(QMainWindow):
         self._sync_finalize_entry()
 
     def _load_cable_loss_result(self):
-        """读取最新正式运行目录结果，仅供历史查看；不会成为任何运行的输入。
+        """由用户显式选择线损结果文件；取消或失败都保留当前显示。
 
-        只读取运行 manifest 登记并通过校验的线损阶段结果，没有可用运行结果时提示
-        未找到，不回退到旧的全局兼容副本。可预期的失败只有两类：没有可用结果
-        （``FileNotFoundError``）与结果不可读/非正式 schema（``ValueError``/``OSError``）；
-        两者都通过状态栏呈现，不吞掉其他程序错误。
+        文件选择器只给出路径，阶段目录边界、JSON、结果类型、schema 和状态由应用层
+        阶段结果仓库校验。可预期的失败只有两类：用户取消选择，以及文件不可读/不是
+        正式线损结果（``OSError``/``ValueError``）；两者都通过日志呈现，不吞掉其他
+        程序错误。加载失败时页面保持原样，不覆盖已经显示的有效结果。
         """
-        try:
-            reference = MeasurementResultReference(
-                result_id=f"loaded-{datetime.now(timezone.utc).isoformat()}",
-                kind=MeasurementKind.CABLE_LOSS,
-                value=self.gui_data_service.results.latest_result("cable_loss").result,
-                source="result_service",
-            )
-        except FileNotFoundError:
-            self.add_log_message("未找到线损测量结果文件")
+        path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "选择线损测量结果",
+            str(self.paths.cable_loss_results_dir),
+            "JSON 文件 (*.json)",
+        )
+        if not path:
+            self.add_log_message("已取消选择线损测量结果")
             return
+        try:
+            loaded = self.gui_data_service.results.load_stage_result(
+                MeasurementStage.CABLE_LOSS, path
+            )
         except (OSError, ValueError) as error:
             logger.warning("加载线损测量结果失败: %s", error)
             self.add_log_message(f"加载线损测量结果失败: {error}")
             return
-        self.cable_loss_page.show_loaded_result(reference)
+        self.cable_loss_page.show_loaded_result(
+            MeasurementResultReference(
+                result_id=loaded.result_id,
+                kind=MeasurementKind.CABLE_LOSS,
+                value=loaded.result,
+                source="stage_result",
+            ),
+            filename=loaded.filename,
+        )
 
     def refresh_history(self):
         """测量结束后刷新历史运行列表：页面自己容忍读取失败。"""

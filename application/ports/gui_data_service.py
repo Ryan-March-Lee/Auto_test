@@ -13,6 +13,8 @@ from application.dto.run_deletion import RunDeletionOutcome
 from application.dto.run_history import ResultReportLocation, RunHistorySummary
 from domain.run.models import ArtifactKind
 
+from .stage_result_repository import MeasurementStage
+
 
 # 历史结果只来自正式运行目录；旧全局兼容副本已不再参与历史查看。
 RESULT_SOURCE_RUN = "run"
@@ -64,19 +66,33 @@ class ConfigurationPort(Protocol):
 class ResultQueryPort(Protocol):
     """历史结果查看/导出的只读查询契约。
 
-    该契约只服务于历史浏览，不提供正式测量输入；正式测量输入必须来自当前
-    运行 manifest 登记并校验的阶段结果。查询对象以 ``result_id`` 标识结果，路径
-    解析和目录边界校验由基础设施实现负责，数据源是正式运行目录结果。
+    该契约服务于历史浏览与用户显式选择的阶段结果加载，不提供隐式“最新结果”作为
+    正式测量输入。查询对象以 ``result_id`` 标识结果，路径解析和目录边界校验由基础
+    设施实现负责；``load_stage_result()`` 只接受调用方明确给出的阶段目录文件。
 
-    查询结果一律是已解析的正式结果 DTO：非正式 schema、类型与 manifest 登记不一致
-    的文档不会出现在列表中，也不会被 ``load()`` 返回。
+    查询结果一律是已解析的正式结果 DTO：非正式 schema、类型与阶段/运行登记不一致
+    的文档不会出现在列表中，也不会被 ``load()`` 或 ``load_stage_result()`` 返回。
     """
 
     def list_results(self) -> list[ResultFileDto]: ...
     def load(self, result_id: str) -> LoadedResultDto: ...
     def read_bytes(self, result_id: str) -> bytes: ...
+    def load_stage_result(
+        self, stage: MeasurementStage | str, path: str
+    ) -> LoadedResultDto:
+        """按用户显式选择的阶段目录文件加载正式结果。
+
+        ``path`` 必须直接位于该阶段的独立结果目录；阶段边界、JSON、结果类型、
+        schema 和状态由阶段结果仓库校验。实现不扫描目录、不查找最新文件，失败时
+        抛出 ``ValueError``（含 ``StageResultError``）或 ``OSError``。
+        """
+        ...
+
     def latest_result(self, result_type: str) -> LoadedResultDto:
-        """返回最新的可校验运行目录结果；没有结果时抛出 ``FileNotFoundError``。"""
+        """返回最新的可校验运行目录结果；没有结果时抛出 ``FileNotFoundError``。
+
+        仅供非测量浏览的兼容入口使用；正式测量的输入必须由用户显式选择。
+        """
 
 
 class ResultExportPort(Protocol):

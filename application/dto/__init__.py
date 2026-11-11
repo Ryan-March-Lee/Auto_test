@@ -25,6 +25,7 @@ from .measurement_requests import (
 from .export_requests import ExportFormat, ExportOutcome, ExportRequest
 from .measurement_results import (
     DRIVER_MAPPING_SCHEMA_VERSION,
+    MEASUREMENT_ID_PATTERN,
     AmplifierCompressionPoint,
     AmplifierFrequencyResult,
     AmplifierMeasurementResult,
@@ -41,6 +42,8 @@ from .measurement_results import (
     measurement_type_for_result_type,
     normalize_frequency_key,
     require_formal_result,
+    require_measurement_identity,
+    validate_measurement_id,
 )
 
 __all__ = [
@@ -76,10 +79,13 @@ __all__ = [
     "DriverMappingRawPoint",
     "DriverMappingTargetPoint",
     "DRIVER_MAPPING_SCHEMA_VERSION",
+    "MEASUREMENT_ID_PATTERN",
     "AmplifierCompressionPoint",
     "AmplifierFrequencyResult",
     "measurement_result_from_document",
     "measurement_type_for_result_type",
     "normalize_frequency_key",
     "require_formal_result",
+    "require_measurement_identity",
+    "validate_measurement_id",
 ]

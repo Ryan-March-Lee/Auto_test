@@ -9,7 +9,11 @@
 
 结果不继承 ``Mapping``，也不保存服务层的原始载荷。``to_dict()`` 是唯一的结果
 文档形状，``measurement_result_from_document()`` 是唯一读取入口：文档必须同时带
-``measurement_type``、``status`` 和非空 ``run_id``，且只允许正式字段名。旧字段别名
+``measurement_type``、``status`` 和非空 ``run_id``，且只允许正式字段名。新结果还带
+``measurement_id`` 作为结果自身身份（``run_id`` 只表示来源运行）；旧结果没有该字段
+时仍可读取，``measurement_id`` 为 ``None``，再次序列化时同样省略该字段。字段缺失是
+“旧结果”的唯一表示：显式写 ``null`` 视为写坏的文档并直接报错，避免兼容路径被当成
+新结果的默认值。旧字段别名
 （``legacy_payload``、``config``、``derived_metrics``、``resource_snapshot`` 等）、
 行式 ``sweep_data``、测量类型与数据字段不匹配的文档一律 ``ValueError``，不存在按
 字段猜测历史格式的兼容路径。
@@ -29,6 +33,7 @@ DTO 与展示层只搬运数值，不重新计算；唯一的例外是
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -42,6 +47,11 @@ from domain.measurement.values import CableLossProfile, Frequency
 # 驱动映射结果的双层契约版本：原始实测点与目标网格分别序列化。
 # 旧 ``power_mapping``（输入 -> 输出）文档没有这个版本，不能作为目标网格读取。
 DRIVER_MAPPING_SCHEMA_VERSION = "2.0"
+
+# 测量身份用于阶段结果文件名和结果自身引用：只允许 ASCII 字母、数字、点、下划线
+# 和短横线，不能以符号开头，也不能包含 ``..``、路径分隔符或盘符。读取旧结果时
+# 字段可以缺失，但一旦出现就必须满足该约束，避免身份被当作路径片段使用。
+MEASUREMENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 
 
 class MeasurementType(str, Enum):
@@ -124,6 +134,25 @@ def measurement_type_for_result_type(value: Any) -> MeasurementType | None:
     if not isinstance(value, str):
         return None
     return _RESULT_TYPE_LABELS.get(value.strip())
+
+
+def validate_measurement_id(value: Any) -> str:
+    """校验结果自身身份的格式；只做通用安全约束，不生成身份。
+
+    ``measurement_id`` 会进入阶段结果文件名，因此拒绝空值、首尾空白、路径片段和
+    盘符等可能改变路径含义的文本。具体生成规则（UTC 时间戳 + 随机短串）由后续的
+    文件名生成器负责。
+    """
+    if not isinstance(value, str):
+        raise ValueError("measurement_id 必须是字符串")
+    if not value or value != value.strip():
+        raise ValueError("measurement_id 不能为空或包含首尾空白")
+    if ".." in value or not MEASUREMENT_ID_PATTERN.fullmatch(value):
+        raise ValueError(
+            "measurement_id 只能包含字母、数字、点、下划线或短横线，"
+            "不能以符号开头，也不能包含路径片段"
+        )
+    return value
 
 
 # -- 结果数据 ---------------------------------------------------------------
@@ -309,6 +338,7 @@ class MeasurementResult:
     measurement_type: MeasurementType | str
     status: MeasurementStatus | str = MeasurementStatus.COMPLETED
     run_id: str
+    measurement_id: str | None = None
     error: str | None = None
     errors: tuple[str, ...] = ()
     cleanup_records: tuple[Mapping[str, Any], ...] = ()
@@ -329,6 +359,10 @@ class MeasurementResult:
             raise ValueError("run_id 不能为空")
         object.__setattr__(self, "measurement_type", measurement_type)
         object.__setattr__(self, "status", status)
+        if self.measurement_id is not None:
+            object.__setattr__(
+                self, "measurement_id", validate_measurement_id(self.measurement_id)
+            )
         for name in (
             "configuration_snapshot",
             "device_summary",
@@ -359,13 +393,24 @@ class MeasurementResult:
         return {}
 
     def to_dict(self) -> dict[str, Any]:
-        """返回运行目录中唯一的结果文档形状。"""
+        """返回运行目录中唯一的结果文档形状。
+
+        旧结果没有自身身份时**省略** ``measurement_id``，而不是写 ``null``：读取端
+        只把“字段缺失”当作旧结果，写出的 ``null`` 必须被拒绝，否则往返一次就会产生
+        无法再读取的文档。
+        """
         document = dict(self.result_document())
         document.update(
             {
                 "measurement_type": self.measurement_type.value,
                 "status": self.status.value,
                 "run_id": self.run_id,
+            }
+        )
+        if self.measurement_id is not None:
+            document["measurement_id"] = self.measurement_id
+        document.update(
+            {
                 "error": self.error,
                 "termination": thaw(self.termination) if self.termination is not None else None,
                 "configuration_snapshot": thaw(self.configuration_snapshot),
@@ -426,6 +471,11 @@ class MeasurementResult:
         """是否为三个具体正式结果之一；共享基类本身不参与持久化与展示。"""
         return False
 
+    @property
+    def has_measurement_id(self) -> bool:
+        """是否带有结果自身身份；旧运行结果没有该字段，仅作只读兼容。"""
+        return self.measurement_id is not None
+
 
 @dataclass(frozen=True, kw_only=True)
 class CableLossMeasurementResult(MeasurementResult):
@@ -455,12 +505,14 @@ class CableLossMeasurementResult(MeasurementResult):
         run_id: str,
         status: MeasurementStatus | str | None = None,
         termination: Mapping[str, Any] | None = None,
+        measurement_id: str | None = None,
     ) -> "CableLossMeasurementResult":
         """把线损服务载荷转换为正式结果（服务载荷仍是本层唯一入口）。"""
         if not isinstance(payload, Mapping):
             raise ValueError("线损测量结果载荷必须是映射")
         return cls(
             run_id=run_id,
+            measurement_id=measurement_id,
             status=_service_status(payload.get("status")) if status is None else status,
             termination=termination,
             attenuator_value=_float_or_none(payload.get("attenuator_value")),
@@ -559,6 +611,7 @@ class DriverPowerMappingMeasurementResult(MeasurementResult):
         run_id: str,
         status: MeasurementStatus | str | None = None,
         termination: Mapping[str, Any] | None = None,
+        measurement_id: str | None = None,
     ) -> "DriverPowerMappingMeasurementResult":
         if not isinstance(payload, Mapping):
             raise ValueError("驱动映射结果载荷必须是映射")
@@ -580,6 +633,7 @@ class DriverPowerMappingMeasurementResult(MeasurementResult):
             )
         return cls(
             run_id=run_id,
+            measurement_id=measurement_id,
             status=_service_status(payload.get("status")) if status is None else status,
             termination=termination,
             raw_points=raw_points,
@@ -765,11 +819,13 @@ class AmplifierMeasurementResult(MeasurementResult):
         run_id: str,
         status: MeasurementStatus | str | None = None,
         termination: Mapping[str, Any] | None = None,
+        measurement_id: str | None = None,
     ) -> "AmplifierMeasurementResult":
         if not isinstance(payload, Mapping):
             raise ValueError("主功放结果载荷必须是映射")
         return cls(
             run_id=run_id,
+            measurement_id=measurement_id,
             status=_service_status(payload.get("status")) if status is None else status,
             termination=termination,
             frequencies=_amplifier_frequencies_from_service(payload.get("results")),
@@ -840,6 +896,9 @@ def measurement_result_from_document(document: Mapping[str, Any]) -> Measurement
     只接受 ``to_dict()`` 产生的正式 schema：
 
     - ``run_id``、``measurement_type``、``status`` 必须存在且有效；
+    - ``measurement_id`` 是结果自身身份；旧结果只在字段缺失时按只读兼容读为
+      ``None``，显式 ``null`` 或非法文本一律报错。新结果必须有身份，由写入边界
+      调用 :func:`require_measurement_identity` 强制；
     - 测量类型必须与结果数据字段一一对应（``cable_losses`` / ``raw_points`` +
       ``target_mapping`` / ``results``），类型与数据不一致视为非正式文档；
     - 驱动映射只接受双层契约：旧 ``power_mapping`` 字典不能静默解释为目标网格；
@@ -928,6 +987,27 @@ def require_formal_result(value: Any) -> MeasurementResult:
     )
 
 
+def require_measurement_identity(value: Any) -> str:
+    """断言正式结果带有自身身份和创建时间，返回其 ``measurement_id``。
+
+    读取旧结果时必须允许 ``measurement_id`` 缺失，但写入阶段目录的**新**结果不能
+    复用这条兼容路径，否则“旧文档”和“写坏的新文档”无法区分。因此“新结果必须有
+    身份和保存时间”由写入边界调用本函数显式校验，而不是塞进 ``to_dict()``：后者
+    仍需要能把旧结果原样往返，且不给现有测量流程增加构造约束。
+
+    校验失败一律 ``ValueError``，与其它正式结果契约错误保持一致。
+    """
+    result = require_formal_result(value)
+    if result.measurement_id is None:
+        raise ValueError(
+            "新测量结果必须包含 measurement_id；旧结果只在读取时缺省，"
+            "不能作为新结果保存"
+        )
+    if not isinstance(result.created_at, str) or not result.created_at.strip():
+        raise ValueError("新测量结果必须包含保存时间 created_at")
+    return result.measurement_id
+
+
 # -- 内部工具 ---------------------------------------------------------------
 
 
@@ -936,6 +1016,7 @@ _COMMON_DOCUMENT_KEYS = frozenset(
         "measurement_type",
         "status",
         "run_id",
+        "measurement_id",
         "error",
         "errors",
         "cleanup_records",
@@ -1026,6 +1107,22 @@ def _document_status(document: Mapping[str, Any]) -> MeasurementStatus:
     if value is None:
         raise ValueError("正式测量结果文档缺少 status 字段")
     return MeasurementStatus(str(value))
+
+
+def _measurement_id(document: Mapping[str, Any]) -> str | None:
+    """读取可选的测量身份：只有字段缺失才表示旧结果。
+
+    ``document.get()`` 会把“缺字段”和“显式 ``null``”混为一谈；后者只可能来自写坏的
+    新文档，必须明确失败，否则兼容路径会成为新结果跳过身份的漏洞。
+    """
+    if "measurement_id" not in document:
+        return None
+    value = document["measurement_id"]
+    if value is None:
+        raise ValueError(
+            "measurement_id 不能为 null：旧结果应省略该字段，新结果必须提供身份"
+        )
+    return validate_measurement_id(value)
 
 
 def _validate_artifact_metadata(document: Mapping[str, Any], kind: MeasurementType) -> None:
@@ -1422,6 +1519,7 @@ def _amplifier_document(item: AmplifierFrequencyResult) -> dict[str, Any]:
 
 def _contract_fields(document: Mapping[str, Any]) -> dict[str, Any]:
     return {
+        "measurement_id": _measurement_id(document),
         "error": document.get("error"),
         "errors": document.get("errors", ()),
         "cleanup_records": document.get("cleanup_records", ()),
@@ -1575,6 +1673,7 @@ def _validate_termination(value: Mapping[str, Any] | None, expected: str | None)
 
 __all__ = [
     "DRIVER_MAPPING_SCHEMA_VERSION",
+    "MEASUREMENT_ID_PATTERN",
     "MeasurementType",
     "MeasurementStatus",
     "MeasurementResult",
@@ -1590,6 +1689,8 @@ __all__ = [
     "measurement_result_from_document",
     "measurement_type_for_result_type",
     "require_formal_result",
+    "require_measurement_identity",
+    "validate_measurement_id",
     "normalize_frequency_key",
     "freeze",
     "thaw",

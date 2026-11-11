@@ -3,6 +3,8 @@
 步骤 6 收敛结果模型后只有一套正式结果契约（``application.dto.measurement_results``）：
 
 - 文档必须带 ``run_id``、``measurement_type`` 和 ``status``；
+- 新结果还必须带 ``measurement_id``，它是结果自身身份；旧结果只在字段缺失时仍可读取，
+  显式 ``null`` 会被拒绝，``run_id`` 只表示来源运行；
 - 测量类型必须与结果数据字段一一对应；
 - 只允许正式字段名：``legacy_payload``、``config``、``derived_metrics``、
   ``resource_snapshot`` 等旧别名与未知字段一律报错；
@@ -20,6 +22,7 @@ from application.dto import (
     MeasurementStatus,
     MeasurementType,
     measurement_result_from_document,
+    require_measurement_identity,
 )
 from domain.measurement.values import Decibels
 
@@ -27,6 +30,7 @@ from domain.measurement.values import Decibels
 def _cable_document(**overrides):
     document = {
         "run_id": "cable-run",
+        "measurement_id": "20261111T010203_0a1b2c3d",
         "measurement_type": "cable_loss",
         "status": "completed",
         "attenuator_value": 20.0,
@@ -41,6 +45,7 @@ def _cable_document(**overrides):
 def _driver_document(**overrides):
     document = {
         "run_id": "driver-run",
+        "measurement_id": "20261111T010204_1b2c3d4e",
         "measurement_type": "driver_power_mapping",
         "status": "completed",
         "schema_version": "2.0",
@@ -75,6 +80,7 @@ def _driver_document(**overrides):
 def _amplifier_document(**overrides):
     document = {
         "run_id": "amp-run",
+        "measurement_id": "20261111T010205_2c3d4e5f",
         "measurement_type": "amplifier",
         "status": "completed",
         "measurement_time": "2026-08-21 10:00:00",
@@ -156,6 +162,169 @@ class FormalResultDocumentTests(unittest.TestCase):
         self.assertIsInstance(
             measurement_result_from_document(document), CableLossMeasurementResult
         )
+
+
+class MeasurementIdentityTests(unittest.TestCase):
+    """步骤 2：正式结果带自身身份，``run_id`` 只表示来源运行。"""
+
+    def test_measurement_identity_round_trips_for_each_formal_result(self):
+        for document in (_cable_document(), _driver_document(), _amplifier_document()):
+            expected = document["measurement_id"]
+            with self.subTest(document=document["measurement_type"]):
+                result = measurement_result_from_document(document)
+
+                self.assertEqual(result.measurement_id, expected)
+                self.assertTrue(result.has_measurement_id)
+
+                serialized = result.to_dict()
+                self.assertEqual(serialized["measurement_id"], expected)
+                json.dumps(serialized)
+                restored = measurement_result_from_document(serialized)
+                self.assertEqual(restored.to_dict(), serialized)
+
+    def test_measurement_id_is_independent_from_the_source_run(self):
+        document = _cable_document(
+            run_id="source-run-001",
+            measurement_id="20261111T010203_deadbeef",
+        )
+        result = measurement_result_from_document(document)
+
+        self.assertEqual(result.run_id, "source-run-001")
+        self.assertEqual(result.measurement_id, "20261111T010203_deadbeef")
+        self.assertNotEqual(result.measurement_id, result.run_id)
+        self.assertEqual(
+            result.to_dict()["measurement_id"], "20261111T010203_deadbeef"
+        )
+
+    def test_legacy_document_without_measurement_id_remains_readable(self):
+        """旧运行结果没有自身身份，读取为 ``None``，且再次序列化时仍省略该字段。"""
+        for document in (_cable_document(), _driver_document(), _amplifier_document()):
+            document.pop("measurement_id")
+            with self.subTest(document=document["measurement_type"]):
+                result = measurement_result_from_document(document)
+
+                self.assertIsNone(result.measurement_id)
+                self.assertFalse(result.has_measurement_id)
+
+                serialized = result.to_dict()
+                self.assertNotIn("measurement_id", serialized)
+                self.assertEqual(
+                    measurement_result_from_document(serialized).to_dict(),
+                    serialized,
+                )
+
+    def test_explicit_null_measurement_id_is_not_a_legacy_marker(self):
+        """字段存在但为 ``null`` 只可能来自写坏的新文档，不能走旧结果兼容。"""
+        for document in (_cable_document(), _driver_document(), _amplifier_document()):
+            document["measurement_id"] = None
+            with self.subTest(document=document["measurement_type"]):
+                with self.assertRaisesRegex(ValueError, "measurement_id"):
+                    measurement_result_from_document(document)
+
+    def test_measurement_id_must_be_a_safe_identity_token(self):
+        for value in (
+            "",
+            "   ",
+            " identity",
+            "identity ",
+            "a/b",
+            "a\\b",
+            "..",
+            "a..b",
+            "C:identity",
+            ".hidden",
+            "a" * 101,
+            "结果-1",
+            "identity\n",
+            123,
+        ):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "measurement_id"):
+                    measurement_result_from_document(
+                        _cable_document(measurement_id=value)
+                    )
+
+    def test_measurement_id_accepts_the_maximum_length(self):
+        accepted = "a" * 100
+        self.assertEqual(
+            measurement_result_from_document(
+                _cable_document(measurement_id=accepted)
+            ).measurement_id,
+            accepted,
+        )
+
+    def test_service_payload_carries_measurement_identity(self):
+        measurements = (
+            (
+                CableLossMeasurementResult,
+                _cable_document(),
+            ),
+            (
+                DriverPowerMappingMeasurementResult,
+                _driver_document(),
+            ),
+            (
+                AmplifierMeasurementResult,
+                {
+                    "status": "finished",
+                    "results": {
+                        "1.0": {
+                            "small_signal_gain": 9.0,
+                            "sweep_data": {"gain": [9.0]},
+                        }
+                    },
+                },
+            ),
+        )
+        for result_type, payload in measurements:
+            result = result_type.from_service_payload(
+                payload,
+                run_id="source-run",
+                measurement_id="20261111T010203_feedface",
+            )
+            with self.subTest(result_type=result_type.__name__):
+                self.assertEqual(
+                    result.measurement_id, "20261111T010203_feedface"
+                )
+                self.assertEqual(
+                    result.to_dict()["measurement_id"], "20261111T010203_feedface"
+                )
+
+    def test_unknown_schema_is_still_rejected_with_an_identity(self):
+        with self.assertRaisesRegex(ValueError, "schema_version"):
+            measurement_result_from_document(_cable_document(schema_version="9.0"))
+
+    def test_new_results_need_identity_and_creation_time_before_saving(self):
+        """写入边界用 ``require_measurement_identity`` 强制新结果契约。"""
+        identity = "20261111T010203_0a1b2c3d"
+        for result_type in (
+            CableLossMeasurementResult,
+            DriverPowerMappingMeasurementResult,
+            AmplifierMeasurementResult,
+        ):
+            result = result_type(run_id="source-run", measurement_id=identity)
+            with self.subTest(result_type=result_type.__name__):
+                self.assertEqual(require_measurement_identity(result), identity)
+
+        legacy = _cable_document()
+        legacy.pop("measurement_id")
+        with self.assertRaisesRegex(ValueError, "measurement_id"):
+            require_measurement_identity(measurement_result_from_document(legacy))
+
+        without_created_at = CableLossMeasurementResult(
+            run_id="cable-run",
+            measurement_id="20261111T010203_0a1b2c3d",
+            created_at="  ",
+        )
+        with self.assertRaisesRegex(ValueError, "created_at"):
+            require_measurement_identity(without_created_at)
+
+        from application.dto import MeasurementResult
+
+        with self.assertRaisesRegex(ValueError, "正式测量结果 DTO"):
+            require_measurement_identity(
+                MeasurementResult(measurement_type="cable_loss", run_id="base-run")
+            )
 
 
 class NonFormalResultRejectionTests(unittest.TestCase):

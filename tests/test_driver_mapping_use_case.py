@@ -148,6 +148,8 @@ def _request(
     repository=None,
     stage_repository=None,
     frequencies=(1.0,),
+    loss_data=None,
+    cable_loss_path=None,
 ):
     configuration = {
         "test_frequencies": list(frequencies),
@@ -172,11 +174,44 @@ def _request(
         result_repository=repository or _Repository(),
         stage_result_repository=stage_repository or _StageRepository(),
         input_reader=reader or MappingInputReader(cable_loss=CABLE_LOSS),
+        cable_loss_path=cable_loss_path,
+        loss_data=loss_data,
         safety_options={"owns_measurement_port": True},
     )
 
 
 class DriverPowerMappingUseCaseTests(unittest.TestCase):
+    def test_explicit_cable_loss_path_replaces_the_run_reference(self):
+        """显式选择的线损直接作为输入来源，不读当前运行登记的引用。"""
+        reader = MappingInputReader(cable_loss=CABLE_LOSS)
+        recorder = RecordingStageRecorder("run-mapping")
+        selected = Path("test_results") / "cable_loss" / "20260101T000000Z_abcd.json"
+        use_case = DriverPowerMappingUseCase(
+            _request(
+                _Instrument(),
+                reader=reader,
+                recorder=recorder,
+                cable_loss_path=selected,
+            ),
+            sleep_fn=lambda _: None,
+        )
+
+        self.assertEqual(reader.paths, [selected])
+        self.assertEqual(use_case.loss_data, CABLE_LOSS)
+        self.assertEqual(recorder.verified, [])
+
+    def test_preloaded_loss_data_is_reused_without_reading_a_file(self):
+        """组合入口预检读取的线损文档直接复用，避免第二次读取与来源漂移。"""
+        reader = MappingInputReader(cable_loss=CABLE_LOSS)
+        preloaded = {"cable_losses": {"1.0": {"cable2": 2.0}}}
+        use_case = DriverPowerMappingUseCase(
+            _request(_Instrument(), reader=reader, loss_data=preloaded),
+            sleep_fn=lambda _: None,
+        )
+
+        self.assertIs(use_case.loss_data, preloaded)
+        self.assertEqual(reader.paths, [])
+
     def test_current_run_loss_input_completes_and_saves_result(self):
         instrument = _Instrument()
         events = _Events()

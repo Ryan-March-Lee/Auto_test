@@ -199,7 +199,9 @@ class DriverMappingPage(
         # 的嵌套事件循环返回后不会重新读取 self.controller。
         decision = self._start_facade.prepare(
             lambda: StartMeasurementRequest(
-                MeasurementKind.DRIVER_MAPPING, self._run_provider()
+                MeasurementKind.DRIVER_MAPPING,
+                self._run_provider(),
+                cable_loss_path=self._selected_cable_loss_path(),
             ),
             controller=self.controller,
             confirm_connection=self._confirm_start_connection,
@@ -247,6 +249,11 @@ class DriverMappingPage(
     def cable_loss_selection(self) -> StageResultSelection | None:
         """当前显式选择的线损结果；未选择时为 ``None``。"""
         return self._cable_loss_selection
+
+    def _selected_cable_loss_path(self) -> str | None:
+        """启动时冻结的线损来源；页面没有选择时为 ``None``（由页面先行拦下）。"""
+        selection = self._cable_loss_selection
+        return None if selection is None else selection.path
 
     def _sync_cable_loss_label(self) -> None:
         selection = self._cable_loss_selection

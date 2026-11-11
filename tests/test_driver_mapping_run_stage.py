@@ -260,6 +260,7 @@ class DriverMappingRunStageTests(unittest.TestCase):
         repository=None,
         recorder=None,
         stage_repository=None,
+        cable_loss_path=None,
     ):
         layout = self.repository.layout(run_id)
         instrument = instrument or _Instrument()
@@ -284,6 +285,7 @@ class DriverMappingRunStageTests(unittest.TestCase):
             stage_result_repository=stage_repository or self.stage_repository,
             stage_recorder=recorder or self._recorder(run_id),
             cancellation_token=token,
+            cable_loss_path=cable_loss_path,
             safety_options={"owns_measurement_port": True},
         )
 
@@ -621,6 +623,31 @@ class DriverMappingRunStageTests(unittest.TestCase):
         self.assertEqual(other_manifest.stage(STAGE_CABLE_LOSS).status, StageStatus.COMPLETED)
         self.assertFalse(
             (self.base / "runs" / RUN_ID / DRIVER_MAPPING_INPUT_PATH).exists()
+        )
+
+    def test_explicitly_selected_other_run_cable_loss_is_consumed(self):
+        """显式选择另一个运行的阶段结果是唯一的跨运行入口（步骤 14）。
+
+        没有显式路径时当前运行不会自动使用其它运行的数据（上一个用例）；显式选择
+        线损文件后按该路径读取，当前运行自己的线损阶段仍保持原状态。
+        """
+        self._create_run()
+        self._create_run(OTHER_RUN_ID)
+        self._complete_cable_loss(OTHER_RUN_ID)
+        selected = self._recorder(OTHER_RUN_ID).verified_result_path(STAGE_CABLE_LOSS)
+        instrument = _Instrument()
+
+        use_case = DriverPowerMappingUseCase(
+            self._request(instrument=instrument, cable_loss_path=selected),
+            sleep_fn=lambda _: None,
+        )
+
+        self.assertEqual(use_case.loss_data["cable_losses"], CABLE_LOSSES)
+        result = use_case.measure_all_frequencies()
+        self.assertEqual(result.run_id, RUN_ID)
+        self.assertEqual(
+            self.repository.load_manifest(RUN_ID).stage(STAGE_CABLE_LOSS).status,
+            StageStatus.PENDING,
         )
 
     def test_global_compatibility_result_is_not_used_as_input(self):

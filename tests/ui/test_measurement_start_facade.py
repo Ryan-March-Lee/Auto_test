@@ -101,6 +101,38 @@ class MeasurementStartFacadeTests(unittest.TestCase):
                 self.assertIs(command, decision.command)
                 self.assertTrue(hasattr(self.controller, method))
 
+    def test_ready_command_carries_the_selected_stage_inputs(self):
+        cable = Path("test_results") / "cable_loss" / "20260101T000000Z_abcd.json"
+        mapping = Path("test_results") / "driver_mapping" / "20260102T000000Z_ef01.json"
+        decision = self.facade.prepare(
+            lambda: StartMeasurementRequest(
+                MeasurementKind.AMPLIFIER,
+                _prepared_run(),
+                cable_loss_path=str(cable),
+                driver_mapping_path=mapping,
+            ),
+            controller=self.controller,
+            confirm_connection=lambda: True,
+        )
+
+        self.assertTrue(decision.ready)
+        self.assertEqual(decision.command.cable_loss_path, cable)
+        self.assertEqual(decision.command.driver_mapping_path, mapping)
+        self.assertIsInstance(decision.command.cable_loss_path, Path)
+        self.assertIsInstance(decision.command.driver_mapping_path, Path)
+
+    def test_blank_selected_paths_are_rejected_before_the_command(self):
+        with self.assertRaisesRegex(ValueError, "cable_loss_path"):
+            StartMeasurementRequest(
+                MeasurementKind.DRIVER_MAPPING,
+                _prepared_run(),
+                cable_loss_path="   ",
+            )
+        with self.assertRaisesRegex(ValueError, "driver_mapping_path"):
+            MeasurementCommand(
+                "config.json", _prepared_run(), driver_mapping_path=""
+            )
+
     def test_no_controller_is_silent_and_never_confirms(self):
         decision = self.facade.prepare(
             lambda: StartMeasurementRequest(

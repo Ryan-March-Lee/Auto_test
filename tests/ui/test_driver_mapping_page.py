@@ -1,5 +1,6 @@
 import os
 import unittest
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -132,6 +133,11 @@ class DriverMappingPageTests(unittest.TestCase):
         command = self.controller.calls[0][1]
         self.assertEqual(command.config_path, "config.json")
         self.assertIs(command.prepared_run, self.run)
+        self.assertEqual(
+            command.cable_loss_path,
+            Path("test_results") / "cable_loss" / "20261111T010203Z_a1b2c3d4.json",
+        )
+        self.assertIsNone(command.driver_mapping_path)
         self.assertEqual(self.clears, [True])
 
     def test_start_without_selected_cable_loss_does_not_connect_or_start(self):

@@ -210,7 +210,10 @@ class AmplifierPage(
         # 的嵌套事件循环返回后不会重新读取 self.controller。
         decision = self._start_facade.prepare(
             lambda: StartMeasurementRequest(
-                MeasurementKind.AMPLIFIER, self._run_provider()
+                MeasurementKind.AMPLIFIER,
+                self._run_provider(),
+                cable_loss_path=self._selected_cable_loss_path(),
+                driver_mapping_path=self._selected_driver_mapping_path(),
             ),
             controller=self.controller,
             confirm_connection=self._confirm_start_connection,
@@ -300,6 +303,21 @@ class AmplifierPage(
     def driver_mapping_selection(self) -> StageResultSelection | None:
         """当前显式选择的驱动映射结果；未选择时为 ``None``。"""
         return self._driver_mapping_selection
+
+    def _selected_cable_loss_path(self) -> str | None:
+        selection = self._cable_loss_selection
+        return None if selection is None else selection.path
+
+    def _selected_driver_mapping_path(self) -> str | None:
+        """只有驱动模式启用时才把驱动映射选择当成本次输入。
+
+        驱动关闭时页面上可能还留着旧选择；该模式下映射不参与测量，也不参与硬件前
+        校验，因此启动意图里保持 ``None``，避免把未使用的文件伪装成本次输入。
+        """
+        if not self._driver_mode_provider():
+            return None
+        selection = self._driver_mapping_selection
+        return None if selection is None else selection.path
 
     def _sync_cable_loss_label(self) -> None:
         selection = self._cable_loss_selection

@@ -1,5 +1,6 @@
 import os
 import unittest
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -136,6 +137,29 @@ class AmplifierPageTests(unittest.TestCase):
         self.assertEqual(command.config_path, "config.json")
         self.assertEqual(dict(command.options), {})
         self.assertIs(command.prepared_run, self.run)
+        self.assertEqual(
+            command.cable_loss_path,
+            Path("test_results") / "cable_loss" / "20261111T010203Z_a1b2c3d4.json",
+        )
+        self.assertEqual(
+            command.driver_mapping_path,
+            Path("test_results")
+            / "driver_mapping"
+            / "20261110T050607Z_0f1e2d3c.json",
+        )
+
+    def test_start_ignores_a_stale_mapping_selection_when_driver_is_disabled(self):
+        self._select_both_inputs()
+        self.page._driver_mode_provider = lambda: False
+
+        self.page.start_measurement()
+
+        command = self.controller.calls[0][1]
+        self.assertEqual(
+            command.cable_loss_path,
+            Path("test_results") / "cable_loss" / "20261111T010203Z_a1b2c3d4.json",
+        )
+        self.assertIsNone(command.driver_mapping_path)
 
     def test_missing_current_run_does_not_start_measurement(self):
         self._select_both_inputs()

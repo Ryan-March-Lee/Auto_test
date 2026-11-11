@@ -77,9 +77,9 @@ class MeasurementRequest:
     阶段 8 起驱动映射的正式结果正文写入独立阶段目录，运行目录只保存引用文档。
 
     ``cable_loss_path`` / ``driver_mapping_path`` 是用户在页面上显式选择的阶段结果
-    文件（步骤 13）。它们与 ``run_id`` 无关，也不会由运行目录推断；省略时保持
-    ``None``，后续步骤（14、15）在连接仪器前按该路径加载并校验输入。这里只负责让
-    请求清晰表达来源，并把空路径/非法类型挡在构造期。
+    文件。它们与 ``run_id`` 无关，也不会由运行目录推断；组装层在连接仪器前按该路径
+    加载并校验输入（步骤 14、15），省略时保持 ``None`` 并沿用运行引用兼容路径。
+    这里只负责让请求清晰表达来源，并把空路径/非法类型挡在构造期。
     """
 
     configuration: RunConfiguration
@@ -209,12 +209,22 @@ class CableLossMeasurementRequest(MeasurementRequest):
 class DriverPowerMappingRequest(MeasurementRequest):
     """Inputs for driver-power mapping.
 
-    ``cable_loss_path`` 是页面显式选择的线损结果文件；步骤 14 起用例按它加载，
-    省略时仍按当前运行登记的引用读取。
+    ``cable_loss_path`` 是页面显式选择的线损结果文件；``loss_data`` 是组装层在连接
+    仪器前按该路径加载、校验过的同一份线损文档。两者同时出现时用例直接复用
+    ``loss_data``，不再读文件；省略路径时仍按当前运行登记的引用读取。
     """
 
     measurement_type: MeasurementType | str = MeasurementType.DRIVER_POWER_MAPPING
     _expected_measurement_type: ClassVar[MeasurementType] = MeasurementType.DRIVER_POWER_MAPPING
+    # 组合入口预检读取的线损文档：与 cable_loss_path 指向同一份文件，避免二次读取。
+    loss_data: Mapping[str, Any] | None = field(default=None, kw_only=True)
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.loss_data is not None and not isinstance(self.loss_data, Mapping):
+            raise ValueError(
+                "DriverPowerMappingRequest.loss_data 必须是预检读取的线损文档（映射）"
+            )
 
 
 @dataclass(frozen=True)
@@ -246,8 +256,8 @@ class AmplifierMeasurementRequest(MeasurementRequest):
     ``calibration_inputs`` 是组合入口预检时已读取的同一份线损/驱动映射；省略时用例
     仍按当前运行目录读取，行为与旧调用方一致。
 
-    ``cable_loss_path`` / ``driver_mapping_path`` 是本步新增的显式校准输入来源；
-    步骤 15 起组合入口按它们加载并在连接仪器前完成结构校验，省略时保持运行目录兼容。
+    ``cable_loss_path`` / ``driver_mapping_path`` 是显式校准输入来源；组合入口按它们
+    加载并在连接仪器前完成结构、频率与目标网格校验，省略时保持运行目录兼容。
     """
 
     measurement_type: MeasurementType | str = MeasurementType.AMPLIFIER

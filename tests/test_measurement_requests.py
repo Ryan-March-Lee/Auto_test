@@ -10,6 +10,7 @@ from application.dto import (
     CableLossMeasurementRequest,
     CableLossMeasurementResult,
     DriverPowerMappingMeasurementResult,
+    DriverPowerMappingRequest,
     MeasurementResult,
     MeasurementStatus,
     MeasurementType,
@@ -425,6 +426,34 @@ class MeasurementRequestInputPathTests(unittest.TestCase):
                     self._request(cable_loss_path=value)
                 with self.assertRaisesRegex(ValueError, "driver_mapping_path"):
                     self._request(driver_mapping_path=value)
+
+
+class DriverMappingRequestLossDataTests(unittest.TestCase):
+    """组合入口预检读取的线损文档随请求交给用例，避免二次读取/来源漂移。"""
+
+    def _request(self, **overrides):
+        arguments = {
+            "configuration": {},
+            "context": SimpleNamespace(run_id="run-request"),
+            "run_directory": Path("runs") / "run-request",
+            "measurement_port": object(),
+            "stage_recorder": RecordingStageRecorder("run-request"),
+        }
+        arguments.update(overrides)
+        return DriverPowerMappingRequest(**arguments)
+
+    def test_loss_data_defaults_to_none(self):
+        self.assertIsNone(self._request().loss_data)
+
+    def test_loss_data_accepts_the_preloaded_document(self):
+        document = {"cable_losses": {"2.4": {"cable2": 1.0}}}
+        self.assertIs(self._request(loss_data=document).loss_data, document)
+
+    def test_loss_data_rejects_values_that_are_not_documents(self):
+        for value in (123, object(), ["cable_losses"]):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "loss_data"):
+                    self._request(loss_data=value)
 
 
 class RunContractSnapshotCheckTests(unittest.TestCase):

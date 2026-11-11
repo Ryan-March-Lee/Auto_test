@@ -11,8 +11,11 @@ Qt, worker implementation, persistence, VISA, or SCPI dependency.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Callable, Mapping, Protocol, runtime_checkable
+
+from application.dto.measurement_requests import coerce_input_path
 
 from .measurement_state import (
     MeasurementKind,
@@ -48,11 +51,17 @@ class MeasurementCommand:
     （:func:`presentation.qt.run_contract.is_valid_prepared_run` → 承载四项要求的
     ``has_run_contract``），缺少运行对象或运行对象不满足契约的命令都在构造期被拒绝，
     而不是留到底层再猜，也不接受“非空但不带契约”的替身。
+
+    ``cable_loss_path`` / ``driver_mapping_path`` 是页面在点击开始时冻结的显式校准
+    输入来源。命令只保存已规范化的路径，不读文件、不判断阶段归属；阶段目录边界、
+    正式结果契约与硬件前校验由应用组装层完成。
     """
 
     config_path: str
     prepared_run: Any
     options: Mapping[str, Any] = field(default_factory=dict)
+    cable_loss_path: Path | str | None = None
+    driver_mapping_path: Path | str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.config_path, str) or not self.config_path.strip():
@@ -67,6 +76,16 @@ class MeasurementCommand:
                 "运行仓储与 hardware_connection_path()）；请先创建或重新加载运行"
             )
         object.__setattr__(self, "options", _freeze(self.options))
+        object.__setattr__(
+            self,
+            "cable_loss_path",
+            coerce_input_path(self.cable_loss_path, "cable_loss_path"),
+        )
+        object.__setattr__(
+            self,
+            "driver_mapping_path",
+            coerce_input_path(self.driver_mapping_path, "driver_mapping_path"),
+        )
 
 
 @dataclass(frozen=True)

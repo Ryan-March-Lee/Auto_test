@@ -31,10 +31,12 @@ logger = logging.getLogger(__name__)
 class DriverPowerMappingUseCase:
     """Coordinate driver mapping with explicit inputs and stage-directory persistence.
 
-    只消费**当前运行**显式登记的线损输入 ``inputs/cable_loss.json``，并把完成的映射
-    结果写入独立阶段目录 ``test_results/driver_mapping/``；当前运行只会登记指向该
-    阶段文件的引用文档，不再保存同一正式结果的第二份副本。当前运行线损阶段未完成时
-    在硬件动作前失败。运行目录是唯一输入来源，绝不回退到按时间扫描的“最新结果”读取。
+    线损输入优先使用**页面显式选择的阶段结果文件**（请求中的 ``loss_data``/
+    ``cable_loss_path``），允许复用其它运行的线损结果；省略显式来源的旧调用方才
+    读取当前运行登记的 ``inputs/cable_loss.json``。已完成映射结果仍然写入独立阶段
+    目录 ``test_results/driver_mapping/``，当前运行只登记指向该阶段文件的引用文档。
+    线损输入缺失、损坏或阶段契约不满足时，都在硬件动作前失败；绝不回退到按时间
+    扫描的“最新结果”读取。
     """
 
     def __init__(
@@ -161,20 +163,25 @@ class DriverPowerMappingUseCase:
     # -- 运行契约：线损输入 ------------------------------------------------
 
     def _load_loss_data(self) -> Mapping[str, Any]:
-        """解析本次运行实际消费的线损输入。
+        """解析本次测量实际消费的线损输入。
 
-        当前运行 manifest 是唯一输入来源：通过
-        :meth:`RunStageRecorder.verified_result_path` 强制校验
-        ``inputs/cable_loss.json`` 已完成、已登记且校验值一致（步骤 7 起该文件是指向
-        ``test_results/cable_loss/`` 权威结果的引用，校验会跟随引用核对阶段文件），
-        绝不回退到全局兼容结果或扫描其它运行目录，因此另一个运行的线损数据不会被
-        自动使用，已被替换的输入也会被拒绝。
+        优先级固定且不推断：组合入口预检读取的 ``loss_data``（与显式选择路径指向
+        同一份文件）→ 请求中的显式 ``cable_loss_path`` → 当前运行 manifest 登记的
+        线损引用。前两者与 ``run_id`` 无关，因此可以使用其它运行产生的线损结果；
+        只有省略显式来源的旧调用方才走运行引用，并由
+        :meth:`RunStageRecorder.verified_result_path` 复核摘要。绝不按时间扫描其它
+        运行目录或“最新结果”。
 
-        该约束属于调用方的运行契约；``ResultInputReader`` 只读取调用方传入的显式
+        显式来源的归属由调用方负责；``ResultInputReader`` 只读取调用方传入的显式
         路径，不判断路径是否属于当前运行。
         """
         if self.input_reader is None:
             raise ValueError("DriverPowerMappingUseCase 必须注入 input_reader")
+        preloaded = self.request.loss_data
+        if preloaded is not None:
+            return preloaded
+        if self.request.cable_loss_path is not None:
+            return self.input_reader.read_cable_loss(self.request.cable_loss_path)
         return self.input_reader.read_cable_loss(
             self.stage_recorder.verified_result_path(STAGE_CABLE_LOSS)
         )

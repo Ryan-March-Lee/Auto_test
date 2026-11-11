@@ -142,6 +142,8 @@ class MeasurementController:
                 config_path,
                 command.prepared_run,
                 options=command.options,
+                cable_loss_path=command.cable_loss_path,
+                driver_mapping_path=command.driver_mapping_path,
             )
             worker = factory(effective_command, measurement_port=self._measurement_port)
             self._worker = worker

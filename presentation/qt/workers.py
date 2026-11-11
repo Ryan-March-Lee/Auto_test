@@ -274,12 +274,13 @@ class CableLossWorker(BaseWorker):
 
 
 class DriverMappingWorker(BaseWorker):
-    """装配并驱动驱动映射测量用例；运行契约是唯一输入。"""
+    """装配并驱动驱动映射测量用例；运行契约与显式线损来源是唯一输入。"""
 
     def __init__(
         self,
         *,
         prepared_run,
+        cable_loss_path=None,
         sleep_fn=None,
         measurement_port=None,
         measurement_factory=None,
@@ -289,6 +290,8 @@ class DriverMappingWorker(BaseWorker):
         self.measurement_port = measurement_port
         self.measurement_factory = measurement_factory
         self.prepared_run = prepared_run
+        # 页面在点击开始时冻结的显式线损来源；None 表示旧调用方走运行引用。
+        self.cable_loss_path = cable_loss_path
 
     def run(self) -> None:
         self._run_measurement("开始驱动功放映射测量...", "create_driver_mapping_measurement", "驱动映射测量")
@@ -307,6 +310,7 @@ class DriverMappingWorker(BaseWorker):
                     self._emit_stopped(self.stop_reason)
                     return
                 self._service = create_measurement(prepared_run=prepared,
+                    cable_loss_path=self.cable_loss_path,
                     progress_callback=self.signals.progress.emit, message_callback=self.signals.message.emit,
                     data_callback=self.signals.data_update.emit, sleep_fn=self.sleep_fn,
                     measurement_port=self.measurement_port)
@@ -332,12 +336,14 @@ class DriverMappingWorker(BaseWorker):
 
 
 class AmplifierWorker(BaseWorker):
-    """装配并驱动主功放测量用例；运行契约是唯一输入。"""
+    """装配并驱动主功放测量用例；运行契约与显式校准来源是唯一输入。"""
 
     def __init__(
         self,
         *,
         prepared_run,
+        cable_loss_path=None,
+        driver_mapping_path=None,
         sleep_fn=None,
         measurement_port=None,
         measurement_factory=None,
@@ -347,6 +353,9 @@ class AmplifierWorker(BaseWorker):
         self.measurement_port = measurement_port
         self.measurement_factory = measurement_factory
         self.prepared_run = prepared_run
+        # 页面在点击开始时冻结的显式校准来源；None 表示旧调用方走运行引用。
+        self.cable_loss_path = cable_loss_path
+        self.driver_mapping_path = driver_mapping_path
 
     def run(self) -> None:
         try:
@@ -362,6 +371,8 @@ class AmplifierWorker(BaseWorker):
                     self._emit_stopped(self.stop_reason)
                     return
                 self._service = create_measurement(prepared_run=prepared,
+                    cable_loss_path=self.cable_loss_path,
+                    driver_mapping_path=self.driver_mapping_path,
                     progress_callback=self.signals.progress.emit, message_callback=self.signals.message.emit,
                     data_callback=self.signals.data_update.emit, sleep_fn=self.sleep_fn,
                     measurement_port=self.measurement_port)

@@ -33,6 +33,7 @@ from application.measurements import (
     validate_amplifier_calibration_inputs,
 )
 from application.measurements.driver_target_grid import require_driver_target_grid
+from application.ports.stage_result_repository import MeasurementStage
 from application.run_service import (
     RunNotResumable,
     ensure_run_repository_supports_run_contract,
@@ -257,6 +258,43 @@ def _driver_mode_enabled(prepared_run: PreparedRun) -> bool:
     return bool(getattr(plan, "driver_enabled", False))
 
 
+def _verified_explicit_stage_path(
+    path: Path, stage: MeasurementStage, paths: PathService | None = None
+) -> Path:
+    """按阶段结果仓库校验用户显式选择的阶段文件。
+
+    显式路径与 ``run_id`` 无关，因此这里不读运行 manifest、不扫描目录，也不查找
+    “最新结果”。阶段目录边界、文件名身份、JSON、正式 DTO、类型与 ``completed``
+    状态全部由 :meth:`StageResultRepository.load` 一次校验；通过后返回仓库解析的
+    绝对路径，随后才能交给输入读取器。
+    """
+    repository = FileStageResultRepository(paths=paths or DEFAULT_PATHS)
+    return repository.load(stage, path).path
+
+
+def _preflight_driver_mapping_inputs(
+    prepared_run: PreparedRun,
+    input_reader: Any,
+    paths: PathService | None,
+    *,
+    cable_loss_path: Path | None,
+) -> Mapping[str, Any] | None:
+    """在连接仪器前确定驱动映射实际消费的线损输入。
+
+    ``cable_loss_path`` 是页面显式选择的阶段结果文件：先按阶段结果仓库校验边界与
+    正式结果契约，再按显式路径读取，因此显式选择不受“当前运行是否登记线损阶段”
+    影响。省略路径时保持旧调用方的运行引用读取（``verified_result_path()`` 会复核
+    manifest 摘要），返回 ``None`` 表示由用例按运行目录自行读取。
+    """
+    if cable_loss_path is None:
+        _require_stage_inputs(prepared_run, STAGE_CABLE_LOSS, paths=paths)
+        return None
+    verified = _verified_explicit_stage_path(
+        cable_loss_path, MeasurementStage.CABLE_LOSS, paths
+    )
+    return input_reader.read_cable_loss(verified)
+
+
 def _test_frequencies(prepared_run: PreparedRun) -> tuple[Any, ...]:
     """从已冻结运行配置中读取测试频率，供运行前输入结构校验使用。"""
     plan = getattr(prepared_run.configuration, "test_plan", None)
@@ -267,25 +305,39 @@ def _preflight_amplifier_inputs(
     prepared_run: PreparedRun,
     input_reader: Any,
     paths: PathService | None = None,
+    *,
+    cable_loss_path: Path | None = None,
+    driver_mapping_path: Path | None = None,
 ) -> AmplifierCalibrationInputs:
-    """在连接仪器前读取并校验主功放的当前运行校准输入。
+    """在连接仪器前读取并校验主功放的校准输入。
 
-    只从当前运行目录读取已校验的线损与（按需）驱动映射，再做结构校验，因此结构
-    无效的输入会在打开仪器或执行任何 RF 动作前失败。阶段结果引用文档由阶段记录器
-    解析回独立阶段目录并核对摘要，因此跨运行复用的权威结果仍会被验证。
+    显式路径（页面选择）优先：先按阶段结果仓库校验阶段目录边界与正式结果契约，
+    再按该路径读取，允许线损与驱动映射来自不同运行；省略某个路径时，该输入回退到
+    当前运行目录的已校验引用（``verified_result_path()`` 复核 manifest 摘要）。
+    驱动模式关闭时不读取驱动映射，因此 ``driver_mapping_path`` 在该模式下不参与校验。
 
     返回本次读取到的校准输入：调用方在构造正式输入后继续用它校验目标表与 DUT
     功率扫描计划是否逐点一致，并把同一个对象交给用例，正式测量因此不会重复读取
-    同一份运行文件，也不会消费与预检不同的对象。
+    同一份文件，也不会消费与预检不同的对象。
     """
     recorder = _stage_recorder(prepared_run, paths)
-    loss_data = input_reader.read_cable_loss(recorder.verified_result_path(STAGE_CABLE_LOSS))
+    if cable_loss_path is None:
+        loss_path = recorder.verified_result_path(STAGE_CABLE_LOSS)
+    else:
+        loss_path = _verified_explicit_stage_path(
+            cable_loss_path, MeasurementStage.CABLE_LOSS, paths
+        )
+    loss_data = input_reader.read_cable_loss(loss_path)
     driver_enabled = _driver_mode_enabled(prepared_run)
     driver_mapping = None
     if driver_enabled:
-        driver_mapping = input_reader.read_driver_mapping(
-            recorder.verified_result_path(STAGE_DRIVER_MAPPING)
-        )
+        if driver_mapping_path is None:
+            mapping_path = recorder.verified_result_path(STAGE_DRIVER_MAPPING)
+        else:
+            mapping_path = _verified_explicit_stage_path(
+                driver_mapping_path, MeasurementStage.DRIVER_MAPPING, paths
+            )
+        driver_mapping = input_reader.read_driver_mapping(mapping_path)
     validate_amplifier_calibration_inputs(
         loss_data,
         driver_mapping,
@@ -470,8 +522,9 @@ def create_driver_mapping_measurement(
     与其它测量工厂一样，本函数不解析、也不接收硬件配置路径，端口由
     :func:`connect_instruments` 按运行快照装配（D12）。
 
-    ``cable_loss_path`` 是页面选中的线损阶段结果文件。路径在连接仪器前完成类型与
-    空值校验，并原样进入请求；按显式路径加载与结构校验由步骤 14 接入用例。
+    ``cable_loss_path`` 是页面选中的线损阶段结果文件。路径在连接仪器前完成类型、
+    空值、阶段目录边界与正式结果校验，并按它读取本次消费的线损文档；省略时沿用
+    当前运行引用的兼容读取。
     """
     prepared_run = require_run_contract(prepared_run)
     # 显式输入来源先于任何快照校验/仪器连接确定：空路径或非法类型不会付出连接代价。
@@ -483,19 +536,27 @@ def create_driver_mapping_measurement(
     )
     owned_port = callbacks.get("measurement_port") is None
     try:
-        # 连接仪器前校验本次运行实际需要的线损输入：只从当前运行目录读取，缺失时不做
-        # 任何仪器连接或硬件动作；随后按领域/硬件两套职责分别校验冻结快照。
-        _require_stage_inputs(
-            prepared_run, STAGE_CABLE_LOSS, paths=callbacks.get("paths")
+        paths = callbacks.get("paths") or DEFAULT_PATHS
+        repository = callbacks.get("result_repository") or FileMeasurementResultRepository(
+            paths=paths
+        )
+        input_reader = callbacks.get("input_reader") or _input_reader_for(repository)
+        # 连接仪器前确定本次实际消费的线损：显式路径按阶段结果仓库校验并读取，
+        # 缺失/损坏输入不会付出连接代价；省略路径时沿用运行引用兼容读取。
+        loss_data = _preflight_driver_mapping_inputs(
+            prepared_run, input_reader, paths, cable_loss_path=cable_loss_path
         )
         _ensure_run_snapshots_are_intact(prepared_run)
         if owned_port:
             callbacks["measurement_port"] = connect_instruments(prepared_run)
         callbacks["owns_measurement_port"] = owned_port
-        callbacks.setdefault("result_repository", FileMeasurementResultRepository(paths=callbacks.get("paths") or DEFAULT_PATHS))
+        callbacks["result_repository"] = repository
+        callbacks["input_reader"] = input_reader
         callbacks.setdefault("event_sink", _CallbackEventSink(callbacks))
         request = DriverPowerMappingRequest(
-            **_request_kwargs(prepared_run, callbacks, cable_loss_path=cable_loss_path)
+            **_request_kwargs(prepared_run, callbacks, cable_loss_path=cable_loss_path),
+            # 预检读取并校验过的同一份线损文档：用例直接复用，不再二次读取。
+            loss_data=loss_data,
         )
         return DriverPowerMappingUseCase(request, sleep_fn=callbacks.get("sleep_fn"))
     except Exception:
@@ -519,8 +580,8 @@ def create_amplifier_measurement(
     :func:`connect_instruments` 按运行快照装配（D12）。
 
     ``cable_loss_path`` / ``driver_mapping_path`` 是页面选中的阶段结果文件。两个
-    路径在连接仪器前完成类型与空值校验，并原样进入请求；按显式路径加载与结构校验
-    由步骤 15 接入组合入口的预检。
+    路径在连接仪器前完成类型、空值、阶段目录边界与正式结果校验，并据此完成线损/
+    驱动映射的读取与结构校验；省略时保持当前运行引用的兼容读取。
     """
     prepared_run = require_run_contract(prepared_run)
     # 显式校准输入来源先于任何快照校验/仪器连接确定：空路径或非法类型不会付出连接代价。
@@ -543,7 +604,11 @@ def create_amplifier_measurement(
         # 结构无效或配置漂移都在打开仪器或执行任何 RF 动作前失败。随后按领域/硬件
         # 两套职责分别校验冻结快照。
         calibration_inputs = _preflight_amplifier_inputs(
-            prepared_run, input_reader, paths
+            prepared_run,
+            input_reader,
+            paths,
+            cable_loss_path=cable_loss_path,
+            driver_mapping_path=driver_mapping_path,
         )
         _ensure_run_snapshots_are_intact(prepared_run)
         # 正式输入模型在应用边界构造（技术债步骤 8）：非法配置在打开任何仪器之前

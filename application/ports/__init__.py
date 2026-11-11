@@ -29,6 +29,19 @@ from .run_history import (
     RunStageResultEntry,
 )
 from .run_repository import RunLayout, RunRepositoryPort
+from .stage_result_repository import (
+    LoadedStageResult,
+    MeasurementStage,
+    StageResultEntry,
+    StageResultError,
+    StageResultReference,
+    StageResultRepository,
+    coerce_measurement_stage,
+    measurement_stage_for_type,
+    measurement_type_for_stage,
+    require_stage_result,
+    require_stage_result_path,
+)
 from .types import PathLike
 
 __all__ = [
@@ -40,9 +53,11 @@ __all__ = [
     "ConfigurationRepository",
     "DeviceBindingPort",
     "GeneratedArtifact",
+    "LoadedStageResult",
     "MeasurementResultRepository",
     "MeasurementSessionBinding",
     "MeasurementSessionPort",
+    "MeasurementStage",
     "PathLike",
     "ResultArtifactGeneratorPort",
     "ResultInputReader",
@@ -56,5 +71,14 @@ __all__ = [
     "SafetyCleanupError",
     "SafetyCleanupPort",
     "SavedMeasurementResult",
+    "StageResultEntry",
+    "StageResultError",
+    "StageResultReference",
+    "StageResultRepository",
     "TestPlanRepository",
+    "coerce_measurement_stage",
+    "measurement_stage_for_type",
+    "measurement_type_for_stage",
+    "require_stage_result",
+    "require_stage_result_path",
 ]

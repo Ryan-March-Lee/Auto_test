@@ -1,4 +1,4 @@
-"""步骤 5：阶段结果原子保存适配器。
+"""步骤 5、6：阶段结果原子保存与显式加载适配器。
 
 覆盖：
 
@@ -7,9 +7,13 @@
 - 已有目标、损坏/非正式 DTO、阶段类型错配与非法身份都在写盘前失败；
 - 序列化、替换等写入失败不留下半份结果或临时文件；
 - 引用摘要/大小在发布前从暂存文件读取，发布后不再触碰文件系统；
-- 独占创建在“先检查后写入”的竞态下仍然拒绝覆盖。
-
-加载与列举不在本文件范围；本文件只验证保存边界。
+- 独占创建在“先检查后写入”的竞态下仍然拒绝覆盖；
+- 显式路径加载按“阶段目录边界 → 文件存在 → JSON → 正式 DTO → 类型/状态/身份”
+  校验，空路径、越界、损坏、错误类型、未完成和旧结果缺身份都被拒绝；
+- 越界路径即使文件名非法也先报告阶段目录边界错误；
+- 摘要/大小与解析使用同一份字节，重复加载稳定，文件变化后摘要随之变化；
+- 列举跳过损坏/未完成/类型不匹配文件，只返回 ``completed`` 结果并按保存时间倒序；
+- 极端但可解析的保存时间不会让列举失败，而是稳定排在末尾。
 """
 
 import hashlib
@@ -26,6 +30,7 @@ from application.dto import (
     CableLossMeasurementResult,
     DriverPowerMappingMeasurementResult,
     MeasurementResult,
+    MeasurementStatus,
     generate_measurement_id,
     measurement_result_from_document,
 )
@@ -344,6 +349,308 @@ class StageResultSaveTests(unittest.TestCase):
             sorted(entry.name for entry in first.path.parent.iterdir()),
             [first.path.name],
         )
+
+
+class StageResultLoadTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.paths = PathService(self.root)
+        self.repository = FileStageResultRepository(paths=self.paths)
+
+    def write_bytes(self, directory: Path, name: str, payload: bytes) -> Path:
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / name
+        path.write_bytes(payload)
+        return path
+
+    def write_document(self, directory: Path, identity: str, document) -> Path:
+        payload = json.dumps(document, ensure_ascii=False).encode("utf-8")
+        return self.write_bytes(directory, f"{identity}.json", payload)
+
+    def test_load_returns_the_saved_result_and_file_facts(self):
+        result = cable_loss_result()
+        saved = self.repository.save(MeasurementStage.CABLE_LOSS, result)
+
+        loaded = self.repository.load(MeasurementStage.CABLE_LOSS, saved.path)
+
+        self.assertEqual(loaded.result.to_dict(), result.to_dict())
+        self.assertEqual(loaded.path, saved.path)
+        self.assertEqual(loaded.measurement_id, result.measurement_id)
+        self.assertEqual(loaded.reference.stage, MeasurementStage.CABLE_LOSS)
+        self.assertEqual(loaded.sha256, saved.sha256)
+        self.assertEqual(loaded.size_bytes, saved.size_bytes)
+        self.assertEqual(
+            loaded.sha256, hashlib.sha256(saved.path.read_bytes()).hexdigest()
+        )
+
+    def test_each_stage_loads_its_own_formal_result(self):
+        cases = (
+            (MeasurementStage.CABLE_LOSS, cable_loss_result()),
+            (MeasurementStage.DRIVER_MAPPING, driver_mapping_result()),
+            (MeasurementStage.AMPLIFIER, amplifier_result()),
+        )
+
+        for stage, result in cases:
+            with self.subTest(stage=stage.value):
+                saved = self.repository.save(stage, result)
+                loaded = self.repository.load(stage, saved.path)
+
+                self.assertEqual(loaded.result.to_dict(), result.to_dict())
+                self.assertIs(loaded.reference.stage, stage)
+
+    def test_repeated_loads_are_stable(self):
+        saved = self.repository.save(
+            MeasurementStage.CABLE_LOSS, cable_loss_result()
+        )
+
+        first = self.repository.load(MeasurementStage.CABLE_LOSS, saved.path)
+        second = self.repository.load(MeasurementStage.CABLE_LOSS, saved.path)
+
+        self.assertEqual(first.reference, second.reference)
+        self.assertEqual(first.result.to_dict(), second.result.to_dict())
+
+    def test_reference_digest_changes_when_the_file_changes(self):
+        saved = self.repository.save(
+            MeasurementStage.CABLE_LOSS, cable_loss_result()
+        )
+        first = self.repository.load(MeasurementStage.CABLE_LOSS, saved.path)
+
+        saved.path.write_bytes(saved.path.read_bytes() + b"\n")
+        second = self.repository.load(MeasurementStage.CABLE_LOSS, saved.path)
+
+        self.assertEqual(second.result.to_dict(), first.result.to_dict())
+        self.assertNotEqual(second.sha256, first.sha256)
+        self.assertEqual(second.size_bytes, first.size_bytes + 1)
+        self.assertEqual(
+            second.sha256, hashlib.sha256(saved.path.read_bytes()).hexdigest()
+        )
+
+    def test_empty_path_is_rejected(self):
+        for value in (None, "", "   "):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(StageResultError, "不能为空"):
+                    self.repository.load(MeasurementStage.CABLE_LOSS, value)
+
+    def test_path_outside_the_stage_directory_is_rejected(self):
+        saved = self.repository.save(
+            MeasurementStage.AMPLIFIER, amplifier_result()
+        )
+
+        for stage, path in (
+            (MeasurementStage.CABLE_LOSS, saved.path),
+            (
+                MeasurementStage.CABLE_LOSS,
+                self.paths.cable_loss_results_dir
+                / ".."
+                / "amplifier"
+                / saved.path.name,
+            ),
+        ):
+            with self.subTest(stage=stage.value, path=str(path)):
+                with self.assertRaisesRegex(StageResultError, "阶段目录"):
+                    self.repository.load(stage, path)
+
+    def test_boundary_error_wins_over_invalid_filename(self):
+        outside = self.paths.test_results_dir / "notes.txt"
+
+        with self.assertRaisesRegex(StageResultError, "阶段目录"):
+            self.repository.load(MeasurementStage.CABLE_LOSS, outside)
+
+        inside = self.paths.cable_loss_results_dir / "notes.txt"
+        inside.parent.mkdir(parents=True, exist_ok=True)
+        inside.write_text("{}", encoding="utf-8")
+        with self.assertRaisesRegex(StageResultError, "文件名"):
+            self.repository.load(MeasurementStage.CABLE_LOSS, inside)
+
+    def test_missing_file_is_rejected_without_creating_the_directory(self):
+        path = self.paths.cable_loss_results_dir / f"{CABLE_ID}.json"
+
+        with self.assertRaisesRegex(StageResultError, "不存在"):
+            self.repository.load(MeasurementStage.CABLE_LOSS, path)
+
+        self.assertFalse(self.paths.cable_loss_results_dir.exists())
+
+    def test_corrupt_json_is_rejected(self):
+        directory = self.paths.cable_loss_results_dir
+        for name, payload in (
+            ("truncated", b'{"measurement_type": "cable_loss"'),
+            ("not json", b"not json at all"),
+            ("not utf8", b"\xff\xfe{}\x00"),
+            ("root list", b"[]"),
+            ("root null", b"null"),
+        ):
+            with self.subTest(name=name):
+                path = self.write_bytes(directory, f"{CABLE_ID}.json", payload)
+                with self.assertRaises(StageResultError):
+                    self.repository.load(MeasurementStage.CABLE_LOSS, path)
+
+    def test_result_type_that_belongs_to_another_stage_is_rejected(self):
+        path = self.write_document(
+            self.paths.cable_loss_results_dir,
+            AMPLIFIER_ID,
+            amplifier_result().to_dict(),
+        )
+
+        with self.assertRaisesRegex(StageResultError, "与阶段不符"):
+            self.repository.load(MeasurementStage.CABLE_LOSS, path)
+
+    def test_non_completed_result_is_rejected(self):
+        failed = cable_loss_result(
+            status=MeasurementStatus.FAILED, error="硬件断开"
+        )
+        path = self.write_document(
+            self.paths.cable_loss_results_dir, CABLE_ID, failed.to_dict()
+        )
+
+        with self.assertRaisesRegex(StageResultError, "completed"):
+            self.repository.load(MeasurementStage.CABLE_LOSS, path)
+
+    def test_legacy_run_result_without_measurement_identity_is_rejected(self):
+        legacy = cable_loss_result(identity=None)
+        self.assertNotIn("measurement_id", legacy.to_dict())
+        path = self.write_document(
+            self.paths.cable_loss_results_dir, CABLE_ID, legacy.to_dict()
+        )
+
+        with self.assertRaisesRegex(StageResultError, "measurement_id"):
+            self.repository.load(MeasurementStage.CABLE_LOSS, path)
+
+    def test_document_identity_must_match_the_file_name(self):
+        other_id = measurement_id("1234abcd")
+        document = cable_loss_result(identity=other_id).to_dict()
+        path = self.write_document(
+            self.paths.cable_loss_results_dir, CABLE_ID, document
+        )
+
+        with self.assertRaisesRegex(StageResultError, "measurement_id"):
+            self.repository.load(MeasurementStage.CABLE_LOSS, path)
+
+    def test_unsupported_schema_version_is_rejected(self):
+        document = driver_mapping_result().to_dict()
+        document["schema_version"] = "1.0"
+        path = self.write_document(
+            self.paths.driver_mapping_results_dir, DRIVER_ID, document
+        )
+
+        with self.assertRaises(StageResultError):
+            self.repository.load(MeasurementStage.DRIVER_MAPPING, path)
+
+    def test_unknown_stage_is_rejected(self):
+        with self.assertRaises(StageResultError):
+            self.repository.load("runs", self.paths.cable_loss_results_dir / "x.json")
+
+
+class StageResultListTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.paths = PathService(self.root)
+        self.repository = FileStageResultRepository(paths=self.paths)
+
+    def write_bytes(self, directory: Path, name: str, payload: bytes) -> Path:
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / name
+        path.write_bytes(payload)
+        return path
+
+    def write_document(self, directory: Path, identity: str, document) -> Path:
+        payload = json.dumps(document, ensure_ascii=False).encode("utf-8")
+        return self.write_bytes(directory, f"{identity}.json", payload)
+
+    def test_missing_directory_returns_empty_without_creating_it(self):
+        self.assertEqual(self.repository.list_results(MeasurementStage.AMPLIFIER), ())
+        self.assertFalse(self.paths.amplifier_results_dir.exists())
+
+    def test_lists_only_the_requested_stage_newest_first(self):
+        older = cable_loss_result(
+            identity=measurement_id("aaaa0001"),
+            created_at="2026-11-11T01:00:00+00:00",
+        )
+        newer = cable_loss_result(
+            identity=measurement_id("aaaa0002"),
+            created_at="2026-11-11T03:00:00+00:00",
+        )
+        self.repository.save(MeasurementStage.CABLE_LOSS, older)
+        self.repository.save(MeasurementStage.CABLE_LOSS, newer)
+        self.repository.save(MeasurementStage.AMPLIFIER, amplifier_result())
+
+        entries = self.repository.list_results(MeasurementStage.CABLE_LOSS)
+
+        self.assertEqual(
+            [entry.measurement_id for entry in entries],
+            [newer.measurement_id, older.measurement_id],
+        )
+        for entry in entries:
+            self.assertIs(entry.measurement_type, older.measurement_type)
+            self.assertIs(entry.status, MeasurementStatus.COMPLETED)
+            self.assertEqual(entry.run_id, RUN_ID)
+            self.assertEqual(
+                entry.sha256, hashlib.sha256(entry.path.read_bytes()).hexdigest()
+            )
+            self.assertEqual(entry.size_bytes, entry.path.stat().st_size)
+
+    def test_extreme_created_at_sorts_last_without_failing(self):
+        normal = cable_loss_result(
+            identity=measurement_id("cccc0001"),
+            created_at="2026-11-11T03:00:00+00:00",
+        )
+        extreme = cable_loss_result(
+            identity=measurement_id("cccc0002"),
+            created_at="0001-01-01T00:00:00",
+        )
+        self.repository.save(MeasurementStage.CABLE_LOSS, normal)
+        self.repository.save(MeasurementStage.CABLE_LOSS, extreme)
+
+        entries = self.repository.list_results(MeasurementStage.CABLE_LOSS)
+
+        self.assertEqual(
+            [entry.measurement_id for entry in entries],
+            [normal.measurement_id, extreme.measurement_id],
+        )
+
+    def test_skips_corrupt_incomplete_and_mismatched_files(self):
+        good = self.repository.save(
+            MeasurementStage.CABLE_LOSS, cable_loss_result()
+        )
+        directory = self.paths.cable_loss_results_dir
+        self.write_bytes(directory, f"{measurement_id('bbbb0001')}.json", b"{")
+        self.write_document(
+            directory,
+            measurement_id("bbbb0002"),
+            cable_loss_result(
+                identity=measurement_id("bbbb0002"),
+                status=MeasurementStatus.FAILED,
+                error="硬件断开",
+            ).to_dict(),
+        )
+        self.write_document(
+            directory,
+            measurement_id("bbbb0003"),
+            amplifier_result(identity=measurement_id("bbbb0003")).to_dict(),
+        )
+        self.write_bytes(directory, "notes.txt", b"not a result")
+        (directory / f"{measurement_id('bbbb0004')}.json").mkdir()
+
+        entries = self.repository.list_results(MeasurementStage.CABLE_LOSS)
+
+        self.assertEqual([entry.path for entry in entries], [good.path])
+
+    def test_legacy_stage_file_without_identity_is_not_listed(self):
+        directory = self.paths.cable_loss_results_dir
+        self.write_document(
+            directory,
+            CABLE_ID,
+            cable_loss_result(identity=None).to_dict(),
+        )
+
+        self.assertEqual(self.repository.list_results(MeasurementStage.CABLE_LOSS), ())
+
+    def test_unknown_stage_is_rejected(self):
+        with self.assertRaises(StageResultError):
+            self.repository.list_results("runs")
 
 
 if __name__ == "__main__":

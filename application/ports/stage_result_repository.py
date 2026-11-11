@@ -197,10 +197,11 @@ def require_stage_result_path(
 ) -> Path:
     """校验路径是阶段目录下的直接结果文件，返回解析后的绝对路径。
 
-    仓库实现用它落实“目录边界由仓库负责”的契约：路径不能为空、必须直接位于给定
-    阶段目录内、文件名必须是 ``<measurement_id>.json``。解析会展开符号链接，因此
-    指向阶段目录之外的文件同样被拒绝。校验通过后返回解析后的绝对路径，调用方随后
-    才能读取、计算摘要或核对文件大小。
+    仓库实现用它落实“目录边界由仓库负责”的契约：路径不能为空，随后先判断路径是否
+    直接位于给定阶段目录内，再检查文件名必须是 ``<measurement_id>.json``。解析会
+    展开符号链接，因此指向阶段目录之外的文件同样被拒绝，且越界错误不会被文件名
+    错误掩盖。校验通过后返回解析后的绝对路径，调用方随后才能读取、计算摘要或核对
+    文件大小。
     """
     target = coerce_measurement_stage(stage)
     if path is None or (isinstance(path, str) and not path.strip()):
@@ -218,16 +219,16 @@ def require_stage_result_path(
         root = directory.resolve()
     except OSError as error:
         raise StageResultError(f"阶段结果路径无法解析: {path!r}") from error
+    if resolved.parent != root:
+        raise StageResultError(
+            f"阶段结果路径必须直接位于 {target.value} 阶段目录: {path!r}"
+        )
     try:
         filename = validate_measurement_result_filename(resolved.name)
     except ValueError as error:
         raise StageResultError(
             f"阶段结果文件名非法: {resolved.name!r}: {error}"
         ) from error
-    if resolved.parent != root:
-        raise StageResultError(
-            f"阶段结果路径必须直接位于 {target.value} 阶段目录: {path!r}"
-        )
     if filename != resolved.name:  # pragma: no cover - 校验器已保证
         raise StageResultError(f"阶段结果文件名非法: {resolved.name!r}")
     return resolved

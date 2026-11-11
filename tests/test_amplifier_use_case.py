@@ -302,6 +302,52 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
             [path.name for path in reader.paths], ["cable_loss.json"]
         )
 
+    def test_replaced_explicit_driver_mapping_is_rejected_before_measurement(self):
+        """显式驱动映射在选择后被替换时，构造阶段就失败，不消费被替换的内容。"""
+        instrument = _Instrument()
+        reader = MappingInputReader(
+            cable_loss={"cable_losses": CABLE_LOSSES},
+            driver_mapping={"1.0": {"-20.0": -20.0}},
+        )
+        selected = (
+            Path("test_results")
+            / "driver_mapping"
+            / "20260102T000000Z_ef01.json"
+        )
+        digest = StageResultDigest(sha256="b" * 64, size_bytes=64)
+        loaded = SimpleNamespace(
+            sha256="c" * 64, size_bytes=64, path=selected, result=object()
+        )
+        loads = []
+
+        def load(stage, path):
+            loads.append((stage, path))
+            return loaded
+
+        request = replace(
+            _request(
+                instrument,
+                reader=reader,
+                stage_repository=SimpleNamespace(load=load),
+                driver_mapping_path=selected,
+                driver_mapping_digest=digest,
+            ),
+            inputs=amplifier_inputs(driver_enabled=True),
+        )
+
+        with self.assertRaisesRegex(StageInputUnavailable, "已被修改或替换"):
+            AmplifierMeasurementUseCase(request, sleep_fn=lambda _: None)
+
+        self.assertEqual(loads, [(MeasurementStage.DRIVER_MAPPING, selected)])
+        # 被替换的映射不会转成校准输入；线损仍按当前运行引用读取。
+        self.assertEqual(reader.results, [])
+        self.assertEqual(
+            [path.name for path in reader.paths], ["cable_loss.json"]
+        )
+        # 构造阶段的失败发生在任何仪器动作之前。
+        self.assertEqual(instrument.measured, 0)
+        self.assertEqual(instrument.close_calls, 0)
+
     def test_replaced_explicit_cable_loss_is_rejected_before_measurement(self):
         reader = MappingInputReader(cable_loss={"cable_losses": CABLE_LOSSES})
         selected = Path("test_results") / "cable_loss" / "20260101T000000Z_abcd.json"

@@ -13,6 +13,7 @@ from application.dto import (
 from application.measurements import AmplifierMeasurementUseCase
 from application.measurements.amplifier_test import AMPLIFIER_RESULT_PATH
 from application.dto.measurement_requests import StageResultDigest
+from application.ports.stage_result_repository import MeasurementStage
 from application.run_stages import StageInputUnavailable
 from domain.configuration.models import (
     RunConfiguration,
@@ -48,6 +49,9 @@ class _Instrument:
     def read_voltage(self, _name, _channel): return 10.0
     def read_current(self, _name, _channel): return 1.0
     def power_off_sequence(self): pass
+    def setup_driver_amplifier_power(self): pass
+    def power_on_driver(self): pass
+    def power_off_driver(self): pass
     def close_all(self, close_rf=False):
         self.close_calls += 1
         return []
@@ -252,6 +256,51 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
         self.assertIsNone(use_case.driver_mapping)
         self.assertEqual(reader.paths, [])
         self.assertEqual(reader.results, [("cable_loss", sentinel)])
+
+    def test_explicit_driver_mapping_path_is_used_without_preloaded_inputs(self):
+        """没有预检对象时，显式选择的驱动映射同样是校准输入的权威来源。"""
+        reader = MappingInputReader(
+            cable_loss={"cable_losses": CABLE_LOSSES},
+            driver_mapping={"1.0": {"-20.0": -20.0}},
+        )
+        selected = (
+            Path("test_results")
+            / "driver_mapping"
+            / "20260102T000000Z_ef01.json"
+        )
+        digest = StageResultDigest(sha256="b" * 64, size_bytes=64)
+        sentinel = object()
+        loaded = SimpleNamespace(
+            sha256="b" * 64, size_bytes=64, path=selected, result=sentinel
+        )
+        loads = []
+
+        def load(stage, path):
+            loads.append((stage, path))
+            return loaded
+
+        request = replace(
+            _request(
+                _Instrument(),
+                reader=reader,
+                stage_repository=SimpleNamespace(load=load),
+                driver_mapping_path=selected,
+                driver_mapping_digest=digest,
+            ),
+            inputs=amplifier_inputs(driver_enabled=True),
+        )
+
+        use_case = AmplifierMeasurementUseCase(request, sleep_fn=lambda _: None)
+
+        # 映射路径按驱动映射阶段重新加载并核对摘要；线损仍走当前运行引用。
+        self.assertEqual(loads, [(MeasurementStage.DRIVER_MAPPING, selected)])
+        self.assertEqual(
+            use_case.driver_mapping.raw_mapping(), {"1.0": {"-20.0": -20.0}}
+        )
+        self.assertEqual(reader.results, [("driver_mapping", sentinel)])
+        self.assertEqual(
+            [path.name for path in reader.paths], ["cable_loss.json"]
+        )
 
     def test_replaced_explicit_cable_loss_is_rejected_before_measurement(self):
         reader = MappingInputReader(cable_loss={"cable_losses": CABLE_LOSSES})

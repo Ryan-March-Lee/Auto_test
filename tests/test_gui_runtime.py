@@ -759,6 +759,73 @@ class ExplicitStageInputPreflightTests(unittest.TestCase):
         self.assertEqual(reader.paths, [])
         self.assertEqual([kind for kind, _ in reader.results], ["cable_loss", "driver_mapping"])
 
+    def test_amplifier_preflight_ignores_a_stale_mapping_path_without_driver_mode(self):
+        """驱动关闭时，页面上遗留的映射路径与摘要不参与预检，也不读取文件。"""
+        cable = Path("test_results") / "cable_loss" / "20260101T000000Z_abcd.json"
+        mapping = (
+            Path("test_results") / "driver_mapping" / "20260102T000000Z_ef01.json"
+        )
+        mapping_digest = StageResultDigest(sha256="d" * 64, size_bytes=1024)
+        reader = _RecordingInputReader(cable_loss=self.LOSS_DOCUMENT)
+        sentinel = object()
+        with patch(
+            "app.gui_runtime._stage_recorder",
+            return_value=self._recorder_that_must_not_be_read(),
+        ), patch("app.gui_runtime._driver_mode_enabled", return_value=False), patch(
+            "app.gui_runtime._load_explicit_stage_result",
+            return_value=SimpleNamespace(result=sentinel),
+        ) as load, patch(
+            "app.gui_runtime.validate_amplifier_calibration_inputs"
+        ) as validate:
+            inputs = _preflight_amplifier_inputs(
+                _prepared_run(),
+                reader,
+                None,
+                cable_loss_path=cable,
+                cable_loss_digest=self.DIGEST,
+                driver_mapping_path=mapping,
+                driver_mapping_digest=mapping_digest,
+            )
+
+        self.assertIsNone(inputs.driver_mapping)
+        load.assert_called_once_with(
+            cable,
+            MeasurementStage.CABLE_LOSS,
+            None,
+            digest=self.DIGEST,
+            label="线损",
+        )
+        # 无驱放只读取线损：既不加载映射阶段文件，也不把它转成校准输入。
+        self.assertEqual(reader.results, [("cable_loss", sentinel)])
+        self.assertEqual(reader.paths, [])
+        self.assertFalse(validate.call_args.kwargs["driver_enabled"])
+
+    def test_amplifier_preflight_falls_back_to_run_references_without_paths(self):
+        """省略显式来源的旧调用方仍按当前运行引用读取两类校准输入。"""
+        loss_path = (
+            Path("runs") / "run-assembly-test" / "inputs" / "cable_loss.json"
+        )
+        mapping_path = (
+            Path("runs") / "run-assembly-test" / "inputs" / "driver_mapping.json"
+        )
+        mapping_input = object()
+        reader = _RecordingInputReader(
+            cable_loss=self.LOSS_DOCUMENT, driver_mapping=mapping_input
+        )
+        verified = {STAGE_CABLE_LOSS: loss_path, STAGE_DRIVER_MAPPING: mapping_path}
+        recorder = SimpleNamespace(verified_result_path=verified.__getitem__)
+        with patch("app.gui_runtime._stage_recorder", return_value=recorder), patch(
+            "app.gui_runtime._driver_mode_enabled", return_value=True
+        ), patch("app.gui_runtime._load_explicit_stage_result") as load, patch(
+            "app.gui_runtime.validate_amplifier_calibration_inputs"
+        ):
+            inputs = _preflight_amplifier_inputs(_prepared_run(), reader, None)
+
+        load.assert_not_called()
+        self.assertIs(inputs.loss_data, self.LOSS_DOCUMENT)
+        self.assertIs(inputs.driver_mapping, mapping_input)
+        self.assertEqual(reader.paths, [loss_path, mapping_path])
+
     def test_driver_mapping_preflight_uses_the_explicit_loss_without_stage_registration(self):
         explicit = Path("test_results") / "cable_loss" / "20260101T000000Z_abcd.json"
         sentinel = object()

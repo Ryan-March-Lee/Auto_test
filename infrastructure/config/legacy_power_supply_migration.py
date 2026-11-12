@@ -722,8 +722,8 @@ def migrate_legacy_power_supplies(
     - ``device_bindings`` 只保留单设备角色，旧槽位键移除；能迁移的电源若旧绑定本身带身份
       （``source != legacy_config``），折进 ``power_supplies.<supply_id>``，只有地址的旧绑定
       一律丢弃并交由重新扫描；
-    - ``power_supply_assignment.<组>.power_supply_count`` 按该组仍能落地的引用数重算；
-      ``dut_config.power_supply_count`` 是测试方案里的现场参数，**不重算**（迁移不改测试方案）；
+    - ``power_supply_assignment.<组>.power_supply_count`` 随旧分配表一起删除；
+      ``dut_config.power_supply_count``（旧的“PA 单元数量”）已退役，迁移不再写出；
     - 正式 ``test_plan`` / ``run_mapping`` 由 authoring 从编辑段重新生成，迁移输出
       当前写入版本（``schema_version = 1.2``），不再保留 ``role`` / ``power_roles`` /
       ``power_channels`` / ``connection`` / ``dut_power_channels``。``runs/`` 下的历史快照
@@ -810,6 +810,7 @@ def migrate_legacy_power_supplies(
     unresolved = _unresolved_references(target)
     plan_candidates = _plan_candidates(target)
     _strip_power_assignments(target)
+    _strip_dut_supply_count(target)
     _strip_driver_power_source(target)
 
     authored = _author_migrated_document(target)
@@ -1665,6 +1666,17 @@ def _strip_power_assignments(target: Dict[str, Any]) -> None:
             continue
         group.pop("supplies", None)
         group.pop("power_supply_count", None)
+
+
+def _strip_dut_supply_count(target: Dict[str, Any]) -> None:
+    """删除已退役的 ``dut_config.power_supply_count``（旧的“PA 单元数量”）。
+
+    该值从不进入正式 ``test_plan``，新文档也不再写出；迁移输出是 1.2 文档，因此旧键
+    不再保留。读取旧配置时它只是被忽略的遗留字段。
+    """
+    dut_config = target.get("dut_config")
+    if isinstance(dut_config, dict):
+        dut_config.pop("power_supply_count", None)
 
 
 def _strip_driver_power_source(target: Dict[str, Any]) -> None:

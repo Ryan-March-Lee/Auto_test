@@ -66,7 +66,7 @@ def _document():
         "compression_point": {"type": "5dB"},
         "attenuator": {"type": "40dB"},
         "driver_mode": {"enabled": True},
-        "dut_config": {"max_input_power": 33.5, "power_supply_count": 1},
+        "dut_config": {"max_input_power": 33.5},
         "instruments": {
             "signal_generator": _instrument_entry(
                 "TCPIP0::192.168.1.201::inst0::INSTR",
@@ -167,7 +167,6 @@ class ConfigurationDraftModelTests(unittest.TestCase):
             attenuator=Decibels(40.0),
             max_dut_input_power=PowerDbm(33.5),
             driver_enabled=True,
-            dut_supply_count=1,
             dut_power_plan=PowerPlan(
                 power_sequence=(
                     SupplyChannel("PSA", "CH1"),
@@ -204,10 +203,6 @@ class ConfigurationDraftModelTests(unittest.TestCase):
     def test_type_and_uniqueness_checks_reject_programmer_errors(self):
         with self.assertRaises(TypeError):
             ConfigurationDraft(frequencies=(1.0,))  # 裸数值不是 Frequency
-        # 旧配置可能记录多于页面下拉框的电源数量：草稿只做结构校验，不改写旧值。
-        self.assertEqual(
-            ConfigurationDraft(dut_supply_count=5).dut_supply_count, 5
-        )
         with self.assertRaises(ValueError):
             ConfigurationDraft(
                 power_supplies=(
@@ -264,7 +259,6 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
         self.assertEqual(draft.attenuator, Decibels(40.0))
         self.assertEqual(draft.max_dut_input_power, PowerDbm(33.5))
         self.assertTrue(draft.driver_enabled)
-        self.assertEqual(draft.dut_supply_count, 1)
         self.assertEqual(
             draft.dut_channels,
             (SupplyChannel("PSA", "CH1"), SupplyChannel("PSA", "CH2")),
@@ -546,7 +540,7 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
         )
         self.assertEqual(
             document["dut_config"],
-            {"max_input_power": 33.5, "power_supply_count": 1},
+            {"max_input_power": 33.5},
         )
         self.assertEqual(
             document["power_supply_assignment"]["dut_amplifier"]["power_plan"][
@@ -714,7 +708,6 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
         self.assertIsNone(result.draft.compression_target)
         self.assertIsNone(result.draft.attenuator)
         self.assertIsNone(result.draft.max_dut_input_power)
-        self.assertIsNone(result.draft.dut_supply_count)
         self.assertIsNone(result.draft.driver_enabled)
         self.assertEqual(result.draft.dut_channels, ())
         self.assertEqual(result.draft.power_supplies, ())
@@ -739,7 +732,7 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
             "signal_source": {"start_power": -10.0, "stop_power": 0.0, "step": 0},
             "compression_point": {"type": "bad"},
             "attenuator": {"type": 40},
-            "dut_config": {"max_input_power": "30", "power_supply_count": "5"},
+            "dut_config": {"max_input_power": "30"},
             "driver_mode": {"enabled": "yes"},
             "instruments": {
                 "power_supplies": {
@@ -765,7 +758,6 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
         self.assertIn("configuration.invalid_decibels", by_code)
         self.assertIn("configuration.invalid_type", by_code)
         self.assertIn("configuration.invalid_number", by_code)
-        self.assertIn("configuration.invalid_dut_supply_count", by_code)
         self.assertIn("configuration.invalid_power_plan", by_code)
 
         # 非法值保持缺失状态，不用缺省测试频率或默认设备补齐。
@@ -774,7 +766,6 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
         self.assertIsNone(result.draft.compression_target)
         self.assertIsNone(result.draft.attenuator)
         self.assertIsNone(result.draft.max_dut_input_power)
-        self.assertIsNone(result.draft.dut_supply_count)
         self.assertIsNone(result.draft.driver_enabled)
         self.assertEqual(result.draft.dut_channels, ())
         channel = result.draft.power_supplies[0].channel("CH1")
@@ -835,19 +826,16 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
         explicit_channel = explicit.draft.power_supplies[0].channel("CH1")
         self.assertIs(explicit_channel.voltage_protection_enabled, False)
 
-    def test_dut_supply_count_rejects_non_integer_types(self):
-        for raw in (5.0, True, "5", [5]):
-            result = ConfigurationDraft.from_document(
-                {"dut_config": {"power_supply_count": raw}}
-            )
+    def test_retired_dut_supply_count_is_ignored(self):
+        """旧的 ``dut_config.power_supply_count`` 已退役：读取时忽略，也不再写出。"""
+        result = ConfigurationDraft.from_document(
+            {"dut_config": {"max_input_power": 30.0, "power_supply_count": "5"}}
+        )
 
-            self.assertFalse(result.valid, raw)
-            self.assertIn(
-                "configuration.invalid_dut_supply_count",
-                {issue.code for issue in result.issues},
-                raw,
-            )
-            self.assertIsNone(result.draft.dut_supply_count)
+        self.assertTrue(result.valid, result.messages())
+        self.assertNotIn(
+            "power_supply_count", result.draft.to_document()["dut_config"]
+        )
 
     def test_plan_of_wrong_type_is_reported(self):
         document = {
@@ -900,8 +888,8 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
             document_out["power_supply_assignment"]["dut_amplifier"],
         )
 
-    def test_existing_five_supply_fixture_is_read_without_rewriting_its_count(self):
-        """旧配置记录的电源数量可以大于页面下拉框范围；草稿保留原值，不套用页面默认值。"""
+    def test_existing_five_supply_fixture_keeps_every_supply(self):
+        """旧配置里已退役的 PA 单元数量被忽略，五台电源与漏极仍按原样读出。"""
         path = (
             Path(__file__).parents[1]
             / "tests"
@@ -913,7 +901,6 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
         result = ConfigurationDraft.from_document(document)
 
         self.assertTrue(result.valid, result.messages())
-        self.assertEqual(result.draft.dut_supply_count, 5)
         self.assertEqual(len(result.draft.power_supplies), 5)
         self.assertEqual(
             result.draft.dut_channels,

@@ -383,7 +383,6 @@ class ProductionDependencyTests(unittest.TestCase):
         }
         self.assertNotIn("create_power_supply_config", methods)
         self.assertNotIn("create_power_assignment_config", methods)
-        self.assertNotIn("on_pa_unit_count_changed", methods)
 
     def test_configuration_modules_do_not_depend_on_main_window(self):
         for path in (Path("presentation/qt/test_configuration_page.py"), Path("presentation/qt/config_form_state.py")):

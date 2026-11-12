@@ -989,6 +989,7 @@ class ConfigurationAuthoringServiceTests(unittest.TestCase):
         dut_block = document["power_supply_assignment"]["dut_amplifier"]
         self.assertNotIn("supplies", dut_block)
         self.assertNotIn("power_supply_count", dut_block)
+        self.assertNotIn("power_supply_count", document["dut_config"])
 
     def test_legacy_assignment_supplies_are_dropped(self):
         """旧编辑段的固定电源分配表只用于读取，保存后只保留上电计划。"""

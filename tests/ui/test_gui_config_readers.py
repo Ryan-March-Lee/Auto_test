@@ -391,7 +391,6 @@ class CoordinatorConfigBuildTests(unittest.TestCase):
         self.host.attenuator_combo = FakeComboWidget('30dB')
         self.host.test_mode_enabled = False
         self.host.max_input_power = FakeValueWidget(29.5)
-        self.host.pa_unit_count_combo = FakeComboWidget('2')
         self.host.power_config_widgets = {
             'DP8B1519': {
                 'channels': {
@@ -476,7 +475,7 @@ class CoordinatorConfigBuildTests(unittest.TestCase):
         result = self.coordinator.build_configuration_from_ui()
 
         self.assertEqual(result['dut_config']['max_input_power'], 29.5)
-        self.assertEqual(result['dut_config']['power_supply_count'], 2)
+        self.assertNotIn('power_supply_count', result['dut_config'])
         self.assertEqual(result['dut_config']['extra'], 'keep')
 
     def test_build_writes_the_dut_power_plan_as_read(self):
@@ -555,7 +554,7 @@ class CoordinatorConfigBuildTests(unittest.TestCase):
             self.coordinator.config['instruments']['signal_generator']['address'], 'sg-new'
         )
         self.assertEqual(self.coordinator.config['test_frequencies'], [1.0, 2.0])
-        self.assertEqual(self.coordinator.config['dut_config']['power_supply_count'], 2)
+        self.assertNotIn('power_supply_count', self.coordinator.config['dut_config'])
         # 配置页持有的副本必须与协调器一致。
         self.assertIs(self.coordinator.test_config_page.config, self.coordinator.config)
 

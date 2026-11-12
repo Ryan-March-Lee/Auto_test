@@ -22,23 +22,6 @@ class _Text:
         return self.value
 
 
-def _combo(value):
-    """电源分配下拉框的替身：可见文本与真实控件一样，业务值放在 ``itemData``。
-
-    真实控件显示 ``短标签（型号）``，``itemData`` 才是 ``supply_id``；替身省略显示标签，
-    但同样只通过 ``itemData`` 读出业务值（只给 ``currentText`` 的替身按未选择处理）。
-    """
-    return type(
-        "C",
-        (),
-        {
-            "currentText": lambda self: value or "",
-            "currentIndex": lambda self: 0 if value else -1,
-            "itemData": lambda self, index: value if value else None,
-        },
-    )()
-
-
 def _form_widgets(**attributes):
     """电源相关字段之外的一组合法读数控件。
 
@@ -57,7 +40,6 @@ def _form_widgets(**attributes):
     widgets.power_step = type("V", (), {"value": lambda self: 1.0})()
     widgets.driver_gain = _Text("")
     widgets.max_input_power = type("V", (), {"value": lambda self: 30.0})()
-    widgets.pa_unit_count_combo = type("C", (), {"currentText": lambda self: "1"})()
     widgets.compression_combo = type("C", (), {"currentText": lambda self: "5dB"})()
     widgets.attenuator_combo = type("C", (), {"currentText": lambda self: "30dB"})()
     widgets.test_mode_enabled = False
@@ -236,7 +218,6 @@ class ConfigFormStateTests(unittest.TestCase):
         widgets.compression_combo = type("C", (), {"currentText": lambda self: "5dB"})()
         widgets.attenuator_combo = type("C", (), {"currentText": lambda self: "30dB"})()
         widgets.max_input_power = type("V", (), {"value": lambda self: 30})()
-        widgets.pa_unit_count_combo = type("C", (), {"currentText": lambda self: "1"})()
         widgets.power_config_widgets = {}
         # 仪器连接只来自设备发现结果：绑定记录就是唯一的地址来源，界面没有地址控件。
         widgets.device_bindings = {
@@ -395,7 +376,6 @@ class ConfigFormStateTests(unittest.TestCase):
         """??????? ``power_plan``???????????? ``supplies``?"""
         widgets = _form_widgets(
             power_config_widgets={},
-            pa_unit_count_combo=_combo("1"),
             driver_power_plan_editor=_PlanEditor(
                 [("DP8B0950", "CH1")]
             ),
@@ -506,7 +486,6 @@ class _FormWidgets:
         self.max_input_power = type("V", (), {"value": lambda self: 30.0})()
         self.compression_combo = type("C", (), {"currentText": lambda self: "5dB"})()
         self.attenuator_combo = type("C", (), {"currentText": lambda self: "30dB"})()
-        self.pa_unit_count_combo = _combo("1")
         self.test_mode_enabled = test_mode_enabled
         self.device_bindings = bindings
         self.power_config_widgets = {

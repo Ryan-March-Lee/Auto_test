@@ -605,10 +605,10 @@ class ReferenceRewriteTests(unittest.TestCase):
             {"power_plan"},
             "旧 supplies 字段不进入 1.1 文档",
         )
-        self.assertEqual(
-            result.config["dut_config"]["power_supply_count"],
-            1,
-            "dut_config 是测试方案参数，迁移不改测试方案",
+        self.assertNotIn(
+            "power_supply_count",
+            result.config["dut_config"],
+            "已退役的 PA 单元数量不进入迁移输出",
         )
 
     def test_run_mapping_stays_empty_until_the_plan_is_confirmed(self):

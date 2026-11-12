@@ -161,7 +161,6 @@ def _page(
     page.max_input_power = _Value(30.0)
     page.compression_combo = _Combo(("1dB", "3dB", "5dB"))
     page.attenuator_combo = _Combo(("30dB", "40dB"))
-    page.pa_unit_count_combo = _Combo(("1", "2", "3"))
     page.test_mode_enabled = False
     page.power_config_widgets = {}
     return page
@@ -209,7 +208,6 @@ class ConfigurationFormAdapterReadTests(unittest.TestCase):
 
         self.assertEqual([frequency.ghz for frequency in parameters.frequencies], [1.0])
         self.assertEqual(parameters.compression_target.db, 3.0)
-        self.assertEqual(parameters.dut_supply_count, 1)
 
     def test_invalid_frequency_is_not_replaced_by_the_previous_reading(self):
         page = _page({"test_frequencies": [9.9]}, extra="not-a-frequency")
@@ -320,7 +318,7 @@ class ConfigurationFormAdapterWriteTests(unittest.TestCase):
                 "compression_point": {"type": "3dB"},
                 "attenuator": {"type": "30dB"},
                 "driver_mode": {"enabled": False},
-                "dut_config": {"max_input_power": 20.0, "power_supply_count": 2},
+                "dut_config": {"max_input_power": 20.0},
             }
         )
 
@@ -330,7 +328,6 @@ class ConfigurationFormAdapterWriteTests(unittest.TestCase):
         self.assertEqual(page.freq_step.value(), 0.4)
         self.assertEqual(page.freq_extra.text(), "")
         self.assertEqual(page.compression_combo.currentText(), "3dB")
-        self.assertEqual(page.pa_unit_count_combo.currentText(), "2")
         self.assertEqual(adapter.read_configuration()["test_frequencies"], [3.5])
 
     def test_read_power_channel_snapshot_returns_the_supplies_mapping(self):

@@ -65,7 +65,6 @@ _CODE_INVALID_NUMBER = "configuration.invalid_number"
 _CODE_INVALID_FREQUENCY = "configuration.invalid_frequency"
 _CODE_INVALID_SWEEP = "configuration.invalid_sweep"
 _CODE_INVALID_DECIBELS = "configuration.invalid_decibels"
-_CODE_INVALID_DUT_SUPPLY_COUNT = "configuration.invalid_dut_supply_count"
 _CODE_INVALID_BINDING = "configuration.invalid_binding"
 _CODE_LEGACY_BINDING = "configuration.legacy_binding"
 _CODE_INVALID_ASSIGNMENT = "configuration.invalid_power_plan"
@@ -108,16 +107,6 @@ def _optional_bool(value: Any, label: str) -> bool | None:
     if not isinstance(value, bool):
         raise TypeError(
             f"{label} 必须是布尔值或 None，收到 {type(value).__name__}"
-        )
-    return value
-
-
-def _optional_int(value: Any, label: str) -> int | None:
-    if value is None:
-        return None
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise TypeError(
-            f"{label} 必须是整数或 None，收到 {type(value).__name__}"
         )
     return value
 
@@ -413,8 +402,6 @@ class ConfigurationDraft:
     driver_enabled: bool | None = None
     # 驱动功放全局预估增益（dB）；None 表示尚未填写，不折叠成 0。
     driver_gain_estimate: Decibels | None = None
-    # 测试方案现场参数（页面下拉框），不驱动电源分配；缺失时写出阶段按 DUT 计划路由数回退。
-    dut_supply_count: int | None = None
     # 漏极只供效率计算读取，不参与排序/间隔/启停；空元组表示未配置。
     # 可以有多条：运行阶段把每条漏极的直流功率相加。
     drain_channels: tuple[SupplyChannel, ...] = ()
@@ -457,13 +444,6 @@ class ConfigurationDraft:
         )
         _require_optional(
             self.driver_gain_estimate, Decibels, "驱动功放预估增益"
-        )
-        # 数量只做结构校验：页面提供 1–3 的下拉框，但旧配置可能记录更多电源，
-        # 草稿不在这里复制范围规则，也不把旧值改写成页面默认值。
-        object.__setattr__(
-            self,
-            "dut_supply_count",
-            _optional_int(self.dut_supply_count, "PA 单元数量"),
         )
         drain_channels = _tuple_of(self.drain_channels, SupplyChannel, "漏极通道")
         object.__setattr__(self, "drain_channels", drain_channels)
@@ -546,7 +526,6 @@ class ConfigurationDraft:
             document.get("attenuator"), "attenuator.type", issues
         )
         max_dut_input_power = _read_max_input_power(document.get("dut_config"), issues)
-        dut_supply_count = _read_dut_supply_count(document.get("dut_config"), issues)
         drain_channels = _read_drain_channels(document.get("dut_config"), issues)
         driver_enabled = _read_driver_mode(document.get("driver_mode"), issues)
         driver_gain_estimate = _read_driver_gain(
@@ -568,7 +547,6 @@ class ConfigurationDraft:
             max_dut_input_power=max_dut_input_power,
             driver_enabled=driver_enabled,
             driver_gain_estimate=driver_gain_estimate,
-            dut_supply_count=dut_supply_count,
             drain_channels=drain_channels,
             dut_power_plan=dut_power_plan,
             driver_power_plan=driver_power_plan,
@@ -586,20 +564,12 @@ class ConfigurationDraft:
         正式段由配置编写服务补齐，现场接线由阶段开始前的连接确认负责。缺失值写成
         ``None`` / 空集合，让后续校验明确报告，而不是在这里补默认值。
         """
-        count = (
-            self.dut_supply_count
-            if self.dut_supply_count is not None
-            else len(self.dut_channels)
-        )
-        # ``power_supply_count`` 只是测试方案现场参数：固定分配表删除后没有“PA 单元槽位”
-        # 可数，缺失时按 DUT 计划路由数回退，仅供页面下拉框显示，不参与校验或正式 schema。
         dut_config = {
             "max_input_power": (
                 self.max_dut_input_power.dbm
                 if self.max_dut_input_power is not None
                 else None
             ),
-            "power_supply_count": count,
         }
         if self.drain_channels:
             documents = [route.to_document() for route in self.drain_channels]
@@ -1025,31 +995,6 @@ def _read_max_input_power(
             _issue("dut_config.max_input_power", _CODE_INVALID_NUMBER, str(error))
         )
         return None
-
-
-def _read_dut_supply_count(
-    value: Any, issues: list[ValidationIssue]
-) -> int | None:
-    if value is None:
-        return None
-    section = _mapping(value, "dut_config", issues)
-    if not section:
-        return None
-    raw = section.get("power_supply_count")
-    if raw is None:
-        return None
-    # 只接受整数：``5.0`` 或 ``"5"`` 说明写入方的类型已经错了，草稿不能顺手把它
-    # 修成看起来合法的值。范围规则（页面的 1–3）仍归正式校验，不在这里复制。
-    if isinstance(raw, bool) or not isinstance(raw, int):
-        issues.append(
-            _issue(
-                "dut_config.power_supply_count",
-                _CODE_INVALID_DUT_SUPPLY_COUNT,
-                "PA 单元数量必须是整数",
-            )
-        )
-        return None
-    return raw
 
 
 def _read_drain_channels(

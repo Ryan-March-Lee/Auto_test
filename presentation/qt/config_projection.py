@@ -72,7 +72,6 @@ DEFAULT_DRIVER_MODE_ENABLED = True
 # 驱动功放预估增益的空配置基线：空文本表示“尚未填写”，不是 0 dB。
 DEFAULT_DRIVER_GAIN_ESTIMATE = ""
 DEFAULT_MAX_INPUT_POWER = 33.5
-DEFAULT_PA_UNIT_COUNT = "2"
 # 电源通道的空配置基线：重置时把工作值/保护值填成它，卡片输入框也把非法或缺失的字段
 # 显示成它（见 :func:`presentation.qt.power_card.PowerSupplyCard.set_data`），因此“没写
 # 这个字段”与“字段类型不对”在页面上是同一个显示值，规则只有一处。
@@ -267,7 +266,6 @@ def reset_control_widgets(widgets: Any) -> None:
     widgets.test_mode_enabled = DEFAULT_DRIVER_MODE_ENABLED
     widgets.driver_gain.setText(DEFAULT_DRIVER_GAIN_ESTIMATE)
     widgets.max_input_power.setValue(DEFAULT_MAX_INPUT_POWER)
-    set_combo(widgets.pa_unit_count_combo, DEFAULT_PA_UNIT_COUNT)
     # 计划重置放在上限之后：页面重建行时会按 DUT 上限刷新预览，先用新上限才能得到
     # 与回填后一致的灰色点位文本。
     reset_power_scan_fields(widgets)
@@ -379,7 +377,6 @@ def _apply_test_parameter_widgets(widgets: Any, config: Mapping[str, Any]) -> No
     value = number_or_none(dut.get("max_input_power"))
     if value is not None:
         widgets.max_input_power.setValue(value)
-    set_combo(widgets.pa_unit_count_combo, dut.get("power_supply_count"))
 
 
 def _apply_power_supply_widgets(widgets: Any, instruments: Any) -> None:
@@ -433,7 +430,6 @@ __all__ = [
     "DEFAULT_FREQUENCY_STEP",
     "DEFAULT_FREQUENCY_STOP",
     "DEFAULT_MAX_INPUT_POWER",
-    "DEFAULT_PA_UNIT_COUNT",
     "DEFAULT_POWER_CHANNEL_VALUE",
     "DEFAULT_POWER_SCAN_PLAN",
     "DEFAULT_SIGNAL_SOURCE",

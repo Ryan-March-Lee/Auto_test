@@ -1253,7 +1253,6 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         self.assertEqual(page.attenuator_combo.currentText(), "40dB")
         self.assertTrue(page.driver_mode_requested())
         self.assertEqual(page.max_input_power.value(), 33.5)
-        self.assertEqual(page.pa_unit_count_combo.currentText(), "2")
         # 没有任何已绑定/已保存的电源：电源分配不再提供可选项（旧界面默认的 PS1/PS2
         # 来自已被移除的“启用”勾选框，不再是连接来源）。
         self.assertEqual(power.get_enabled_power_supplies(), [])
@@ -1268,7 +1267,7 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
             "compression_point": {"type": "3dB"},
             "attenuator": {"type": "30dB"},
             "driver_mode": {"enabled": True},
-            "dut_config": {"max_input_power": 25.5, "power_supply_count": 3},
+            "dut_config": {"max_input_power": 25.5},
             "instruments": {
                 "signal_generator": {"address": "sim::sg2", "enabled": False},
                 "spectrum_analyzer": {"address": "sim::sa2", "enabled": True},
@@ -1357,7 +1356,6 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         self.assertEqual(page.attenuator_combo.currentText(), "30dB")
         self.assertTrue(page.driver_mode_requested())
         self.assertEqual(page.max_input_power.value(), 25.5)
-        self.assertEqual(page.pa_unit_count_combo.currentText(), "3")
         built = page.build_config()["instruments"]
         # 设备未启用（enabled False）时没有绑定，地址不会留在配置里。
         self.assertNotIn("address", built["signal_generator"])
@@ -1417,9 +1415,6 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         self.assertEqual(
             page.compression_combo.currentText(), rebuilt.compression_combo.currentText()
         )
-        self.assertEqual(
-            page.pa_unit_count_combo.currentText(), rebuilt.pa_unit_count_combo.currentText()
-        )
         self.assertFalse(page.driver_mode_requested())
         # 回填结果必须与直接用同一份文档构造的页面完全一致（含仪器连接信息）。
         self.assertEqual(page.build_config(), rebuilt.build_config())
@@ -1447,7 +1442,7 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         payload = {
             "test_frequencies": ["invalid"],
             "driver_mode": {"enabled": "false"},
-            "dut_config": {"power_supply_count": True, "max_input_power": "30"},
+            "dut_config": {"max_input_power": "30"},
             "instruments": {
                 "signal_generator": {"address": None, "enabled": "false"},
                 "power_supplies": {
@@ -1477,7 +1472,6 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         self.assertEqual(page.freq_stop.value(), 5.6)
         self.assertEqual(page.freq_step.value(), 0.4)
         self.assertEqual(page.freq_extra.text(), "5.8")
-        self.assertEqual(page.pa_unit_count_combo.currentText(), "2")
         self.assertEqual(page.max_input_power.value(), 33.5)
         channel = power.power_config_widgets["PS1"]["channels"]["CH1"]
         self.assertEqual(channel["voltage"].value(), 0.0)
@@ -1875,11 +1869,12 @@ class MultiPlanGuiToMeasurementFlowTests(unittest.TestCase):
             [-40.0] + [value + 1.0 for value in self.TARGETS],
         )
 
-        saved = json.loads(
+        pointer = json.loads(
             (prepared.run_directory / AMPLIFIER_RESULT_PATH).read_text(
                 encoding="utf-8"
             )
         )
+        saved = json.loads(Path(pointer["path"]).read_text(encoding="utf-8"))
         self.assertEqual(
             saved["results"]["2.4"]["sweep_data"]["input_power_dut"],
             list(self.TARGETS),
@@ -1967,11 +1962,12 @@ class MultiPlanGuiToMeasurementFlowTests(unittest.TestCase):
         self.assertEqual(sweep["input_power_dut"], driver_outputs)
         self.assertEqual(instrument.powers, [-40.0] + list(sources))
 
-        saved = json.loads(
+        pointer = json.loads(
             (frozen.run_directory / AMPLIFIER_RESULT_PATH).read_text(
                 encoding="utf-8"
             )
         )
+        saved = json.loads(Path(pointer["path"]).read_text(encoding="utf-8"))
         saved_sweep = saved["results"]["2.4"]["sweep_data"]
         self.assertEqual(tuple(saved_sweep["sg_power"]), sources)
         self.assertEqual(

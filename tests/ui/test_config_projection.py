@@ -18,7 +18,6 @@ from presentation.qt.config_projection import (
     DEFAULT_FREQUENCY_STEP,
     DEFAULT_FREQUENCY_STOP,
     DEFAULT_MAX_INPUT_POWER,
-    DEFAULT_PA_UNIT_COUNT,
     DEFAULT_POWER_CHANNEL_VALUE,
     DEFAULT_POWER_SCAN_PLAN,
     DEFAULT_SIGNAL_SOURCE,
@@ -181,7 +180,6 @@ class FakeForm:
         self.max_input_power = _Value()
         self.compression_combo = _Combo(("1dB", "3dB", "5dB"))
         self.attenuator_combo = _Combo(("30dB", "40dB"))
-        self.pa_unit_count_combo = _Combo(("1", "2", "3"))
         self.test_mode_enabled = False
         self.power_config_widgets = {
             name: {
@@ -281,7 +279,6 @@ class ConfigProjectionTests(unittest.TestCase):
         self.assertIsNone(form.frequency_import_error)
         self.assertEqual(form.start_power.value(), -30.0)
         self.assertEqual(form.compression_combo.currentText(), "3dB")
-        self.assertEqual(form.pa_unit_count_combo.currentText(), "3")
         channel = form.power_config_widgets["DP8B1519"]["channels"]["CH1"]
         self.assertNotIn("role", channel, "1.1 电源通道不再有供电角色控件")
         self.assertEqual(channel["voltage"].value(), 3.3)
@@ -494,7 +491,6 @@ class ConfigProjectionTests(unittest.TestCase):
         self.assertEqual(form.driver_gain.text(), DEFAULT_DRIVER_GAIN_ESTIMATE)
         self.assertEqual(form.compression_combo.currentText(), DEFAULT_COMPRESSION_TYPE)
         self.assertEqual(form.attenuator_combo.currentText(), DEFAULT_ATTENUATOR_TYPE)
-        self.assertEqual(form.pa_unit_count_combo.currentText(), DEFAULT_PA_UNIT_COUNT)
         self.assertEqual(form.max_input_power.value(), DEFAULT_MAX_INPUT_POWER)
 
     def test_non_uniform_frequencies_are_loaded_as_an_error_state(self):

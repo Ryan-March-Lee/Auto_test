@@ -529,10 +529,14 @@ class ConfigFormState:
             config["power_supply_assignment"] = assignment["power_supply_assignment"]
         elif not _dict_copy(config.get("driver_mode")).get("enabled"):
             _clear_driver_power_plan(config)
+        dut = config.get("dut_config")
+        if isinstance(dut, dict):
+            # 已退役的 PA 单元数量不再由页面写回；基线里的旧键也在这里清掉，避免继续落盘。
+            dut.pop("power_supply_count", None)
         if callable(getattr(self.widgets, "read_drain_channels", None)):
-            dut = _dict_copy(config.get("dut_config"))
-            dut["drain_channel"] = self._drain_channel_document()
-            config["dut_config"] = dut
+            updated = _dict_copy(dut)
+            updated["drain_channel"] = self._drain_channel_document()
+            config["dut_config"] = updated
         return config
 
     def power_validation_errors(self, base: Mapping[str, Any] | None = None) -> list[str]:
@@ -565,7 +569,8 @@ class ConfigFormState:
         )
         dut = _dict_copy(config.get("dut_config"))
         dut["max_input_power"] = self._value(w.max_input_power)
-        dut["power_supply_count"] = int(self._current(w.pa_unit_count_combo))
+        # 已退役的 PA 单元数量不再由页面写回；基线里的旧键也在这里清掉，避免继续落盘。
+        dut.pop("power_supply_count", None)
         if callable(getattr(w, "read_drain_channels", None)):
             dut["drain_channel"] = self._drain_channel_document()
         config["dut_config"] = dut

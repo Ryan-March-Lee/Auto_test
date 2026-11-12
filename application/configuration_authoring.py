@@ -540,13 +540,17 @@ def _strip_legacy_editing_fields(document: dict[str, Any]) -> None:
 
     1.1 不再给器件固定分配电源：``power_supply_assignment.<组>.supplies`` 与
     ``power_supply_count`` 只属于旧编辑段，上电计划才是唯一来源；通道 ``role`` 也只
-    属于 1.0 读取兼容。驱放供电方式（``driver_mode.power_source``）同理已退役：计划为
+    属于 1.0 读取兼容。``dut_config.power_supply_count``（旧的“PA 单元数量”）同样退役：
+    它从不进入正式段，读写两端都已删除。驱放供电方式（``driver_mode.power_source``）同理已退役：计划为
     空即自带供电，计划非空即由本机直流电源供电，不再另存一份选择。这里只改要写出的
     副本，不动调用方的文档。
     """
     driver_mode = document.get("driver_mode")
     if isinstance(driver_mode, dict):
         driver_mode.pop("power_source", None)
+    dut_config = document.get("dut_config")
+    if isinstance(dut_config, dict):
+        dut_config.pop("power_supply_count", None)
     instruments = _mapping(document.get("instruments"))
     for supply in _mapping(instruments.get("power_supplies")).values():
         for channel in _mapping(_mapping(supply).get("channels")).values():

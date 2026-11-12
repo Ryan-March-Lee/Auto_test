@@ -967,7 +967,7 @@ class ConfigurationPageTests(unittest.TestCase):
         from PySide6.QtGui import QWheelEvent
 
         page = self.make_page()
-        combos = (page.compression_combo, page.attenuator_combo, page.pa_unit_count_combo)
+        combos = (page.compression_combo, page.attenuator_combo)
         before = [combo.currentText() for combo in combos]
         event = QWheelEvent(
             QPoint(0, 0), QPoint(0, 0), QPoint(0, 0), QPoint(0, 120),
@@ -981,11 +981,9 @@ class ConfigurationPageTests(unittest.TestCase):
         page = self.make_page()
         page.compression_combo.setCurrentText("3dB")
         page.attenuator_combo.setCurrentText("30dB")
-        page.pa_unit_count_combo.setCurrentText("3")
         result = page.build_config()
         self.assertEqual(result["compression_point"]["type"], "3dB")
         self.assertEqual(result["attenuator"]["type"], "30dB")
-        self.assertEqual(result["dut_config"]["power_supply_count"], 3)
 
     def test_numeric_fields_are_plain_text_inputs_without_steppers(self):
         """频率、计划行与 DUT 上限的数值框都是纯文本框：没有步进按钮。"""

@@ -38,14 +38,13 @@ def _test_parameter_snapshot(
 ) -> ConfigurationTestParameters:
     """把同一次读出的测试参数片段转成类型化快照。
 
-    DUT 输入上限与单元数量不在片段里，这里补上；非法的频率扫描参数本来就不会进入片段，
+    DUT 输入上限不在片段里，这里补上；非法的频率扫描参数本来就不会进入片段，
     快照因此保持空频率，不把基线里的旧值当成这次读到的新值。功率扫描计划按片段里的
     ``power_scan_plans`` 顺序转成 ``sweeps``，不在 adapter 里重新排序或折叠。
     """
     document = dict(fragment)
     document["dut_config"] = {
         "max_input_power": widgets.max_input_power.value(),
-        "power_supply_count": int(widgets.pa_unit_count_combo.currentText()),
     }
     parameters, _issues = ConfigurationTestParameters.from_document(document)
     return parameters

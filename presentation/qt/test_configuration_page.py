@@ -84,7 +84,6 @@ from .config_projection import (
     DEFAULT_FREQUENCY_STEP,
     DEFAULT_FREQUENCY_STOP,
     DEFAULT_MAX_INPUT_POWER,
-    DEFAULT_PA_UNIT_COUNT,
     DEFAULT_POWER_SCAN_PLAN,
     ConfigBackfillError,
     apply_frequency_fields,
@@ -283,7 +282,6 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         dut = self.config.get("dut_config", {})
         if not isinstance(dut, dict): dut = {}
         self.max_input_power = number_field(dut.get("max_input_power", DEFAULT_MAX_INPUT_POWER), 0, 50)
-        self.pa_unit_count_combo = combo_box(("1", "2", "3"), str(dut.get("power_supply_count", DEFAULT_PA_UNIT_COUNT)))
         # 频率扫描与下面的 DUT 功率扫描计划同构：首行是加粗放大的区块标题，输入行带
         # “计划 1”编号与带单位的字段标签，输入行下面先给该段的频点预览，再给一行汇总。
         # 频率固定只有一段，因此没有“添加计划/删除”；编号保留是为了与功率计划对齐。
@@ -329,7 +327,7 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         first_parameter_row = self._build_power_scan_plan_editor(form, 4, test)
         parameter_rows = (("驱动功放预估增益 (dB)", self.driver_gain),
                           ("压缩点", self.compression_combo), ("衰减器", self.attenuator_combo),
-                          ("DUT最大输入功率 (dBm)", self.max_input_power), ("PA单元数量", self.pa_unit_count_combo))
+                          ("DUT最大输入功率 (dBm)", self.max_input_power))
         for offset, (label, widget) in enumerate(parameter_rows):
             row, column = divmod(offset, 2)
             field_label = QLabel(label)

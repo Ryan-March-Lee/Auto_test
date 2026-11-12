@@ -133,7 +133,6 @@
         },
         "dut_config": {
           "max_input_power": 30.0,
-          "power_supply_count": 1,
           "drain_channel": {
             "supply_id": "DP8B1519",
             "channel": "CH2"
@@ -262,8 +261,8 @@
           },
           "driver_mode": {
             "enabled": false,
-            "channel_settings": [],
-            "estimated_gain_db": null
+            "estimated_gain_db": null,
+            "channel_settings": []
           },
           "other_parameters": {}
         },
@@ -484,7 +483,6 @@
         },
         "dut_config": {
           "max_input_power": 30.0,
-          "power_supply_count": 1,
           "drain_channel": {
             "supply_id": "DP8B0885",
             "channel": "CH2"
@@ -639,8 +637,8 @@
           },
           "driver_mode": {
             "enabled": false,
-            "channel_settings": [],
-            "estimated_gain_db": null
+            "estimated_gain_db": null,
+            "channel_settings": []
           },
           "other_parameters": {}
         },
@@ -875,7 +873,6 @@
         },
         "dut_config": {
           "max_input_power": 30.0,
-          "power_supply_count": 1,
           "drain_channel": {
             "supply_id": "DP8B1519",
             "channel": "CH2"
@@ -1035,6 +1032,7 @@
           },
           "driver_mode": {
             "enabled": true,
+            "estimated_gain_db": null,
             "channel_settings": [
               {
                 "supply_id": "DP8B0885",
@@ -1046,8 +1044,7 @@
                 "unit_voltage": "V",
                 "unit_current": "A"
               }
-            ],
-            "estimated_gain_db": null
+            ]
           },
           "other_parameters": {}
         },
@@ -1249,7 +1246,6 @@
         },
         "dut_config": {
           "max_input_power": 30.0,
-          "power_supply_count": 1,
           "drain_channel": {
             "supply_id": "DP8B1519",
             "channel": "CH2"
@@ -1378,8 +1374,8 @@
           },
           "driver_mode": {
             "enabled": true,
-            "channel_settings": [],
-            "estimated_gain_db": null
+            "estimated_gain_db": null,
+            "channel_settings": []
           },
           "other_parameters": {}
         },
@@ -1576,7 +1572,6 @@
         },
         "dut_config": {
           "max_input_power": 30.0,
-          "power_supply_count": 1,
           "drain_channel": {
             "supply_id": "DP8B1519",
             "channel": "CH2"
@@ -1696,6 +1691,7 @@
           },
           "driver_mode": {
             "enabled": true,
+            "estimated_gain_db": null,
             "channel_settings": [
               {
                 "supply_id": "DP8B1519",
@@ -1707,8 +1703,7 @@
                 "unit_voltage": "V",
                 "unit_current": "A"
               }
-            ],
-            "estimated_gain_db": null
+            ]
           },
           "other_parameters": {}
         },
@@ -1886,7 +1881,6 @@
         },
         "dut_config": {
           "max_input_power": 30.0,
-          "power_supply_count": 1,
           "drain_channel": null
         },
         "instruments": {
@@ -1979,8 +1973,8 @@
           },
           "driver_mode": {
             "enabled": false,
-            "channel_settings": [],
-            "estimated_gain_db": null
+            "estimated_gain_db": null,
+            "channel_settings": []
           },
           "other_parameters": {}
         },
@@ -2159,7 +2153,6 @@
         },
         "dut_config": {
           "max_input_power": 30.0,
-          "power_supply_count": 1,
           "drain_channel": {
             "supply_id": "DP8B1519",
             "channel": "CH2"
@@ -2288,8 +2281,8 @@
           },
           "driver_mode": {
             "enabled": false,
-            "channel_settings": [],
-            "estimated_gain_db": null
+            "estimated_gain_db": null,
+            "channel_settings": []
           },
           "other_parameters": {}
         },
@@ -2474,7 +2467,6 @@
         },
         "dut_config": {
           "max_input_power": 30.0,
-          "power_supply_count": 1,
           "drain_channel": {
             "supply_id": "DP8B1519",
             "channel": "CH99"
@@ -2589,8 +2581,8 @@
           },
           "driver_mode": {
             "enabled": false,
-            "channel_settings": [],
-            "estimated_gain_db": null
+            "estimated_gain_db": null,
+            "channel_settings": []
           },
           "other_parameters": {}
         },
@@ -2776,7 +2768,6 @@
         },
         "dut_config": {
           "max_input_power": 30.0,
-          "power_supply_count": 1,
           "drain_channel": {
             "supply_id": "DP8B1519",
             "channel": "CH2"
@@ -2905,8 +2896,8 @@
           },
           "driver_mode": {
             "enabled": false,
-            "channel_settings": [],
-            "estimated_gain_db": null
+            "estimated_gain_db": null,
+            "channel_settings": []
           },
           "other_parameters": {}
         },
@@ -3095,7 +3086,6 @@
         },
         "dut_config": {
           "max_input_power": 30.0,
-          "power_supply_count": 1,
           "drain_channel": {
             "supply_id": "DP8B1519",
             "channel": "CH2"
@@ -3223,8 +3213,8 @@
           },
           "driver_mode": {
             "enabled": false,
-            "channel_settings": [],
-            "estimated_gain_db": null
+            "estimated_gain_db": null,
+            "channel_settings": []
           },
           "other_parameters": {}
         },
@@ -3422,7 +3412,6 @@
         },
         "dut_config": {
           "max_input_power": 30.0,
-          "power_supply_count": 1,
           "drain_channel": {
             "supply_id": "DP8B1519",
             "channel": "CH2"
@@ -3559,8 +3548,8 @@
           },
           "driver_mode": {
             "enabled": false,
-            "channel_settings": [],
-            "estimated_gain_db": null
+            "estimated_gain_db": null,
+            "channel_settings": []
           },
           "other_parameters": {}
         },
@@ -3664,6 +3653,12 @@
         "dut_config": {
           "drain_channel": null
         },
+        "signal_source": {
+          "power_reference": "dut_input"
+        },
+        "driver_mode": {
+          "estimated_gain_db": null
+        },
         "test_plan": {
           "schema_version": "1.2",
           "template": false,
@@ -3691,8 +3686,8 @@
           },
           "driver_mode": {
             "enabled": false,
-            "channel_settings": [],
-            "estimated_gain_db": null
+            "estimated_gain_db": null,
+            "channel_settings": []
           },
           "other_parameters": {}
         },
@@ -3731,12 +3726,6 @@
             "inter_channel_delay_s": 0.0
           },
           "notes": null
-        },
-        "signal_source": {
-          "power_reference": "dut_input"
-        },
-        "driver_mode": {
-          "estimated_gain_db": null
         }
       }
     },
@@ -3744,6 +3733,12 @@
       "name": "non_mapping_null",
       "input": null,
       "expected": {
+        "signal_source": {
+          "power_reference": "dut_input"
+        },
+        "driver_mode": {
+          "estimated_gain_db": null
+        },
         "schema_version": "1.2",
         "test_plan": {
           "schema_version": "1.2",
@@ -3772,8 +3767,8 @@
           },
           "driver_mode": {
             "enabled": false,
-            "channel_settings": [],
-            "estimated_gain_db": null
+            "estimated_gain_db": null,
+            "channel_settings": []
           },
           "other_parameters": {}
         },
@@ -3812,12 +3807,6 @@
             "inter_channel_delay_s": 0.0
           },
           "notes": null
-        },
-        "signal_source": {
-          "power_reference": "dut_input"
-        },
-        "driver_mode": {
-          "estimated_gain_db": null
         }
       }
     },
@@ -3828,6 +3817,12 @@
         "two"
       ],
       "expected": {
+        "signal_source": {
+          "power_reference": "dut_input"
+        },
+        "driver_mode": {
+          "estimated_gain_db": null
+        },
         "schema_version": "1.2",
         "test_plan": {
           "schema_version": "1.2",
@@ -3856,8 +3851,8 @@
           },
           "driver_mode": {
             "enabled": false,
-            "channel_settings": [],
-            "estimated_gain_db": null
+            "estimated_gain_db": null,
+            "channel_settings": []
           },
           "other_parameters": {}
         },
@@ -3896,12 +3891,6 @@
             "inter_channel_delay_s": 0.0
           },
           "notes": null
-        },
-        "signal_source": {
-          "power_reference": "dut_input"
-        },
-        "driver_mode": {
-          "estimated_gain_db": null
         }
       }
     },
@@ -4051,7 +4040,6 @@
         },
         "dut_config": {
           "max_input_power": 30.0,
-          "power_supply_count": 1,
           "drain_channel": {
             "supply_id": "DP8B1519",
             "channel": "CH2"

@@ -30,7 +30,6 @@
     },
     "dut_config": {
         "max_input_power": 31.0,
-        "power_supply_count": 1,
         "drain_channel": null
     },
     "instruments": {

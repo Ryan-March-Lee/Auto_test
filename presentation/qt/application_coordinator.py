@@ -398,7 +398,7 @@ class ApplicationCoordinator:
     def build_configuration_from_ui(self) -> dict[str, Any]:
         """合并两页的片段：测试配置页先写，电源页只覆盖自己负责的字段。
 
-        顺序固定为“测试配置页 → 电源页”：测试配置页拥有测试参数、PA 单元数量与设备连接，
+        顺序固定为“测试配置页 → 电源页”：测试配置页拥有测试参数与设备连接，
         电源页只把 ``instruments.power_supplies``、``power_supply_assignment`` 与
         ``dut_config.drain_channel`` 合并进来，因此两页尚未保存的编辑都不会被对方
         整段覆盖。

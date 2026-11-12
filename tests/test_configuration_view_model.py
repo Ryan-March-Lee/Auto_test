@@ -77,7 +77,6 @@ def _config():
         "attenuator": {"type": "30dB"},
         "dut_config": {
             "max_input_power": 30.0,
-            "power_supply_count": 1,
             "drain_channel": {"supply_id": "DP8B1519", "channel": "CH2"},
         },
         "instruments": {
@@ -163,7 +162,6 @@ class ConfigurationViewModelLoadTests(unittest.TestCase):
         self.assertEqual(state.draft.attenuator, Decibels(30.0))
         self.assertEqual(state.draft.max_dut_input_power, PowerDbm(30.0))
         self.assertFalse(state.draft.driver_enabled)
-        self.assertEqual(state.draft.dut_supply_count, 1)
         self.assertEqual(len(state.draft.dut_channels), 2)
         self.assertEqual(state.bindings_snapshot(), _bindings())
         self.assertEqual(state.run_status, DEFAULT_RUN_STATUS)
@@ -264,7 +262,7 @@ class ConfigurationTestParametersTests(unittest.TestCase):
                 "signal_source": {"start_power": -5, "stop_power": 5, "step": 1},
                 "compression_point": {"type": "3dB"},
                 "attenuator": {"type": "40dB"},
-                "dut_config": {"max_input_power": 20, "power_supply_count": 2},
+                "dut_config": {"max_input_power": 20},
                 "driver_mode": {"enabled": True, "estimated_gain_db": 20.5},
             }
         )
@@ -276,24 +274,20 @@ class ConfigurationTestParametersTests(unittest.TestCase):
         self.assertEqual(parameters.compression_target, Decibels(3.0))
         self.assertEqual(parameters.attenuator, Decibels(40.0))
         self.assertEqual(parameters.max_dut_input_power, PowerDbm(20.0))
-        self.assertEqual(parameters.dut_supply_count, 2)
         self.assertTrue(parameters.driver_enabled)
         self.assertEqual(parameters.driver_gain_estimate, Decibels(20.5))
 
     def test_from_document_keeps_invalid_values_missing(self):
         parameters, issues = ConfigurationTestParameters.from_document(
-            {"test_frequencies": ["bad"], "dut_config": {"power_supply_count": 2.5}}
+            {"test_frequencies": ["bad"]}
         )
 
         self.assertEqual(parameters.frequencies, ())
-        self.assertIsNone(parameters.dut_supply_count)
         self.assertFalse(issues.valid)
 
     def test_constructor_reuses_the_draft_type_rules(self):
         with self.assertRaises(TypeError):
             ConfigurationTestParameters(frequencies=(object(),))
-        with self.assertRaises(TypeError):
-            ConfigurationTestParameters(dut_supply_count=True)
         with self.assertRaises(TypeError):
             ConfigurationTestParameters(driver_enabled="yes")  # type: ignore[arg-type]
 
@@ -359,14 +353,12 @@ class ConfigurationTestParametersTests(unittest.TestCase):
             ConfigurationTestParameters(
                 frequencies=(Frequency(3.5),),
                 compression_target=Decibels(1.0),
-                dut_supply_count=2,
                 driver_enabled=False,
             )
         )
 
         self.assertEqual(state.draft.frequencies, (Frequency(3.5),))
         self.assertEqual(state.draft.compression_target, Decibels(1.0))
-        self.assertEqual(state.draft.dut_supply_count, 2)
         # 未参与更新的电源参数与绑定保持原样。
         self.assertEqual(
             state.draft.power_supplies, before.draft.power_supplies

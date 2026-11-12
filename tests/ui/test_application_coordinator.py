@@ -10,6 +10,7 @@
 """
 
 import atexit
+import copy
 import itertools
 import shutil
 import tempfile
@@ -566,6 +567,58 @@ class FinalizationTransactionTests(unittest.TestCase):
         self.assertIsNone(coordinator.prepared_run)
         self.assertIs(coordinator.state, RunFlowState.CONFIGURING)
 
+    def test_discarded_pending_run_also_clears_the_background_context(self):
+        coordinator = self._finalization_coordinator()
+        coordinator._set_state(RunFlowState.FINALIZING)
+        pending = _prepared_run()
+        coordinator._stage_pending_run(pending, created_here=True)
+        coordinator.background_run = pending
+        coordinator._discard_pending_run = MagicMock()
+
+        self.assertTrue(coordinator.fail_finalization("仪器连接失败"))
+
+        coordinator._discard_pending_run.assert_called_once_with(pending)
+        self.assertIsNone(coordinator._pending_run)
+        self.assertIsNone(coordinator.background_run)
+
+    def test_compensation_keeps_a_context_established_by_a_completed_save(self):
+        """保存阶段建立的上下文是借用给连接事务的，失败不能撤销那份已保存的运行。"""
+        coordinator = self._finalization_coordinator()
+        coordinator._set_state(RunFlowState.FINALIZING)
+        saved = _prepared_run()
+        coordinator.background_run = saved
+        coordinator._stage_pending_run(saved, created_here=False)
+        coordinator._discard_pending_run = MagicMock()
+
+        self.assertTrue(coordinator.fail_finalization("仪器连接失败"))
+
+        coordinator._discard_pending_run.assert_not_called()
+        self.assertIs(coordinator.background_run, saved)
+        self.assertIsNone(coordinator._pending_run)
+        self.assertTrue(
+            any("属于已完成的配置保存" in message for message in coordinator.messages)
+        )
+
+    def test_compensation_never_deletes_a_pending_run_that_is_already_current(self):
+        """复用的当前运行不能再被连接失败补偿当成“未开始运行”删除。"""
+        coordinator = self._finalization_coordinator()
+        coordinator._set_state(RunFlowState.FINALIZING)
+        run = _prepared_run()
+        coordinator.prepared_run = run
+        coordinator.background_run = run
+        coordinator._stage_pending_run(run, created_here=True)
+        coordinator._discard_pending_run = MagicMock()
+
+        self.assertTrue(coordinator.fail_finalization("仪器连接失败"))
+
+        coordinator._discard_pending_run.assert_not_called()
+        self.assertIs(coordinator.prepared_run, run)
+        self.assertIs(coordinator.background_run, run)
+        self.assertIsNone(coordinator._pending_run)
+        self.assertTrue(
+            any("已是当前运行" in message for message in coordinator.messages)
+        )
+
     def test_pending_run_discard_delegates_to_the_unstarted_run_use_case(self):
         """补偿只走 ``discard_unstarted_run``；“未开始”判断不在表现层重写。"""
         coordinator = self._finalization_coordinator()
@@ -582,8 +635,9 @@ class FinalizationTransactionTests(unittest.TestCase):
     def test_pending_run_without_a_run_contract_is_never_deleted_blindly(self):
         coordinator = self._finalization_coordinator()
         coordinator._set_state(RunFlowState.FINALIZING)
-        coordinator._pending_run = SimpleNamespace(
-            run_id=RUN_ID, run_directory=Path("runs") / RUN_ID
+        coordinator._stage_pending_run(
+            SimpleNamespace(run_id=RUN_ID, run_directory=Path("runs") / RUN_ID),
+            created_here=True,
         )
 
         self.assertFalse(coordinator.fail_finalization("仪器连接失败"))
@@ -602,7 +656,7 @@ class FinalizationTransactionTests(unittest.TestCase):
         coordinator = self._finalization_coordinator()
         repository = _RunRepository()
         coordinator._set_state(RunFlowState.MANUAL_CLEANUP_REQUIRED)
-        coordinator._pending_run = _prepared_run(repository)
+        coordinator._stage_pending_run(_prepared_run(repository), created_here=True)
 
         self.assertTrue(coordinator.abandon_pending_run())
 
@@ -613,7 +667,7 @@ class FinalizationTransactionTests(unittest.TestCase):
     def test_abandon_failure_keeps_the_pending_run_and_manual_state(self):
         coordinator = self._finalization_coordinator()
         coordinator._set_state(RunFlowState.MANUAL_CLEANUP_REQUIRED)
-        coordinator._pending_run = _prepared_run()
+        coordinator._stage_pending_run(_prepared_run(), created_here=True)
         coordinator._discard_pending_run = MagicMock(
             side_effect=RuntimeError("运行目录无法撤销")
         )
@@ -628,7 +682,9 @@ class FinalizationTransactionTests(unittest.TestCase):
         coordinator = self._finalization_coordinator()
         repository = _RunRepository(status=RunStatus.RUNNING)
         coordinator._set_state(RunFlowState.MANUAL_CLEANUP_REQUIRED)
-        coordinator._pending_run = _prepared_run(repository)
+        coordinator._stage_pending_run(
+            _prepared_run(repository), created_here=True
+        )
 
         self.assertFalse(coordinator.abandon_pending_run())
 
@@ -806,6 +862,341 @@ class FinalizationTransactionTests(unittest.TestCase):
         ) as create:
             self.assertFalse(coordinator.finalize_configuration())
         create.assert_not_called()
+
+
+class BackgroundRunContextTests(unittest.TestCase):
+    """步骤 16：保存配置后创建/复用后台运行上下文，连接仪器是后续动作。"""
+
+    def _saveable_config(self):
+        return {
+            "schema_version": "1.1",
+            "test_frequencies": [2.4],
+            "signal_source": {
+                "power_scan_plans": [
+                    {"start_power": -10.0, "step": 1.0, "stop_power": 0.0}
+                ]
+            },
+            "compression_point": {"type": "5dB"},
+            "driver_mode": {"enabled": False},
+            "attenuator": {"type": "30dB"},
+            "dut_config": {"max_input_power": 30.0},
+        }
+
+    def _background_coordinator(self, *, controller=None):
+        coordinator = _coordinator(page=_Page(), controller=controller)
+        coordinator.config = self._saveable_config()
+        return coordinator
+
+    def _fake_creation(self, created):
+        def create(config_path, *, paths=None, hardware_config=None, **kwargs):
+            run_directory = Path("runs") / f"20261112T00000{len(created)}Z_context"
+            context = SimpleNamespace(
+                run_id=f"20261112T00000{len(created)}Z_context",
+                run_directory=run_directory,
+                hardware_config=copy.deepcopy(hardware_config),
+                hardware_connection_path=lambda: run_directory / "frozen-hardware.json",
+            )
+            created.append(context)
+            return context
+
+        return create
+
+    def test_save_creates_background_context_without_connecting_instruments(self):
+        coordinator = self._background_coordinator()
+        worker_factory = MagicMock()
+        coordinator._instrument_worker_factory = worker_factory
+        created = []
+        with patch.object(
+            coordinator, "_saved_configuration_matches_memory", return_value=True
+        ), patch(
+            "presentation.qt.application_coordinator.prepare_configuration",
+            side_effect=self._fake_creation(created),
+        ) as prepare:
+            self.assertTrue(coordinator.save_configuration())
+
+        self.assertEqual(prepare.call_count, 1)
+        self.assertIs(coordinator.background_run, created[0])
+        # 后台上下文还不是已提交运行：没有端口就不能开始测量。
+        self.assertIsNone(coordinator.prepared_run)
+        self.assertIsNone(coordinator.instrument_ctrl)
+        worker_factory.assert_not_called()
+        self.assertTrue(
+            any("连接仪器仍是后续动作" in message for message in coordinator.messages)
+        )
+
+    def test_repeated_save_reuses_an_unchanged_background_context(self):
+        coordinator = self._background_coordinator()
+        created = []
+        create = self._fake_creation(created)
+        with patch.object(
+            coordinator, "_saved_configuration_matches_memory", return_value=True
+        ), patch(
+            "presentation.qt.application_coordinator.prepare_configuration",
+            side_effect=create,
+        ) as prepare:
+            self.assertTrue(coordinator.save_configuration())
+            first = coordinator.background_run
+            self.assertTrue(coordinator.save_configuration())
+
+        self.assertEqual(prepare.call_count, 1)
+        self.assertIs(coordinator.background_run, first)
+        self.assertTrue(
+            any("配置语义未变化" in message for message in coordinator.messages)
+        )
+
+    def test_semantic_change_creates_a_new_background_context(self):
+        coordinator = self._background_coordinator()
+        created = []
+        create = self._fake_creation(created)
+        with patch.object(
+            coordinator, "_saved_configuration_matches_memory", return_value=True
+        ), patch(
+            "presentation.qt.application_coordinator.prepare_configuration",
+            side_effect=create,
+        ) as prepare:
+            self.assertTrue(coordinator.save_configuration())
+            first = coordinator.background_run
+            coordinator.config["test_frequencies"] = [2.5]
+            self.assertTrue(coordinator.save_configuration())
+
+        self.assertEqual(prepare.call_count, 2)
+        self.assertIsNot(coordinator.background_run, first)
+        self.assertIs(coordinator.background_run, created[1])
+
+    def test_creation_failure_keeps_the_previous_context_and_save_stays_successful(self):
+        coordinator = self._background_coordinator()
+        created = []
+        create = self._fake_creation(created)
+        with patch.object(
+            coordinator, "_saved_configuration_matches_memory", return_value=True
+        ), patch(
+            "presentation.qt.application_coordinator.prepare_configuration",
+            side_effect=create,
+        ):
+            self.assertTrue(coordinator.save_configuration())
+        previous = coordinator.background_run
+        coordinator.config["test_frequencies"] = [2.5]
+
+        with patch.object(
+            coordinator, "_saved_configuration_matches_memory", return_value=True
+        ), patch(
+            "presentation.qt.application_coordinator.prepare_configuration",
+            side_effect=RuntimeError("运行目录写入失败"),
+        ):
+            self.assertTrue(coordinator.save_configuration())
+
+        # 配置已经保存，创建上下文失败只写日志：旧上下文和当前运行都不被替换。
+        self.assertIs(coordinator.background_run, previous)
+        self.assertTrue(
+            any(
+                "冻结待提交运行失败" in message
+                and "运行目录写入失败" in message
+                for message in coordinator.messages
+            )
+        )
+        self.assertEqual(coordinator.warnings, [])
+        self.assertIsNone(coordinator.last_save_error)
+
+    def test_save_during_measurement_does_not_switch_the_context(self):
+        controller = MagicMock()
+        controller.state = SimpleNamespace(is_active=True)
+        coordinator = self._background_coordinator(controller=controller)
+        with patch(
+            "presentation.qt.application_coordinator.prepare_configuration"
+        ) as create:
+            self.assertTrue(coordinator.save_configuration())
+
+        create.assert_not_called()
+        self.assertIsNone(coordinator.background_run)
+        self.assertTrue(
+            any("测量正在运行" in message for message in coordinator.messages)
+        )
+
+    def test_unconfirmed_save_does_not_create_a_context(self):
+        coordinator = self._background_coordinator()
+        # 默认的 MagicMock 配置适配器没有可读回的正式文档：不得据此创建运行目录。
+        with patch(
+            "presentation.qt.application_coordinator.prepare_configuration"
+        ) as create:
+            self.assertTrue(coordinator.save_configuration())
+
+        create.assert_not_called()
+        self.assertIsNone(coordinator.background_run)
+        self.assertTrue(
+            any("无法确认正式配置" in message for message in coordinator.messages)
+        )
+
+    def test_pending_run_reuses_the_background_context_instead_of_creating_again(self):
+        coordinator = self._background_coordinator()
+        created = []
+        create = self._fake_creation(created)
+        with patch.object(
+            coordinator, "_saved_configuration_matches_memory", return_value=True
+        ), patch(
+            "presentation.qt.application_coordinator.prepare_configuration",
+            side_effect=create,
+        ):
+            self.assertTrue(coordinator.save_configuration())
+        background = coordinator.background_run
+        coordinator.save_configuration = MagicMock(return_value=True)
+
+        with patch(
+            "presentation.qt.application_coordinator.prepare_configuration"
+        ) as second_create:
+            pending = coordinator.prepare_pending_run()
+
+        second_create.assert_not_called()
+        self.assertIs(pending, background)
+        self.assertIs(coordinator._pending_run, background)
+        self.assertEqual(len(created), 1)
+
+    def test_unusable_snapshot_is_not_reused_as_background_context(self):
+        """运行目录或快照被删除后，不得仅凭内存里的配置语义报告“复用成功”。"""
+        coordinator = self._background_coordinator()
+        created = []
+        create = self._fake_creation(created)
+        with patch.object(
+            coordinator, "_saved_configuration_matches_memory", return_value=True
+        ), patch(
+            "presentation.qt.application_coordinator.prepare_configuration",
+            side_effect=create,
+        ):
+            self.assertTrue(coordinator.save_configuration())
+        stale = created[0]
+        stale.hardware_connection_path = MagicMock(
+            side_effect=ValueError("硬件配置快照已被删除")
+        )
+
+        with patch.object(
+            coordinator, "_saved_configuration_matches_memory", return_value=True
+        ), patch(
+            "presentation.qt.application_coordinator.prepare_configuration",
+            side_effect=create,
+        ) as prepare:
+            self.assertTrue(coordinator.save_configuration())
+
+        self.assertEqual(prepare.call_count, 1)
+        self.assertIsNot(coordinator.background_run, stale)
+        self.assertIs(coordinator.background_run, created[1])
+        self.assertTrue(
+            any("冻结快照不可用" in message for message in coordinator.messages)
+        )
+
+    def test_finalize_connects_the_new_saved_context_instead_of_the_stale_run(self):
+        """端口丢失后保存了新配置：最终入口应连接它，而不是静默重连旧运行。"""
+        coordinator = self._background_coordinator()
+        worker_factory = MagicMock()
+        coordinator._instrument_worker_factory = worker_factory
+        created = []
+        create = self._fake_creation(created)
+        with patch.object(
+            coordinator, "_saved_configuration_matches_memory", return_value=True
+        ), patch(
+            "presentation.qt.application_coordinator.prepare_configuration",
+            side_effect=create,
+        ):
+            self.assertTrue(coordinator.save_configuration())
+            old = coordinator.background_run
+            coordinator.prepared_run = old
+            coordinator._set_state(RunFlowState.RECONNECT_REQUIRED)
+            coordinator.config["test_frequencies"] = [2.5]
+            self.assertTrue(coordinator.save_configuration())
+
+        newer = coordinator.background_run
+        self.assertIsNot(newer, old)
+        self.assertFalse(coordinator.can_reconnect_current_run())
+
+        coordinator.save_configuration = MagicMock(return_value=True)
+        with patch(
+            "presentation.qt.application_coordinator.prepare_configuration"
+        ) as second_create:
+            self.assertTrue(coordinator.finalize_configuration())
+
+        second_create.assert_not_called()
+        self.assertFalse(coordinator._reconnecting)
+        self.assertIs(coordinator._pending_run, newer)
+        self.assertIs(coordinator.prepared_run, old)
+        worker_factory.assert_called_once_with(newer)
+
+    def test_failed_context_creation_blocks_reconnecting_the_stale_run(self):
+        """上下文创建失败时，最终入口不能把新保存的配置静默换成旧运行。"""
+        coordinator = self._background_coordinator()
+        old = SimpleNamespace(
+            run_id="old-context",
+            run_directory=Path("runs/old-context"),
+            hardware_config=copy.deepcopy(self._saveable_config()),
+            hardware_connection_path=lambda: Path("old-frozen.json"),
+        )
+        coordinator.prepared_run = old
+        coordinator.background_run = old
+        coordinator._set_state(RunFlowState.RECONNECT_REQUIRED)
+        coordinator.config["test_frequencies"] = [2.5]
+
+        with patch.object(
+            coordinator, "_saved_configuration_matches_memory", return_value=True
+        ), patch(
+            "presentation.qt.application_coordinator.prepare_configuration",
+            side_effect=RuntimeError("运行目录写入失败"),
+        ):
+            self.assertTrue(coordinator.save_configuration())
+
+        # 配置已保存，但没有对应的上下文：不能只重连旧运行。
+        self.assertTrue(coordinator._saved_configuration_pending)
+        self.assertFalse(coordinator.can_reconnect_current_run())
+
+        worker_factory = MagicMock()
+        coordinator._instrument_worker_factory = worker_factory
+        coordinator.save_configuration = MagicMock(return_value=True)
+        with patch(
+            "presentation.qt.application_coordinator.prepare_configuration",
+            side_effect=RuntimeError("运行目录写入失败"),
+        ) as create:
+            self.assertFalse(coordinator.finalize_configuration())
+
+        create.assert_called_once()
+        worker_factory.assert_not_called()
+        self.assertIs(coordinator.prepared_run, old)
+        self.assertIs(coordinator.background_run, old)
+        self.assertTrue(
+            any("冻结待提交运行失败" in message for message in coordinator.messages)
+        )
+
+    def test_reconnect_commit_does_not_replace_a_newer_background_context(self):
+        coordinator = _coordinator(page=_Page())
+        old = _prepared_run()
+        newer = _prepared_run()
+        coordinator.prepared_run = old
+        coordinator.background_run = newer
+        coordinator._reconnecting = True
+        coordinator._set_state(RunFlowState.FINALIZING)
+
+        self.assertTrue(coordinator.commit_finalization(_OkPort()))
+
+        self.assertIs(coordinator.prepared_run, old)
+        self.assertIs(coordinator.background_run, newer)
+
+    def test_loaded_run_snapshot_stays_isolated_from_the_editing_draft(self):
+        """加载运行后的界面编辑不得就地改写冻结快照，否则复用判断会被污染。"""
+        coordinator = _coordinator(page=_Page())
+        frozen = {
+            "test_frequencies": [2.4],
+            "instruments": {"power_supplies": {"s1": {"label": "旧电源"}}},
+        }
+        prepared = SimpleNamespace(
+            run_id=RUN_ID,
+            run_directory=Path("runs") / RUN_ID,
+            hardware_config=frozen,
+        )
+
+        self.assertTrue(coordinator.apply_run_configuration(prepared))
+
+        coordinator.config["test_frequencies"].append(2.6)
+        coordinator.config["instruments"]["power_supplies"]["s1"]["label"] = "新电源"
+
+        self.assertEqual(frozen["test_frequencies"], [2.4])
+        self.assertEqual(
+            frozen["instruments"]["power_supplies"]["s1"]["label"], "旧电源"
+        )
 
 
 class ConfigurationPagePortTests(unittest.TestCase):

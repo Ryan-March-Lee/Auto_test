@@ -483,6 +483,9 @@ class MainWindow(QMainWindow):
         editor = getattr(self, "configuration_editor", None)
         if editor is not None:
             editor.mark_clean()
+        # 保存后最近的后台上下文可能已经变化：最终按钮的“重连/完成配置”语义必须
+        # 立刻跟着更新，不能等到下一次连接失败才纠正。
+        self._sync_finalize_entry()
         self.add_log_message("配置已保存")
         if self.prepared_run is not None:
             self.add_log_message(
@@ -516,7 +519,7 @@ class MainWindow(QMainWindow):
         page = getattr(self, "test_config_page", None)
         if page is not None:
             page.set_reconnect_required(
-                self.coordinator.state is RunFlowState.RECONNECT_REQUIRED
+                self.coordinator.can_reconnect_current_run()
             )
 
     def _bind_instrument_worker_signals(self, worker):

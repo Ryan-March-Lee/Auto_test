@@ -5,6 +5,7 @@
 静态门禁来判断所有权。
 """
 
+import copy
 import gc
 import json
 import os
@@ -225,6 +226,93 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
             window.test_config_page.run_status_label.text(), "当前运行: 未创建"
         )
 
+    def test_save_creates_one_reusable_background_context_without_connecting(self):
+        """步骤 16：保存成功即创建运行快照；重复保存复用，不打开仪器。"""
+        self._silence_dialogs()
+        window = self._window()
+        repository = RunRepository(paths=self.paths)
+        runs_root = repository.root
+
+        self.assertTrue(window.coordinator.save_configuration())
+        first = window.coordinator.background_run
+        self.assertIsNotNone(first)
+        self.assertTrue(Path(first.run_directory).is_dir())
+        self.assertIsNone(window.coordinator.prepared_run)
+        self.assertIsNone(window.coordinator.instrument_ctrl)
+        self.assertIsNone(window.coordinator.instrument_worker)
+        self.assertEqual(len(list(runs_root.iterdir())), 1)
+
+        # 未修改配置再次保存：复用同一个运行，不产生第二份后台上下文。
+        self.assertTrue(window.coordinator.save_configuration())
+        second = window.coordinator.background_run
+        self.assertEqual(second.run_id, first.run_id)
+        self.assertEqual(len(list(runs_root.iterdir())), 1)
+
+    def test_save_change_creates_a_new_background_context(self):
+        self._silence_dialogs()
+        window = self._window()
+        repository = RunRepository(paths=self.paths)
+        runs_root = repository.root
+
+        self.assertTrue(window.coordinator.save_configuration())
+        first = window.coordinator.background_run
+
+        window.coordinator.config["test_frequencies"] = [2.5]
+        self.assertTrue(window.coordinator.save_configuration())
+        second = window.coordinator.background_run
+
+        self.assertNotEqual(second.run_id, first.run_id)
+        self.assertEqual(len(list(runs_root.iterdir())), 2)
+        self.assertIsNone(window.coordinator.prepared_run)
+
+    def test_saved_configuration_replaces_reconnecting_the_stale_run(self):
+        """端口丢失后保存新配置：最终入口连接新上下文，不能静默重连旧运行。"""
+        self._silence_dialogs()
+        window = self._window()
+        coordinator = window.coordinator
+        coordinator._instrument_worker_factory = _RecordingConnectionWorker
+        repository = RunRepository(paths=self.paths)
+
+        # 首次最终化：真实保存、真实冻结、真实运行目录；只替换连接 worker。
+        self.assertTrue(coordinator.finalize_configuration())
+        old = coordinator._pending_run
+        self.assertIsNotNone(old)
+        self.assertTrue(coordinator.commit_finalization(_ConnectedPort()))
+        self.assertIs(coordinator.prepared_run, old)
+
+        # 端口丢失后页面进入“重新连接仪器”。
+        self.assertTrue(coordinator.release_instrument_port())
+        coordinator._set_state(RunFlowState.RECONNECT_REQUIRED)
+        window._sync_finalize_entry()
+        self.assertTrue(coordinator.can_reconnect_current_run())
+        self.assertEqual(
+            window.test_config_page.finalize_run_btn.text(), "重新连接仪器"
+        )
+
+        # 用户修改频点并保存：产生新的后台上下文，按钮回到“完成配置并连接仪器”。
+        changed = copy.deepcopy(coordinator.config)
+        changed["test_frequencies"] = [2.5]
+        window.test_config_page.apply_config(changed)
+        window.power_page.apply_config(changed)
+        window.save_config()
+        newer = coordinator.background_run
+        self.assertNotEqual(newer.run_id, old.run_id)
+        self.assertFalse(coordinator.can_reconnect_current_run())
+        self.assertEqual(
+            window.test_config_page.finalize_run_btn.text(), "完成配置并连接仪器"
+        )
+
+        # 再次最终化必须连接新配置；旧运行仍是提交前的当前运行，目录不被删除。
+        window._finalize_run()
+
+        self.assertIs(coordinator.state, RunFlowState.FINALIZING)
+        self.assertFalse(coordinator._reconnecting)
+        self.assertIs(coordinator._pending_run, newer)
+        self.assertIs(coordinator.instrument_worker.run, newer)
+        self.assertIs(coordinator.prepared_run, old)
+        self.assertTrue((repository.root / old.run_id).is_dir())
+        self.assertTrue((repository.root / newer.run_id).is_dir())
+
     def test_a_10_configuration_opens_both_pages_read_only(self):
         """步骤 13：1.0 编辑文档只读并提示迁移；两条编辑入口都不能写盘。"""
         self._silence_dialogs()
@@ -303,7 +391,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIs(window.view_stack.currentWidget(), window.connection_page)
         self.assertTrue(window.test_config_page.finalize_run_btn.isEnabled())
 
-    def test_failed_connection_removes_the_unstarted_run_directory(self):
+    def test_failed_connection_keeps_the_saved_context_and_clears_pending(self):
         self._silence_dialogs()
         window = self._window()
         window._enter_test_mode(False)
@@ -311,16 +399,18 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         prepared = window.coordinator.prepare_pending_run()
         self.assertIsNotNone(prepared)
         self.assertTrue(prepared.run_directory.is_dir())
+        # 最终化包含一次配置保存：运行上下文属于那次已完成的保存，连接失败不能撤销它。
+        self.assertIs(window.coordinator.background_run, prepared)
 
         window.coordinator.fail_finalization("电源型号不符")
 
-        # 阶段三：连接失败不留下可被误认为有效运行的目录。
-        self.assertFalse(prepared.run_directory.exists())
+        self.assertTrue(prepared.run_directory.is_dir())
+        self.assertIs(window.coordinator.background_run, prepared)
         self.assertIsNone(window.prepared_run)
         self.assertIsNone(window.coordinator._pending_run)
         self.assertIs(window.coordinator.state, RunFlowState.CONFIGURING)
 
-    def test_abandoning_a_started_run_is_refused_and_keeps_the_directory(self):
+    def test_abandoning_a_started_saved_context_keeps_its_directory(self):
         self._silence_dialogs()
         window = self._window()
         window._enter_test_mode(False)
@@ -333,12 +423,12 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         )
         repository.update_manifest(prepared.run_id, manifest)
 
-        self.assertFalse(window.coordinator.abandon_pending_run())
+        # 保存阶段建立的上下文只被连接事务借用：放弃待提交引用时保留目录。
+        self.assertTrue(window.coordinator.abandon_pending_run())
 
-        # 阶段出口：已进入测量的运行永远不会被放弃流程删除。
         self.assertTrue(prepared.run_directory.is_dir())
-        self.assertTrue(window.coordinator.has_pending_run())
-        self.assertIs(window.coordinator.state, RunFlowState.MANUAL_CLEANUP_REQUIRED)
+        self.assertFalse(window.coordinator.has_pending_run())
+        self.assertIs(window.coordinator.background_run, prepared)
 
     def test_user_stop_with_unconfirmed_cleanup_requires_manual_cleanup(self):
         dialogs = self._silence_dialogs()

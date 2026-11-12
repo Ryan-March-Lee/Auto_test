@@ -12,7 +12,21 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from infrastructure.config.json_config_repository import ConfigurationRepository
+from infrastructure.filesystem.paths import PathService
 from tests.ui.test_gui_config_readers import _coordinator
+
+
+class _FileConfiguration:
+    """实现配置端口的 ``save``/``load``：读写同一个临时文件，不靠 ``getattr`` 猜能力。"""
+
+    def __init__(self, path):
+        self.path = path
+
+    def save(self, configuration):
+        self.path.write_text(json.dumps(configuration), encoding="utf-8")
+
+    def load(self):
+        return json.loads(self.path.read_text(encoding="utf-8"))
 
 
 def _editing_config(*, signal_source=None) -> dict:
@@ -91,13 +105,12 @@ class ConfigurationSaveRoundTripTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
             self.coordinator.config = flat
-
-            class _Configuration:
-                def save(self, configuration):
-                    path.write_text(json.dumps(configuration), encoding="utf-8")
+            # 保存成功会建立后台运行上下文：让运行目录也落在同一个临时根下。
+            self.coordinator.paths = PathService(Path(directory))
+            self.coordinator.config_path = path
 
             self.coordinator.gui_data_service = SimpleNamespace(
-                configuration=_Configuration()
+                configuration=_FileConfiguration(path)
             )
             self.assertTrue(self.coordinator.save_configuration())
 
@@ -127,13 +140,11 @@ class ConfigurationSaveRoundTripTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
             self.coordinator.config = flat
-
-            class _Configuration:
-                def save(self, configuration):
-                    path.write_text(json.dumps(configuration), encoding="utf-8")
+            self.coordinator.paths = PathService(Path(directory))
+            self.coordinator.config_path = path
 
             self.coordinator.gui_data_service = SimpleNamespace(
-                configuration=_Configuration()
+                configuration=_FileConfiguration(path)
             )
             self.assertTrue(self.coordinator.save_configuration())
 

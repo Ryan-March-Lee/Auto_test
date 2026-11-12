@@ -18,9 +18,10 @@
 
 from __future__ import annotations
 
+import copy
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Iterable, Protocol, runtime_checkable
+from typing import Any, Callable, Iterable, Mapping, Protocol, runtime_checkable
 
 from app.gui_runtime import load_prepared_run, prepare_configuration
 from application.configuration_authoring import (
@@ -200,6 +201,35 @@ def describe_cleanup_errors(errors: Iterable[BaseException]) -> str:
     return "；".join(parts)
 
 
+def _configuration_semantics(config: Any) -> Any:
+    """返回配置文档的语义快照，供“保存后是否复用运行上下文”比较。
+
+    比较的是**重新编写后的正式文档**，而不是页面的键序、缩进或原始编辑形状：
+    同一份语义经过 ``ConfigurationAuthoringService`` 再写一次必须稳定（保存流程本身
+    也以它作为唯一写入口），因此 ``draft`` 与已保存文档仍可比较。无法按当前 schema
+    编写（例如 1.0 只读文档）时返回 ``None``，调用方按“不可复用”处理，绝不把两份
+    无法解释的文档当成相等。
+    """
+    if not isinstance(config, Mapping):
+        return None
+    try:
+        return ConfigurationAuthoringService().author_document(
+            ConfigurationEditingDocument.from_mapping(config)
+        )
+    except (TypeError, ValueError):
+        # 无法按当前 schema 编写（例如 1.0 只读文档或字段形状已损坏）时语义不可判定；
+        # 这只影响“是否复用上下文”，不影响已经成功的配置保存。
+        return None
+
+
+def _configurations_equivalent(left: Any, right: Any) -> bool:
+    """两份配置是否语义相同；任一方无法编写时返回 ``False``。"""
+    left_semantics = _configuration_semantics(left)
+    if left_semantics is None:
+        return False
+    return left_semantics == _configuration_semantics(right)
+
+
 class ApplicationCoordinator:
     """呈现层运行协调器：单一持有配置、运行契约和仪器端口。
 
@@ -244,11 +274,21 @@ class ApplicationCoordinator:
         self.power_page: PowerConfigurationPagePort | None = None
         self.config: dict[str, Any] = {}
         self.prepared_run: Any = None
+        # 保存配置后创建的后台运行上下文：它已有配置/硬件快照，但还没有端口。
+        # 连接仪器仍是后续动作；最终化成功后才与端口一起成为 ``prepared_run``。
+        self.background_run: Any = None
         self.instrument_ctrl: Any = None
         self.instrument_worker: Any = None
         self.last_save_error: Exception | None = None
         # 最终化事务：待提交运行在连接成功前不写进 prepared_run，也不交给测量页。
         self._pending_run: Any = None
+        # 待提交运行是否由本次事务新建。保存阶段已经建立的上下文是“借用的”：
+        # 连接失败只能清掉待提交引用，不能撤销一份已经成功保存的运行目录。
+        self._pending_run_created_here = False
+        # 最近一次保存的配置是否已经有可用的后台上下文。保存成功但上下文创建失败
+        # （或因为测量/清理被跳过）时为 ``True``：即使当前运行仍在，最终入口也不能
+        # 只重连旧运行，否则刚保存的配置会被静默忽略。
+        self._saved_configuration_pending = False
         self._reconnecting = False
         self._state = RunFlowState.DEVICE_SELECTION
         # 清理失败的端口进入未决清单：绝不因为一次失败就丢掉引用，现场可重试。
@@ -424,6 +464,10 @@ class ApplicationCoordinator:
         即使绕过被禁用的界面按钮调用这里，也不会被迁移或写盘；配合
         :meth:`update_configuration_from_ui` 的只读保护，保存路径不会先把旧文档
         就地改写。
+
+        写盘成功后调用 :meth:`ensure_run_context` 创建或复用后台运行上下文：运行目录
+        的配置/硬件快照因此与最近一次保存保持一致，但**不会**连接仪器。上下文创建
+        失败只给出告警并保留旧上下文，不把一次已经成功的配置保存报告为失败。
         """
         try:
             self.config = ConfigurationAuthoringService().author_document(
@@ -436,9 +480,120 @@ class ApplicationCoordinator:
             return False
         self.last_save_error = None
         self._sync_page_read_only()
+        self.ensure_run_context()
+        # 保存成功不等于“这份配置已经能用于下一次运行”：上下文可能因测量、未决清理
+        # 或创建失败而没有建立。记录这个差异，最终入口据此拒绝只重连旧运行。
+        self._saved_configuration_pending = not self._has_context_for_saved_configuration()
         return True
 
     # ---- 运行契约 ----
+
+    def ensure_run_context(self) -> Any | None:
+        """保存配置后创建或复用后台运行上下文；不连接仪器。
+
+        运行上下文是 ``runs/<run_id>/`` 的配置/硬件快照。它不再只在“完成配置并连接
+        仪器”时产生：只要配置成功写盘，协调器就确保存在一份与当前语义一致的后台
+        上下文，连接仪器仍是后续动作。判定顺序固定为：
+
+        1. 测量线程正在使用端口时**禁止切换**上下文（配置已保存，但不在测量中改
+           变下一次运行的来源）；
+        2. 存在未决端口清理时拒绝创建/切换，避免新上下文建立在未确认安全的现场；
+        3. 已有后台上下文或当前运行与配置语义一致且契约仍可用时直接复用，重复保存不
+           产生新运行；
+        4. 语义变化时创建新上下文；创建失败只告警并保留旧上下文。
+
+        返回值是可复用的上下文（可能没有端口），失败返回 ``None``。本方法不启动连接
+        worker、不提交端口，也不改变 ``prepared_run``；最终化事务会把复用或新建的
+        上下文作为待提交运行继续连接。
+        """
+        if self._measurement_is_active():
+            self._log(
+                "测量正在运行；配置已保存，但暂不创建或切换后台运行上下文"
+            )
+            return None
+        if self._pending_run is not None or self._state is RunFlowState.FINALIZING:
+            self._log(
+                "最终动作正在进行；配置已保存，但暂不创建或切换后台运行上下文"
+            )
+            return None
+        if self.has_unreleased_ports() or self._state is RunFlowState.MANUAL_CLEANUP_REQUIRED:
+            self._log(
+                "存在未完成的仪器清理；配置已保存，但暂不创建或切换后台运行上下文"
+            )
+            return None
+        # 创建运行快照必须以刚写回的正式配置为准。配置端口读回失败或内容与内存
+        # 不一致时不拿一份无法确认的配置去建运行目录；保存本身已经成功。
+        if not self._saved_configuration_matches_memory():
+            self._log(
+                "无法确认正式配置已按当前内存副本写回，暂不创建或复用后台运行上下文"
+            )
+            return None
+        reusable = self._reusable_run_context()
+        if reusable is not None:
+            self.background_run = reusable
+            self._log(
+                f"配置语义未变化；复用后台运行上下文 "
+                f"{getattr(reusable, 'run_id', reusable)}"
+            )
+            return reusable
+        context, _created = self._freeze_pending_run(mark_reconnect=False)
+        if context is None:
+            return None
+        self._log(
+            f"已创建后台运行上下文 {getattr(context, 'run_id', context)}，"
+            "连接仪器仍是后续动作"
+        )
+        return context
+
+    def _saved_configuration_matches_memory(self) -> bool:
+        """写盘适配器读回的文档是否与协调器内存副本语义一致。
+
+        ``ConfigurationPort`` 是读写契约，``load()`` 必然存在；这里只确认“这次保存
+        确实落成了我们将要冻结的那份配置”。读回失败只阻断本次上下文创建，配置保存
+        本身已经成功。
+        """
+        try:
+            saved = self.gui_data_service.configuration.load()
+        except (OSError, ValueError) as failure:
+            self._log(f"读取已保存配置失败，暂不创建后台运行上下文: {failure}")
+            return False
+        return _configurations_equivalent(saved, self.config)
+
+    def _reusable_run_context(self) -> Any | None:
+        """返回语义一致且运行契约仍可用的后台上下文；没有时返回 ``None``。
+
+        只比较配置语义不够：运行目录或冻结硬件快照可能已被删除、篡改。复用前必须
+        经过应用层的快照校验（``hardware_connection_path()``），否则要到下一次连接
+        才发现快照不可用，甚至让补偿面对一个无法证明可用的运行。
+        """
+        for run in (self.background_run, self.prepared_run):
+            if run is None:
+                continue
+            frozen = getattr(run, "hardware_config", None)
+            if not _configurations_equivalent(frozen, self.config):
+                continue
+            if self._run_context_is_usable(run):
+                return run
+        return None
+
+    def _run_context_is_usable(self, run: Any) -> bool:
+        """运行契约是否仍可解析；不可用时只记录原因，不抛出。"""
+        resolver = getattr(run, "hardware_connection_path", None)
+        if not callable(resolver):
+            self._log(
+                f"运行 {getattr(run, 'run_id', run)} 没有硬件快照解析入口；"
+                "不将其视为可复用的后台上下文"
+            )
+            return False
+        try:
+            resolver()
+        except (RunNotResumable, OSError, ValueError) as failure:
+            self._log(
+                f"运行 {getattr(run, 'run_id', run)} 的冻结快照不可用；"
+                f"不将其视为可复用的后台上下文: {failure}"
+            )
+            return False
+        return True
 
     def measurement_config_path(self) -> str:
         """返回硬件连接与测量应使用的配置路径。
@@ -552,10 +707,10 @@ class ApplicationCoordinator:
             return None
         if not self._release_previous_port_for_finalize():
             return None
-        pending = self._freeze_pending_run()
+        pending, created = self._freeze_pending_run()
         if pending is None:
             return None
-        self._pending_run = pending
+        self._stage_pending_run(pending, created_here=created)
         self._set_state(RunFlowState.FINALIZING)
         self._log(
             f"已冻结待提交运行 {pending.run_id}，运行目录: {pending.run_directory}"
@@ -590,27 +745,88 @@ class ApplicationCoordinator:
         )
         return False
 
-    def _freeze_pending_run(self):
-        """步骤：把已保存配置冻结为运行目录快照；失败不切换当前运行。"""
+    def _stage_pending_run(self, run: Any, *, created_here: bool) -> None:
+        """登记待提交运行，并记录它是否由本次连接事务新建。
+
+        ``created_here=False`` 表示复用了保存阶段已经建立的上下文：连接失败时只能
+        清掉待提交引用，不能撤销那份已经成功保存的运行。所有权是补偿判据的一部分，
+        因此引用与标志必须同时写入，任何调用方都不能只设置其中一个。
+        """
+        self._pending_run = run
+        self._pending_run_created_here = created_here
+
+    def _freeze_pending_run(self, *, mark_reconnect: bool = True):
+        """步骤：把已保存配置冻结为运行目录快照；失败不切换当前运行。
+
+        返回 ``(上下文, 是否本次新建)``；失败返回 ``(None, False)``。
+
+        保存配置时可能已经创建好语义一致的后台上下文（:meth:`ensure_run_context`），
+        此时直接复用它，绝不为同一份配置再写第二个运行目录；``False`` 让补偿路径知道
+        这份运行属于已完成的保存，不能随连接失败删除。``mark_reconnect`` 只控制保存
+        路径的失败是否把状态改成“需要重连”：保存后的上下文创建失败只写日志，不影响
+        一个仍在连接的旧运行；最终化路径仍会向用户弹出失败原因。
+        """
+        reusable = self._reusable_run_context()
+        if reusable is not None:
+            self.background_run = reusable
+            self._log(
+                f"复用后台运行上下文 {getattr(reusable, 'run_id', reusable)}，"
+                "不重复创建运行"
+            )
+            return reusable, False
         try:
-            return prepare_configuration(
+            pending = prepare_configuration(
                 str(self.config_path),
                 paths=self.paths,
-                hardware_config=self.config,
+                # 运行上下文必须是冻结快照：保存后界面继续编辑时不共享同一份嵌套字典。
+                hardware_config=copy.deepcopy(self.config),
             )
         except Exception as failure:  # noqa: BLE001 - 建运行失败必须回到界面，且不得切换运行
             self._log(f"冻结待提交运行失败: {failure}")
-            self._warn("最终化失败", str(failure))
-            # 旧端口已在冻结前释放；旧运行若还在，只能通过重新连接继续。
-            if self.prepared_run is not None:
-                self._set_state(RunFlowState.RECONNECT_REQUIRED)
-            return None
+            if mark_reconnect:
+                # 最终化是用户明确要求的一次动作：失败必须弹到界面上。
+                self._warn("最终化失败", str(failure))
+                # 旧端口已在冻结前释放；旧运行若还在，只能通过重新连接继续。
+                if self.prepared_run is not None:
+                    self._set_state(RunFlowState.RECONNECT_REQUIRED)
+            return None, False
+        self.background_run = pending
+        return pending, True
+
+    def _has_context_for_saved_configuration(self) -> bool:
+        """当前后台上下文是否就是最近一次保存的配置，且契约仍可用。"""
+        run = self.background_run
+        if run is None:
+            return False
+        if not _configurations_equivalent(
+            getattr(run, "hardware_config", None), self.config
+        ):
+            return False
+        return self._run_context_is_usable(run)
+
+    def can_reconnect_current_run(self) -> bool:
+        """最终入口是否只会重连当前运行（没有更新的已保存配置上下文）。
+
+        页面用它决定最终按钮的文案：端口丢失后若用户又保存了一份语义不同的配置，
+        按钮必须回到“完成配置并连接仪器”，否则用户会以为在重连旧运行，实际却丢掉
+        刚保存的配置。
+        """
+        return self._should_reconnect()
 
     def _should_reconnect(self) -> bool:
         return (
             self._state is RunFlowState.RECONNECT_REQUIRED
             and self.prepared_run is not None
             and self.instrument_ctrl is None
+            # 最近一次保存还没有对应的后台上下文：先走完整最终化（保存并创建/复用），
+            # 不能把刚保存的配置静默替换成旧运行。
+            and not self._saved_configuration_pending
+            # 最近一次保存已经产生了不同的后台上下文：本次最终化应连接它，而不是
+            # 静默重连旧运行并把新保存的配置留在无人使用的位置。
+            and (
+                self.background_run is None
+                or self.background_run is self.prepared_run
+            )
         )
 
     def _start_reconnect(self, bind_signals: Callable[[Any], None] | None) -> bool:
@@ -654,6 +870,14 @@ class ApplicationCoordinator:
             # 原子提交：端口已经就绪，此时才把待提交运行交给测量页。
             self.prepared_run = target
             self._pending_run = None
+            # 已提交的运行同时就是最新的后台上下文：下一次保存未变化时直接复用它。
+            self.background_run = target
+        elif self.background_run is None:
+            # 重连不覆盖更新的后台上下文：端口丢失后用户可能已经保存了另一份配置，
+            # 静默把它换回旧运行会让最近一次保存失去对应的运行目录。
+            self.background_run = target
+        self._pending_run_created_here = False
+        self._saved_configuration_pending = False
         self._reconnecting = False
         self._set_state(RunFlowState.CONNECTED)
         self._log(
@@ -741,9 +965,31 @@ class ApplicationCoordinator:
         return True
 
     def _compensate_pending_run(self) -> bool:
-        """守卫式放弃待提交运行；返回是否为干净补偿。"""
+        """守卫式放弃待提交运行；返回是否为干净补偿。
+
+        补偿只撤销**本次连接事务新建**、且尚未提交的运行。保存阶段已经建立的上下文
+        属于一次已完成的保存（``_pending_run_created_here`` 为 ``False``）：连接失败
+        只清掉待提交引用，保留运行目录，重试时继续复用。待提交运行就是当前已提交运行
+        时同样只清引用，避免误删正在使用的运行历史。
+        """
         pending = self._pending_run
         if pending is None:
+            return True
+        if pending is self.prepared_run:
+            self._pending_run = None
+            self._pending_run_created_here = False
+            self._log(
+                f"运行 {getattr(pending, 'run_id', pending)} 已是当前运行，"
+                "连接未完成时不撤销其目录"
+            )
+            return True
+        if not self._pending_run_created_here:
+            self._pending_run = None
+            self._pending_run_created_here = False
+            self._log(
+                f"运行 {getattr(pending, 'run_id', pending)} 属于已完成的配置保存，"
+                "连接未完成时保留其运行目录"
+            )
             return True
         try:
             self._discard_pending_run(pending)
@@ -751,6 +997,9 @@ class ApplicationCoordinator:
             self._log(f"撤销待提交运行失败: {failure}")
             return False
         self._pending_run = None
+        self._pending_run_created_here = False
+        if self.background_run is pending:
+            self.background_run = None
         self._log(
             f"待提交运行 {getattr(pending, 'run_id', pending)} 未提交，已放弃"
         )
@@ -806,6 +1055,10 @@ class ApplicationCoordinator:
             )
             return None
         self.prepared_run = prepared
+        # 加载的运行同时成为最新的后台上下文：随后保存未变化时复用同一运行。
+        self.background_run = prepared
+        # 加载的是运行目录里的冻结快照，不存在“已保存但未建上下文”的差异。
+        self._saved_configuration_pending = False
         # 加载的运行还没有端口：用户需要走“重新连接仪器”，而不是再冻结一份新运行。
         self._set_state(RunFlowState.RECONNECT_REQUIRED)
         self._log(
@@ -828,14 +1081,17 @@ class ApplicationCoordinator:
             return False
         try:
             # 两页共享一份草稿：任一页回填失败时一起回滚，不留下半新半旧的界面。
-            apply_config_to_pages([page, self.power_page], config, log=self._log)
+            # 草稿与运行快照必须隔离：加载后的界面编辑不能就地改写 ``hardware_config``，
+            # 否则“配置语义是否变化”会被污染，复用判断会把改动当成未变化。
+            draft = copy.deepcopy(config)
+            apply_config_to_pages([page, self.power_page], draft, log=self._log)
         except ConfigBackfillError as failure:
             self._log(f"冻结配置同步到配置页失败: {failure}")
             return False
         except Exception as failure:  # noqa: BLE001 - 展示失败不阻断运行契约，但必须可见
             self._log(f"冻结配置同步到配置页出现未预期错误: {failure}")
             return False
-        self.config = dict(config)
+        self.config = draft
         # 历史运行快照也可能是 1.0：回填后同样进入只读，不允许把旧快照当编辑稿保存。
         self._sync_page_read_only()
         return True

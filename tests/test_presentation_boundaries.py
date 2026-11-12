@@ -41,6 +41,16 @@ CROSS_CUTTING_INFRASTRUCTURE = "infrastructure.logging"
 # UI 测试只覆盖表现层与 DTO/端口，装配真实后端的场景属于 tests/integration。
 BACKEND_IMPLEMENTATION_ROOTS = HARDWARE_ROOTS | {"app", "infrastructure"}
 
+# 纯 Python 表现层模块：不导入 Qt，也不导入页面注册表。新增此类模块时在这里登记，
+# 避免每个步骤各写一套 AST 扫描。
+QT_FREE_PRESENTATION_MODULES = (
+    "pages.py",
+    "measurement_state.py",
+    "measurement_stage.py",
+)
+QT_BINDING_ROOTS = frozenset({"PySide6", "PyQt5", "PyQt6", "PySide2"})
+PAGE_REGISTRY_MODULE = "presentation.qt.pages"
+
 # 步骤 14：配置 authoring、设备绑定与 domain 校验的唯一实现留在 application/domain。
 # 门禁按模块族判定：新增 ``application.configuration_*`` 或 ``domain.configuration.*``
 # 模块会自动纳入，不依赖手工维护的模块清单。存量依赖按“文件 -> 模块 -> 名称”显式登记。
@@ -197,6 +207,34 @@ def _imported_roots(tree):
         elif isinstance(node, ast.ImportFrom) and node.module:
             roots.add(node.module.split(".")[0])
     return roots
+
+
+def _resolved_import_modules(tree, package):
+    """把绝对/相对导入解析成完整模块名。
+
+    覆盖 ``from . import pages``、``from .pages import X``、
+    ``from presentation.qt import pages`` 与 ``import presentation.qt.pages`` 四种
+    形式；只检查 ``node.module`` 会漏掉前两种和包内具名导入。
+    """
+    modules = set()
+    package_parts = package.split(".")
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                base_parts = package_parts[: len(package_parts) - (node.level - 1)]
+                base = ".".join(base_parts)
+                if node.module:
+                    modules.add(".".join(part for part in (base, node.module) if part))
+                for alias in node.names:
+                    modules.add(".".join(part for part in (base, alias.name) if part))
+            elif node.module:
+                modules.add(node.module)
+                modules.update(
+                    f"{node.module}.{alias.name}" for alias in node.names
+                )
+    return modules
 
 
 def _is_configuration_business_module(module):
@@ -463,6 +501,57 @@ class PresentationBoundaryTests(unittest.TestCase):
             if hardware:
                 violations.append(f"{path.relative_to(ROOT)}: {sorted(hardware)}")
         self.assertEqual(violations, [])
+
+    def test_qt_free_presentation_modules_do_not_import_qt_or_page_registry(self):
+        """纯 Python 表现层模块不得导入 Qt 或页面注册表，避免绕过页面装配门禁。"""
+        violations = []
+        for name in QT_FREE_PRESENTATION_MODULES:
+            path = QT_ROOT / name
+            if not path.is_file():
+                continue
+            modules = _resolved_import_modules(_tree(path), "presentation.qt")
+            roots = {module.split(".")[0] for module in modules}
+            if roots & QT_BINDING_ROOTS:
+                violations.append(
+                    f"{path.relative_to(ROOT)} imports Qt: "
+                    f"{sorted(roots & QT_BINDING_ROOTS)}"
+                )
+            if PAGE_REGISTRY_MODULE in modules:
+                violations.append(
+                    f"{path.relative_to(ROOT)} imports {PAGE_REGISTRY_MODULE}"
+                )
+        self.assertEqual(
+            violations,
+            [],
+            "纯 Python 表现层模块不得导入 Qt 或页面注册表；新增此类模块时登记到 "
+            "QT_FREE_PRESENTATION_MODULES: " + "; ".join(violations),
+        )
+
+    def test_qt_free_import_scan_resolves_relative_and_absolute_forms(self):
+        """门禁自身要识别相对导入、包内具名导入与绝对导入，不能只看 node.module。"""
+        for source in (
+            "from . import pages",
+            "from .pages import PAGE_DEFINITIONS",
+            "from presentation.qt import pages",
+            "import presentation.qt.pages",
+        ):
+            with self.subTest(source=source):
+                modules = _resolved_import_modules(
+                    ast.parse(source), "presentation.qt"
+                )
+                self.assertIn(PAGE_REGISTRY_MODULE, modules)
+
+        for source in (
+            "import PySide6.QtWidgets",
+            "from PySide6.QtCore import QObject",
+            "from PySide2 import QtWidgets",
+        ):
+            with self.subTest(source=source):
+                modules = _resolved_import_modules(
+                    ast.parse(source), "presentation.qt"
+                )
+                roots = {module.split(".")[0] for module in modules}
+                self.assertTrue(roots & QT_BINDING_ROOTS)
 
     def test_presentation_reaches_infrastructure_only_through_the_composition_root(self):
         """表现层不装配基础设施：路径、存储与扫描器都由 composition/app 注入。

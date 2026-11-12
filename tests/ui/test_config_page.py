@@ -640,32 +640,22 @@ class ConfigurationPageTests(unittest.TestCase):
             [{"start_power": -38.0, "step": 1.0, "stop_power": -10.0}],
         )
 
-    def test_driver_gain_control_follows_the_driver_mode(self):
-        page = self.make_page()
+    def test_driver_group_follows_the_driver_mode(self):
+        page = self.make_page(driver_mode={"enabled": True})
         page.driver_gain.setText("20.5")
         page.driver_max_input_power.setText("10")
 
+        self.assertTrue(page.driver_parameters_group.isVisibleTo(page))
+
         page.set_test_mode(False)
 
-        for widget in (
-            page.driver_gain,
-            page.driver_gain_label,
-            page.driver_max_input_power,
-            page.driver_max_input_power_label,
-        ):
-            self.assertFalse(widget.isEnabled())
-        self.assertEqual(page.driver_gain.text(), "20.5", "禁用时保留已填写的值")
+        self.assertFalse(page.driver_parameters_group.isVisibleTo(page))
+        self.assertEqual(page.driver_gain.text(), "20.5", "隐藏时保留已填写的值")
         self.assertEqual(page.driver_max_input_power.text(), "10")
 
         page.set_test_mode(True)
 
-        for widget in (
-            page.driver_gain,
-            page.driver_gain_label,
-            page.driver_max_input_power,
-            page.driver_max_input_power_label,
-        ):
-            self.assertTrue(widget.isEnabled())
+        self.assertTrue(page.driver_parameters_group.isVisibleTo(page))
         self.assertEqual(page.driver_gain.text(), "20.5")
         self.assertEqual(page.driver_max_input_power.text(), "10")
 
@@ -713,25 +703,18 @@ class ConfigurationPageTests(unittest.TestCase):
         }
         self.assertIn("驱放最大输入功率 (dBm)", driver_labels)
 
-    def test_driver_group_explains_the_current_test_mode(self):
-        """驱放组用一行状态说明模式；无驱放时只灰显控件，分组自身保留。"""
+    def test_no_driver_mode_does_not_render_driver_settings(self):
+        """无驱放测试时整张驱放参数卡不出现，也不留模式说明行。"""
         page = self.make_page(
-            driver_mode={"enabled": True, "estimated_gain_db": 20.5}
+            driver_mode={"enabled": False, "estimated_gain_db": 20.5}
         )
 
-        self.assertIn("有驱放测试", page.driver_mode_status.text())
-        self.assertEqual(page.driver_mode_status.property("tone"), "info")
-        self.assertTrue(page.driver_gain.isEnabled())
-        self.assertTrue(page.driver_max_input_power.isEnabled())
+        self.assertFalse(page.driver_parameters_group.isVisibleTo(page))
+        self.assertFalse(hasattr(page, "driver_mode_status"))
 
-        page.set_test_mode(False)
+        page.set_test_mode(True)
 
-        self.assertIn("无驱放测试", page.driver_mode_status.text())
-        self.assertEqual(page.driver_mode_status.property("tone"), "muted")
-        self.assertFalse(page.driver_gain.isEnabled())
-        self.assertFalse(page.driver_max_input_power.isEnabled())
-        self.assertTrue(page.driver_parameters_group.isEnabled())
-        self.assertTrue(page.driver_mode_status.isVisibleTo(page))
+        self.assertTrue(page.driver_parameters_group.isVisibleTo(page))
 
     def test_driver_gain_round_trips_through_save_and_backfill(self):
         page = self.make_page(driver_mode={"enabled": True})

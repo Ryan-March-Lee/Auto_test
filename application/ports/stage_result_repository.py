@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -359,10 +360,16 @@ class LoadedStageResult:
     schema、类型、状态和身份校验的正式 DTO：必须是 ``completed`` 状态，且带
     非空 ``measurement_id`` 与 ``created_at``。字段不匹配（类型、阶段、
     测量身份或状态）说明端口实现违反了契约，构造时直接拒绝。
+
+    ``raw_bytes`` 是解析、摘要与 DTO 校验所依据的**同一份字节**。端口实现应尽量
+    提供它：逐字节导出因此不需要在校验之后重读文件，不会出现“DTO 通过校验、导出
+    内容却是之后被替换的新文件”的错位。给出的字节必须与 ``reference`` 的摘要和
+    大小一致，否则构造即失败。
     """
 
     reference: StageResultReference
     result: MeasurementResult
+    raw_bytes: bytes | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.reference, StageResultReference):
@@ -393,6 +400,17 @@ class LoadedStageResult:
                 "加载结果的 measurement_id 与文件引用不一致："
                 f"{formal.measurement_id!r} != {self.reference.measurement_id!r}"
             )
+        if self.raw_bytes is not None:
+            raw = self.raw_bytes
+            if not isinstance(raw, bytes):
+                raise StageResultError("阶段结果原始字节必须是 bytes")
+            if (
+                len(raw) != self.reference.size_bytes
+                or hashlib.sha256(raw).hexdigest() != self.reference.sha256
+            ):
+                raise StageResultError(
+                    "阶段结果原始字节与引用登记的摘要或大小不一致"
+                )
         object.__setattr__(self, "result", formal)
 
     @property
@@ -446,6 +464,7 @@ class StageResultRepository(Protocol):
         路径必须直接位于该阶段的目录内；实现按“阶段目录边界 → 文件存在 →
         JSON 解析 → 正式 DTO → 类型/状态/schema”顺序校验，缺失、越界、损坏、
         错误类型或未完成状态都抛出 :class:`StageResultError`。端口不扫描最新文件。
+        返回值的 ``raw_bytes`` 应与解析使用同一份字节，供逐字节导出复用。
         """
         ...
 

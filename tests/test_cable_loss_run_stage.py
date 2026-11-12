@@ -24,6 +24,7 @@ from application.dto import (
     validate_generated_measurement_id,
 )
 from application.measurements import CableLossUseCase
+from application.ports.gui_data_service import RESULT_SOURCE_STAGE
 from application.ports.stage_result_repository import MeasurementStage, StageResultReference
 from application.run_stages import (
     STAGE_RESULT_REFERENCE_SCHEMA,
@@ -667,8 +668,8 @@ class CableLossRunStageTests(unittest.TestCase):
         self.assertIsNone(manifest.stage("cable_loss").result)
         self.assertFalse((layout.run_directory / CABLE_LOSS_INPUT_PATH).exists())
 
-    def test_result_query_adapter_reads_the_stage_file_behind_the_run_reference(self):
-        """历史列表/最新结果/导出跟随运行引用读取阶段目录中的权威结果。"""
+    def test_result_query_adapter_browses_the_stage_directory(self):
+        """步骤 19：浏览直接扫描阶段目录，运行引用不再重复列出。"""
         request = self._request()
         use_case = CableLossUseCase(request, sleep_fn=lambda _: None)
         use_case.measure_all_frequencies()
@@ -679,21 +680,24 @@ class CableLossRunStageTests(unittest.TestCase):
             run_history=FileRunHistoryRepository(runs=self.repository),
             stage_results=self.stage_repository,
         )
-        rows = [
-            row
-            for row in query.list_results()
-            if row.run_id == RUN_ID and row.source_result == CABLE_LOSS_INPUT_PATH
-        ]
+        rows = [row for row in query.list_results() if row.run_id == RUN_ID]
         self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row.source, RESULT_SOURCE_STAGE)
+        self.assertEqual(
+            row.result_id, f"stage::cable_loss::{result.measurement_id}"
+        )
+        self.assertEqual(row.filename, f"{result.measurement_id}.json")
+        self.assertIsNone(row.source_result)
 
-        loaded = query.load(rows[0].result_id)
+        loaded = query.load(row.result_id)
         self.assertEqual(loaded.result.measurement_id, result.measurement_id)
         self.assertTrue(loaded.result.points)
         self.assertEqual(
             query.latest_result("cable_loss").result.measurement_id,
             result.measurement_id,
         )
-        exported = json.loads(query.read_bytes(rows[0].result_id))
+        exported = json.loads(query.read_bytes(row.result_id))
         self.assertEqual(exported["measurement_id"], result.measurement_id)
         self.assertIn("cable_losses", exported)
         self.assertEqual(exported["run_id"], RUN_ID)

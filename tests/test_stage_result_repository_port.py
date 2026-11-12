@@ -12,6 +12,7 @@
 步骤的适配器测试覆盖。
 """
 
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -358,6 +359,35 @@ class LoadedStageResultTests(unittest.TestCase):
             LoadedStageResult(
                 reference=self.reference(),
                 result=cable_loss_result(created_at=None),
+            )
+
+    def test_loaded_result_accepts_only_bytes_matching_the_reference(self):
+        raw = b'{"run_id": "x"}'
+        reference = StageResultReference(
+            stage=MeasurementStage.CABLE_LOSS,
+            measurement_id=NOW_ID,
+            path=Path("C:/results") / MeasurementStage.CABLE_LOSS.value
+            / f"{NOW_ID}.json",
+            sha256=hashlib.sha256(raw).hexdigest(),
+            size_bytes=len(raw),
+        )
+
+        loaded = LoadedStageResult(
+            reference=reference, result=cable_loss_result(), raw_bytes=raw
+        )
+
+        self.assertEqual(loaded.raw_bytes, raw)
+        with self.assertRaisesRegex(StageResultError, "原始字节"):
+            LoadedStageResult(
+                reference=reference,
+                result=cable_loss_result(),
+                raw_bytes=b'{"run_id": "y"}',
+            )
+        with self.assertRaisesRegex(StageResultError, "bytes"):
+            LoadedStageResult(
+                reference=reference,
+                result=cable_loss_result(),
+                raw_bytes="not-bytes",
             )
 
 

@@ -20,7 +20,8 @@
   没有 ``latest_path()`` 一类入口，正式测量不会隐式消费“最新结果”；
 - 校验顺序固定为“阶段目录边界 → 文件存在 → UTF-8/JSON 解析 → 正式 DTO →
   身份/类型/状态/schema”。摘要与大小取自**同一次读取的字节**，因此返回的文件事实
-  与解析结果必然对应，调用方可在测量开始前用摘要复核文件未变化；
+  与解析结果必然对应，调用方可在测量开始前用摘要复核文件未变化；这份字节同时随
+  加载结果返回，逐字节导出无需在校验后重读文件；
 - 返回结果必须与文件名中的测量身份一致、类型与阶段相符且状态为 ``completed``；
   缺少身份/保存时间的旧运行结果不会被当作正式阶段结果读取，仍走运行目录的兼容入口；
 - 列举只返回可读取的 ``completed`` 正式结果，跳过损坏、未完成或类型不匹配的文件，
@@ -131,7 +132,8 @@ class FileStageResultRepository:
         校验顺序就是端口要求的顺序：先确认路径直接位于阶段目录内（展开符号链接后
         仍越界即拒绝），再确认目标存在且是普通文件，然后按 UTF-8/JSON 解析、正式
         结果 DTO、身份/类型/状态/schema 逐层校验。摘要与大小来自解析用的同一份
-        字节，因此不会出现“摘要对应旧内容、DTO 对应新内容”的错位。
+        字节，因此不会出现“摘要对应旧内容、DTO 对应新内容”的错位；这份字节也随
+        加载结果返回，导出方不必在校验之后重新读取可能已被替换的文件。
 
         任何“不能作为该阶段正式结果”的情况都以 :class:`StageResultError` 结束：
         空路径、目录越界、缺失文件、损坏 JSON、非正式文档、旧结果缺少身份、类型或
@@ -165,7 +167,9 @@ class FileStageResultRepository:
             sha256=hashlib.sha256(raw_bytes).hexdigest(),
             size_bytes=len(raw_bytes),
         )
-        return LoadedStageResult(reference=reference, result=result)
+        return LoadedStageResult(
+            reference=reference, result=result, raw_bytes=raw_bytes
+        )
 
     def list_results(
         self,

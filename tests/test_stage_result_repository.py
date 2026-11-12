@@ -384,6 +384,8 @@ class StageResultLoadTests(unittest.TestCase):
         self.assertEqual(
             loaded.sha256, hashlib.sha256(saved.path.read_bytes()).hexdigest()
         )
+        # 解析、摘要与返回的原始字节来自同一次读取，逐字节导出可直接复用。
+        self.assertEqual(loaded.raw_bytes, saved.path.read_bytes())
 
     def test_each_stage_loads_its_own_formal_result(self):
         cases = (

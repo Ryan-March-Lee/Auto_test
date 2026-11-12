@@ -17,6 +17,7 @@ from application.dto import (
 )
 from application.ports.gui_data_service import (
     RESULT_SOURCE_RUN,
+    RESULT_SOURCE_STAGE,
     LoadedResultDto,
     ResultFileDto,
 )
@@ -113,6 +114,21 @@ class HistoryRowTests(unittest.TestCase):
         row = HistoryRow.from_dto(_row("cable_loss.json", run_id=None))
 
         self.assertEqual(row.source_label, "未登记来源")
+
+    def test_stage_result_row_shows_its_source_run(self):
+        row = HistoryRow.from_dto(
+            ResultFileDto(
+                result_id=f"stage::cable_loss::{RUN_ID}",
+                filename=f"{RUN_ID}.json",
+                file_type="线损数据",
+                modified_at=datetime(2026, 10, 27, 1, 2, 3),
+                source=RESULT_SOURCE_STAGE,
+                run_id=RUN_ID,
+            )
+        )
+
+        self.assertEqual(row.source, RESULT_SOURCE_STAGE)
+        self.assertEqual(row.source_label, f"阶段结果 · {RUN_ID}")
 
     def test_row_rejects_objects_that_are_not_history_rows(self):
         with self.assertRaises(TypeError):

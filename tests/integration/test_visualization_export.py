@@ -17,13 +17,16 @@ from application.dto import (
     DriverPowerMappingMeasurementResult,
     MeasurementResult,
     MeasurementType,
+    generate_measurement_id,
     measurement_result_from_document,
 )
 from application.ports.gui_data_service import (
     RESULT_SOURCE_RUN,
+    RESULT_SOURCE_STAGE,
     LoadedResultDto,
     ResultFileDto,
 )
+from application.ports.stage_result_repository import MeasurementStage
 from application.dto.export_requests import ExportFormat
 from application.run_stages import RunStageRecorder
 from domain.run.models import (
@@ -37,6 +40,7 @@ from infrastructure.filesystem.paths import PathService
 from infrastructure.gui_data_service import ResultExportAdapter, ResultQueryAdapter
 from infrastructure.persistence.run_history_repository import FileRunHistoryRepository
 from infrastructure.persistence.run_repository import RunRepository
+from infrastructure.persistence.stage_result_repository import FileStageResultRepository
 from presentation.qt.visualization_page import VisualizationPage, result_plot_series
 
 
@@ -68,6 +72,15 @@ def _driver_result() -> DriverPowerMappingMeasurementResult:
             DriverMappingRawPoint(frequency_ghz="4.8", source_power_dbm=-10.0, driver_output_power_dbm=1.0),
         ),
     )
+
+
+def _destroy_page(page) -> None:
+    """离屏用例结束后销毁顶层控件，避免 Qt 对象在后续用例里累积。"""
+    from PySide6.QtCore import QCoreApplication, QEvent
+
+    page.close()
+    page.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 class VisualizationDataBoundaryTests(unittest.TestCase):
@@ -521,6 +534,84 @@ class VisualizationPageRequestTests(unittest.TestCase):
 
         self.warning_dialog.assert_called_once()
         dialog.assert_not_called()
+
+
+class StageDirectoryVisualizationTests(unittest.TestCase):
+    """步骤 19：真实页面从阶段目录列出、加载、绘图并导出。"""
+
+    RUN_ID = "20261112T010203Z_a1b2c3d4"
+
+    def setUp(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtWidgets import QApplication
+
+        self.app = QApplication.instance() or QApplication([])
+        self._temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temporary.cleanup)
+        self.root = Path(self._temporary.name)
+        # 离屏环境里任何模态对话框都会永久阻塞：统一替身并记录调用。
+        for name in ("warning", "information", "critical"):
+            patcher = patch(f"presentation.qt.visualization_page.QMessageBox.{name}")
+            setattr(self, f"{name}_dialog", patcher.start())
+            self.addCleanup(patcher.stop)
+
+    def _page(self):
+        from application.export_service import ResultExportUseCase
+        from presentation.qt.history_view_model import HistoryViewModel
+
+        paths = PathService(self.root)
+        stage_results = FileStageResultRepository(paths=paths)
+        query = ResultQueryAdapter(
+            paths,
+            run_history=FileRunHistoryRepository(
+                runs=RunRepository(paths.test_results_dir / "runs")
+            ),
+            stage_results=stage_results,
+        )
+        result = replace(
+            _amplifier_result(),
+            run_id=self.RUN_ID,
+            measurement_id=generate_measurement_id(),
+            created_at="2026-11-12T01:02:03+00:00",
+        )
+        saved = stage_results.save(MeasurementStage.AMPLIFIER, result)
+        loaded = query.load(f"stage::amplifier::{saved.measurement_id}")
+        page = VisualizationPage(
+            history=HistoryViewModel(query),
+            chooser=lambda: loaded,
+            export_service=ResultExportUseCase(
+                history=query, exports=ResultExportAdapter(query, paths)
+            ),
+        )
+        self.addCleanup(_destroy_page, page)
+        return page, query
+
+    def test_stage_result_is_drawn_by_the_real_page(self):
+        page, query = self._page()
+
+        [row] = query.list_results()
+        self.assertEqual(row.source, RESULT_SOURCE_STAGE)
+        self.assertTrue(page.load_test_data())
+
+        # 频率按数值排序（4.8 在前），真实绘图控件拿到了数据。
+        self.assertIn("4.8", page.freq_label.text())
+        self.assertTrue(page.data_plot_widget.ax1.lines)
+        self.assertTrue(page.data_plot_widget.ax2.lines)
+        self.assertTrue(page.save_as_button.isEnabled())
+
+    def test_stage_result_json_export_copies_the_authoritative_file(self):
+        page, query = self._page()
+        self.assertTrue(page.load_test_data())
+        [row] = query.list_results()
+        target = self.root / "stage_export.json"
+
+        with patch(
+            "presentation.qt.visualization_page.QFileDialog.getSaveFileName",
+            return_value=(str(target), "JSON files (*.json)"),
+        ):
+            self.assertTrue(page.export(ExportFormat.JSON))
+
+        self.assertEqual(target.read_bytes(), query.read_bytes(row.result_id))
 
 
 class ResultExportReportContractTests(unittest.TestCase):

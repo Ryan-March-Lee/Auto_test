@@ -42,7 +42,11 @@ from application.dto.run_history import (
     RunStageSummary,
 )
 from application.dto import measurement_result_from_document
-from application.ports.gui_data_service import LoadedResultDto, ResultFileDto
+from application.ports.gui_data_service import (
+    RESULT_SOURCE_STAGE,
+    LoadedResultDto,
+    ResultFileDto,
+)
 from application.ports.result_artifacts import ArtifactGenerationError
 from application.run_history_service import RunHistoryRequestError, RunHistoryService
 from application.run_stages import RunStageRecorder
@@ -600,6 +604,46 @@ class ResultReportLocationTests(unittest.TestCase):
 
         self.assertIs(report.state, ResultReportState.UNAVAILABLE)
         self.assertIn("位置入口", report.reason)
+
+    def test_stage_result_does_not_fall_back_to_another_results_report(self):
+        """阶段结果没有运行内路径时不能按“该运行第一份报告”猜归属。"""
+        loaded = self._amplifier()
+        row = ResultFileDto(
+            result_id="stage::amplifier::20261112T010203Z_abcdef12",
+            filename="20261112T010203Z_abcdef12.json",
+            file_type="功放测试",
+            modified_at=CREATED_AT,
+            source=RESULT_SOURCE_STAGE,
+            run_id=RUN_ID,
+        )
+        location = StaticLocationPort("/runs/report/artifacts/amplifier_report.html")
+        service = RunHistoryService(
+            statuses=StaticStatusPort([_summary()]),
+            locations=location,
+            results=StaticResultsPort([row], {row.result_id: loaded}),
+        )
+
+        report = service.report_for_result(row.result_id)
+
+        self.assertIs(report.state, ResultReportState.UNAVAILABLE)
+        self.assertIn("另存为", report.reason)
+        self.assertEqual(location.calls, [])
+
+    def test_run_result_without_a_source_path_is_not_attributed_by_guess(self):
+        loaded = self._amplifier()
+        row = self._row(loaded.result_id, loaded.filename, None)
+        location = StaticLocationPort("/runs/report/artifacts/amplifier_report.html")
+        service = RunHistoryService(
+            statuses=StaticStatusPort([_summary()]),
+            locations=location,
+            results=StaticResultsPort([row], {loaded.result_id: loaded}),
+        )
+
+        report = service.report_for_result(loaded.result_id)
+
+        self.assertIs(report.state, ResultReportState.UNAVAILABLE)
+        self.assertIn("来源路径", report.reason)
+        self.assertEqual(location.calls, [])
 
 
 # -- 基础设施：manifest 摘要 ----------------------------------------------

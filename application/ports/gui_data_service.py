@@ -16,8 +16,12 @@ from domain.run.models import ArtifactKind
 from .stage_result_repository import MeasurementStage
 
 
-# 历史结果只来自正式运行目录；旧全局兼容副本已不再参与历史查看。
+# 历史结果来自两个来源：
+# - ``stage``：独立阶段目录里的正式结果（重构计划步骤 19 起的浏览主来源）；
+# - ``run``：旧运行目录里的完整正式结果文档，按只读兼容分支保留。
+# 旧全局兼容副本仍不参与历史查看。
 RESULT_SOURCE_RUN = "run"
+RESULT_SOURCE_STAGE = "stage"
 
 
 @dataclass(frozen=True)
@@ -26,10 +30,13 @@ class ResultFileDto:
     filename: str
     file_type: str
     modified_at: datetime
+    # ``stage`` 表示独立阶段目录结果，``run`` 表示旧运行目录里的完整结果文档。
     source: str = RESULT_SOURCE_RUN
+    # 产生这份结果的运行（阶段结果的来源运行 / 旧运行结果的所属运行）。
     run_id: str | None = None
-    # 结果在运行目录内的相对路径；按结果定位同一次运行的交付产物时使用，
-    # 不是文件系统绝对路径，页面仍然只拿结果标识。
+    # 旧运行结果在运行目录内的相对路径；阶段目录结果没有运行内路径，因此为 ``None``。
+    # 定位同一次运行的交付产物时使用，不是文件系统绝对路径，页面仍然只拿结果标识。
+    # 为 ``None`` 时产物定位不得退回“该运行第一份产物”，只能明确报告无法归属。
     source_result: str | None = None
 
 
@@ -72,17 +79,31 @@ class ConfigurationPort(Protocol):
 class ResultQueryPort(Protocol):
     """历史结果查看/导出的只读查询契约。
 
-    该契约服务于历史浏览与用户显式选择的阶段结果加载，不提供隐式“最新结果”作为
+    该契约服务于结果浏览与用户显式选择的阶段结果加载，不提供隐式“最新结果”作为
     正式测量输入。查询对象以 ``result_id`` 标识结果，路径解析和目录边界校验由基础
     设施实现负责；``load_stage_result()`` 只接受调用方明确给出的阶段目录文件。
 
-    查询结果一律是已解析的正式结果 DTO：非正式 schema、类型与阶段/运行登记不一致
-    的文档不会出现在列表中，也不会被 ``load()`` 或 ``load_stage_result()`` 返回。
+    浏览主来源是独立阶段目录：``list_results()`` 直接扫描三类阶段目录并解析正式
+    结果 DTO，``result_id`` 编码阶段与测量身份（``stage::<阶段>::<measurement_id>``）；
+    旧运行目录中仍保留的完整结果文档通过只读兼容分支继续列出，使用内部
+    ``run::<run_id>::<相对路径>`` 标识。运行目录里的阶段结果引用指针不再单独列出，
+    对应的正式结果由阶段目录扫描给出，避免同一条结果出现两次。
+
+    查询结果一律是已解析的正式结果 DTO：非正式 schema、损坏、未完成、类型与阶段/
+    运行登记不一致的文档不会出现在列表中，也不会被 ``load()`` 或
+    ``load_stage_result()`` 返回。
     """
 
     def list_results(self) -> list[ResultFileDto]: ...
     def load(self, result_id: str) -> LoadedResultDto: ...
-    def read_bytes(self, result_id: str) -> bytes: ...
+    def read_bytes(self, result_id: str) -> bytes:
+        """逐字节读取结果原始文档，供 JSON 导出使用。
+
+        返回内容必须对应 ``load(result_id)`` 校验过的那份结果：实现应复用加载时
+        读取的同一份字节，不得在校验之后重读可能已被替换的文件。无法保证一致时
+        必须明确失败，而不是返回未经校验的新内容。
+        """
+        ...
     def load_stage_result(
         self, stage: MeasurementStage | str, path: str
     ) -> LoadedResultDto:

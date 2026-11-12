@@ -12,7 +12,8 @@
    运行明确拒绝，未知运行与单个删除失败按运行逐项返回，不影响同批次的其它运行；
 4. **按结果定位最终报告**：数据可视化页加载一条历史结果后，用例把结果映射到所属
    运行，并按来源结果精确匹配该运行的归档报告，返回“可用 / 不适用 / 缺失 / 不可用”
-   的结构化状态。
+   的结构化状态。独立阶段目录结果暂时没有运行内来源路径，因此不猜报告归属，返回
+   不可用并提示另存副本（产物跟随阶段目录由重构计划步骤 20 接入）。
 
 边界：
 
@@ -46,6 +47,7 @@ from application.dto.run_history import (
     RunHistorySummary,
 )
 from application.ports.gui_data_service import (
+    RESULT_SOURCE_STAGE,
     ResultQueryPort,
     RunArchiveStatusPort,
     RunDeletionPort,
@@ -229,6 +231,8 @@ class RunHistoryService:
 
         结果不在历史列表中属于调用错误，直接抛 :class:`RunHistoryRequestError`；
         结果不生成报告、报告缺失或位置入口未装配属于可展示状态，用结构化结果返回。
+        报告只按“运行 + 运行内来源路径”精确匹配：独立阶段目录结果没有这条路径，
+        不会退回该运行的第一份报告，而是返回不可用状态并提示另存副本。
         """
         if not isinstance(result_id, str) or not result_id.strip():
             raise RunHistoryRequestError("打开测试报告必须指定历史结果标识")
@@ -272,6 +276,24 @@ class RunHistoryService:
                 result_id,
                 ResultReportState.NOT_APPLICABLE,
                 reason="只有主功放测试结果会生成测试报告",
+            )
+        if row.source == RESULT_SOURCE_STAGE:
+            # 阶段目录结果没有运行内相对路径，而运行归档的产物只能按该路径精确匹配；
+            # 传 ``None`` 会退回“该运行第一份报告”，可能把另一份测量的报告当成它的。
+            # 在产物跟随阶段目录（重构计划步骤 20）之前，明确报告不可定位，不猜。
+            return ResultReportLocation(
+                result_id,
+                ResultReportState.UNAVAILABLE,
+                reason=(
+                    "阶段结果尚未关联运行归档报告，"
+                    "可用“另存为 → 测试报告…”生成副本"
+                ),
+            )
+        if row.source_result is None:
+            return ResultReportLocation(
+                result_id,
+                ResultReportState.UNAVAILABLE,
+                reason="历史结果没有登记运行内来源路径，无法确认哪份报告属于它",
             )
         try:
             # 直接走只读位置端口：结果列表已经给出运行标识，不再重复读取全部运行摘要。

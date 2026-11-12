@@ -28,6 +28,7 @@ from application.dto.run_history import (
 )
 from application.ports.gui_data_service import (
     RESULT_SOURCE_RUN,
+    RESULT_SOURCE_STAGE,
     LoadedResultDto,
     ResultFileDto,
     ResultQueryPort,
@@ -108,8 +109,12 @@ class HistoryRow:
 
     @property
     def source_label(self) -> str:
-        if self.source == RESULT_SOURCE_RUN and self.run_id:
-            return f"运行 {self.run_id}"
+        """来源列：阶段结果与旧运行结果都如实给出产生它的运行。"""
+        if self.run_id:
+            if self.source == RESULT_SOURCE_STAGE:
+                return f"阶段结果 · {self.run_id}"
+            if self.source == RESULT_SOURCE_RUN:
+                return f"运行 {self.run_id}"
         return UNREGISTERED_SOURCE_LABEL
 
     @property

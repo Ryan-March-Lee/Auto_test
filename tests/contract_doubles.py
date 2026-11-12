@@ -139,14 +139,20 @@ class RecordingStageRecorder:
         stage: str,
         reference: Any,
         *,
+        result_path: str | None = None,
+        extra_files: Any = None,
         description: str | None = None,
         now: Any = None,
     ) -> Any:
         """记录“运行时结果已写入阶段目录、运行目录只登记引用”的调用。"""
-        path = f"inputs/{stage}.json"
+        path = result_path or f"inputs/{stage}.json"
         self.stage_references.append((stage, reference))
         self.completed.append(
-            (stage, reference, {"result_path": path, "extra_files": {}})
+            (
+                stage,
+                reference,
+                {"result_path": path, "extra_files": dict(extra_files or {})},
+            )
         )
         return SimpleNamespace(path=path)
 

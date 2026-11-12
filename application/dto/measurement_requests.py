@@ -24,6 +24,7 @@ from .amplifier_inputs import AmplifierMeasurementInputs
 
 if TYPE_CHECKING:  # pragma: no cover - 仅用于类型标注，避免运行时循环导入
     from application.archival_service import ResultArchivalService
+    from application.ports.stage_artifacts import StageArtifactRepository
     from application.ports.stage_result_repository import StageResultRepository
     from application.run_stages import RunStageRecorder
     from instrument.ports import MeasurementInstrumentPort
@@ -168,6 +169,10 @@ class MeasurementRequest:
     # ``test_results/cable_loss/``、``test_results/driver_mapping/``，运行目录只
     # 登记引用。组装层必须为会产生正式结果的用例注入它。
     stage_result_repository: "StageResultRepository | None" = None
+    # 阶段交付产物（CSV/报告）仓库：步骤 20 起产物与正式阶段结果同目录，文件名由
+    # measurement_id 关联。它只决定是否生成派生产物，不决定正式结果的保存位置：
+    # 正式结果随 stage_result_repository 写入阶段目录。未装配时沿用旧运行目录归档。
+    stage_artifact_repository: "StageArtifactRepository | None" = None
     # 阶段成功提交后的自动归档服务；组装层总是注入，省略时只是不生成交付产物。
     archival_service: "ResultArchivalService | None" = None
     _expected_measurement_type: ClassVar[MeasurementType | None] = None

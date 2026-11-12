@@ -48,6 +48,7 @@ from application.ports.gui_data_service import (
     ResultFileDto,
 )
 from application.ports.result_artifacts import ArtifactGenerationError
+from application.ports.stage_result_repository import MeasurementStage
 from application.run_history_service import RunHistoryRequestError, RunHistoryService
 from application.run_stages import RunStageRecorder
 from domain.run.models import (
@@ -461,9 +462,11 @@ class RunHistoryServiceTests(unittest.TestCase):
 class StaticResultsPort:
     """固定返回一条历史结果及其已加载 DTO 的查询替身。"""
 
-    def __init__(self, rows=(), loaded=None):
+    def __init__(self, rows=(), loaded=None, *, stage_artifact=None):
         self.rows = tuple(rows)
         self.loaded = dict(loaded or {})
+        self.stage_artifact = stage_artifact
+        self.stage_artifact_calls = []
 
     def list_results(self):
         return list(self.rows)
@@ -472,6 +475,10 @@ class StaticResultsPort:
         if result_id not in self.loaded:
             raise FileNotFoundError(result_id)
         return self.loaded[result_id]
+
+    def stage_artifact_path(self, stage, measurement_id, kind):
+        self.stage_artifact_calls.append((stage, measurement_id, kind))
+        return self.stage_artifact
 
 
 class StaticLocationPort:
@@ -499,11 +506,20 @@ class ResultReportLocationTests(unittest.TestCase):
             source_result=source_result,
         )
 
-    def _amplifier(self):
+    def _amplifier(self, *, measurement_id=None):
         return LoadedResultDto(
             f"run::{RUN_ID}::{AMPLIFIER_RESULT_PATH}",
             "amplifier_measurement.json",
-            measurement_result_from_document(_amplifier_payload()),
+            measurement_result_from_document(
+                {
+                    **_amplifier_payload(),
+                    **(
+                        {"measurement_id": measurement_id}
+                        if measurement_id is not None
+                        else {}
+                    ),
+                }
+            ),
             run_id=RUN_ID,
             source_result=AMPLIFIER_RESULT_PATH,
         )
@@ -605,29 +621,117 @@ class ResultReportLocationTests(unittest.TestCase):
         self.assertIs(report.state, ResultReportState.UNAVAILABLE)
         self.assertIn("位置入口", report.reason)
 
-    def test_stage_result_does_not_fall_back_to_another_results_report(self):
-        """阶段结果没有运行内路径时不能按“该运行第一份报告”猜归属。"""
-        loaded = self._amplifier()
+    def test_stage_result_without_report_does_not_fall_back_to_another_results_report(self):
+        """阶段结果按 measurement_id 查找同目录报告，不猜该运行的第一份报告。"""
+        measurement_id = "20261112T010203Z_abcdef12"
+        loaded = self._amplifier(measurement_id=measurement_id)
         row = ResultFileDto(
-            result_id="stage::amplifier::20261112T010203Z_abcdef12",
-            filename="20261112T010203Z_abcdef12.json",
+            result_id=f"stage::amplifier::{measurement_id}",
+            filename=f"{measurement_id}.json",
             file_type="功放测试",
             modified_at=CREATED_AT,
             source=RESULT_SOURCE_STAGE,
             run_id=RUN_ID,
         )
         location = StaticLocationPort("/runs/report/artifacts/amplifier_report.html")
+        results = StaticResultsPort([row], {row.result_id: loaded})
         service = RunHistoryService(
             statuses=StaticStatusPort([_summary()]),
             locations=location,
-            results=StaticResultsPort([row], {row.result_id: loaded}),
+            results=results,
+        )
+
+        report = service.report_for_result(row.result_id)
+
+        self.assertIs(report.state, ResultReportState.MISSING)
+        self.assertIn("另存为", report.reason)
+        self.assertEqual(location.calls, [])
+        self.assertEqual(
+            results.stage_artifact_calls,
+            [(MeasurementStage.AMPLIFIER, measurement_id, ArtifactKind.REPORT)],
+        )
+
+    def test_stage_result_locates_the_report_in_its_stage_directory(self):
+        """步骤 20：阶段结果的报告与正式结果同目录，按 measurement_id 定位。"""
+        measurement_id = "20261112T010203Z_abcdef12"
+        loaded = self._amplifier(measurement_id=measurement_id)
+        row = ResultFileDto(
+            result_id=f"stage::amplifier::{measurement_id}",
+            filename=f"{measurement_id}.json",
+            file_type="功放测试",
+            modified_at=CREATED_AT,
+            source=RESULT_SOURCE_STAGE,
+            run_id=RUN_ID,
+        )
+        target = f"/results/amplifier/{measurement_id}_report.html"
+        results = StaticResultsPort(
+            [row], {row.result_id: loaded}, stage_artifact=target
+        )
+        service = RunHistoryService(
+            statuses=StaticStatusPort([_summary()]),
+            locations=StaticLocationPort("/runs/report/artifacts/amplifier_report.html"),
+            results=results,
+        )
+
+        report = service.report_for_result(row.result_id)
+
+        self.assertIs(report.state, ResultReportState.AVAILABLE)
+        self.assertEqual(report.location, target)
+        self.assertEqual(
+            results.stage_artifact_calls,
+            [(MeasurementStage.AMPLIFIER, measurement_id, ArtifactKind.REPORT)],
+        )
+
+    def test_run_result_with_a_measurement_id_still_uses_its_run_report(self):
+        """身份字段存在不等于结果在阶段目录：旧运行结果仍按来源路径定位。"""
+        measurement_id = "20261112T010203Z_abcdef12"
+        loaded = self._amplifier(measurement_id=measurement_id)
+        location = StaticLocationPort("/runs/report/artifacts/amplifier_report.html")
+        results = StaticResultsPort(
+            [self._row(loaded.result_id, loaded.filename, loaded.source_result)],
+            {loaded.result_id: loaded},
+            stage_artifact="/stage/another_measurement_report.html",
+        )
+        service = RunHistoryService(
+            statuses=StaticStatusPort([_summary()]),
+            locations=location,
+            results=results,
+        )
+
+        report = service.report_for_result(loaded.result_id)
+
+        self.assertIs(report.state, ResultReportState.AVAILABLE)
+        self.assertEqual(report.location, location.target)
+        self.assertEqual(
+            location.calls, [(RUN_ID, ArtifactKind.REPORT, AMPLIFIER_RESULT_PATH)]
+        )
+        self.assertEqual(results.stage_artifact_calls, [])
+
+    def test_stage_result_without_measurement_identity_is_unavailable(self):
+        """阶段结果缺少测量身份时不能退回运行目录或猜报告归属。"""
+        loaded = self._amplifier()
+        row = ResultFileDto(
+            result_id="stage::amplifier::unknown",
+            filename="unknown.json",
+            file_type="功放测试",
+            modified_at=CREATED_AT,
+            source=RESULT_SOURCE_STAGE,
+            run_id=RUN_ID,
+        )
+        location = StaticLocationPort("/runs/report/artifacts/amplifier_report.html")
+        results = StaticResultsPort([row], {row.result_id: loaded})
+        service = RunHistoryService(
+            statuses=StaticStatusPort([_summary()]),
+            locations=location,
+            results=results,
         )
 
         report = service.report_for_result(row.result_id)
 
         self.assertIs(report.state, ResultReportState.UNAVAILABLE)
-        self.assertIn("另存为", report.reason)
+        self.assertIn("测量身份", report.reason)
         self.assertEqual(location.calls, [])
+        self.assertEqual(results.stage_artifact_calls, [])
 
     def test_run_result_without_a_source_path_is_not_attributed_by_guess(self):
         loaded = self._amplifier()

@@ -76,9 +76,6 @@ class _FakeHistory:
     def read_bytes(self, result_id):  # pragma: no cover - 导出走端口
         raise AssertionError("导出用例不直接读取结果字节")
 
-    def latest_result(self, result_type):  # pragma: no cover
-        raise AssertionError("导出用例不查询最新结果")
-
 
 class _FakeExports:
     def __init__(self, report_path="reports/report/test_report.html"):

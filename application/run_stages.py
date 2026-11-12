@@ -321,6 +321,8 @@ class RunStageRecorder:
         stage: str,
         reference: StageResultReference,
         *,
+        result_path: str | None = None,
+        extra_files: Mapping[str, Any] | None = None,
         description: str | None = None,
         now: datetime | None = None,
     ) -> FileReference:
@@ -329,8 +331,10 @@ class RunStageRecorder:
         正式结果的权威副本由阶段结果仓库写进 ``test_results/<stage>/``；本方法不
         写入结果正文，只把阶段、测量身份、阶段目录路径、SHA-256 与大小写成引用
         文档，按阶段固定路径落到运行目录并登记 manifest，然后照常把阶段推进到
-        ``completed``。因此“manifest 报告完成”与“阶段目录中存在对应结果”仍然
-        是同一件事，但运行目录不再保存同一正式结果的第二份副本。
+        ``completed``。没有固定路径的阶段（主功放）由 ``result_path`` 显式给出引用
+        文档位置，``extra_files`` 用于继续登记拆分审计文件。因此“manifest 报告完成”
+        与“阶段目录中存在对应结果”仍然是同一件事，但运行目录不再保存同一正式结果
+        的第二份副本。
 
         登记前按引用重新加载权威结果并核对摘要与大小：``complete()`` 用“先写文件、
         再登记校验值”保证 manifest 的 ``completed`` 对应真实文件，引用路径必须守住
@@ -346,7 +350,7 @@ class RunStageRecorder:
                 f"阶段 {target_stage.value} 收到 {reference.stage.value} 的结果"
             )
         self._verify_stage_result_reference(reference)
-        path = default_stage_result_path(stage)
+        path = result_path or default_stage_result_path(stage)
         if path is None:
             raise ValueError(_MISSING_RESULT_PATH.format(stage=stage))
         document = _stage_result_reference_document(
@@ -356,6 +360,7 @@ class RunStageRecorder:
             stage,
             document,
             result_path=path,
+            extra_files=extra_files,
             description=description,
             now=now,
         )

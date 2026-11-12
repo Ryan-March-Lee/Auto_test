@@ -597,6 +597,25 @@ class ProductionDependencyTests(unittest.TestCase):
             "正式输入端口不得声明可省略的路径参数",
         )
 
+    def test_result_query_port_has_no_implicit_latest_result_entry(self):
+        """步骤 22：正式测量输入只能显式选择，查询端口不再提供“最新结果”。
+
+        删除该入口后，页面与用例必须先通过 ``list_results()`` 拿到明确标识，
+        或者由用户经文件选择器给出阶段目录路径；任何“自动取最新”的读取都会
+        在静态门禁或 ``test_compatibility_deletion_conditions`` 中失败。
+        """
+        from application.ports.gui_data_service import ResultQueryPort
+
+        self.assertFalse(hasattr(ResultQueryPort, "latest_result"))
+        for relative in (
+            ("application", "ports", "gui_data_service.py"),
+            ("infrastructure", "gui_data_service.py"),
+        ):
+            source = (ROOT.joinpath(*relative)).read_text(encoding="utf-8-sig")
+            with self.subTest(module="/".join(relative)):
+                self.assertNotIn("def latest_result", source)
+                self.assertNotIn(".latest_result(", source)
+
     def test_history_port_exposes_result_ids_instead_of_paths(self):
         source = (
             ROOT / "application" / "ports" / "run_history.py"

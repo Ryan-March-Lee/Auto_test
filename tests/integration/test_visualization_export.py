@@ -1,7 +1,6 @@
 import json
 import os
 import tempfile
-import time
 import unittest
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -195,90 +194,15 @@ class RunHistoryOnlyTests(unittest.TestCase):
         self.assertEqual(run_row.filename, CABLE_LOSS_INPUT_PATH.rsplit("/", 1)[-1])
         self.assertEqual(run_row.file_type, "线损数据")
 
-    def test_load_and_latest_result_read_the_run_result(self):
+    def test_load_reads_the_run_result(self):
         with tempfile.TemporaryDirectory() as directory:
             _paths, runs, adapter = self._setup(directory)
             self._complete_cable_loss(runs, losses={"1.0": {"cable1": 1.0}})
 
             run_row = adapter.list_results()[0]
             loaded = adapter.load(run_row.result_id)
-            latest = adapter.latest_result("cable_loss")
 
         self.assertEqual(loaded.result.cable_losses()["1.0"]["cable1"], 1.0)
-        self.assertEqual(latest.result.cable_losses()["1.0"]["cable1"], 1.0)
-
-    def test_latest_result_ignores_legacy_copies_without_run_results(self):
-        with tempfile.TemporaryDirectory() as directory:
-            paths, _runs, adapter = self._setup(directory)
-            self._write_legacy_copy(paths, losses={"1.0": 5.0})
-
-            with self.assertRaises(FileNotFoundError):
-                adapter.latest_result("cable_loss")
-
-    def test_latest_result_skips_a_corrupted_newest_run(self):
-        with tempfile.TemporaryDirectory() as directory:
-            _paths, runs, adapter = self._setup(directory)
-            old_id = "20261024T070000Z_aaaaaaaa"
-            new_id = "20261024T090000Z_bbbbbbbb"
-            self._complete_cable_loss(
-                runs,
-                losses={"1.0": {"cable1": 1.0}},
-                run_id=old_id,
-                now=datetime(2026, 10, 24, 7, 0, tzinfo=timezone.utc),
-            )
-            new_layout = self._complete_cable_loss(
-                runs,
-                losses={"1.0": {"cable1": 2.0}},
-                run_id=new_id,
-                now=datetime(2026, 10, 24, 9, 0, tzinfo=timezone.utc),
-            )
-            (new_layout.run_directory / CABLE_LOSS_INPUT_PATH).write_text(
-                json.dumps({"cable_losses": {"1.0": 999.0}}), encoding="utf-8"
-            )
-
-            latest = adapter.latest_result("cable_loss")
-
-        # 最新运行被篡改，应回退到更旧但有效的运行结果。
-        self.assertEqual(latest.result.cable_losses()["1.0"]["cable1"], 1.0)
-
-    def test_latest_result_raises_when_all_run_results_are_corrupt(self):
-        with tempfile.TemporaryDirectory() as directory:
-            paths, runs, adapter = self._setup(directory)
-            layout = self._complete_cable_loss(runs, losses={"1.0": {"cable1": 1.0}})
-            (layout.run_directory / CABLE_LOSS_INPUT_PATH).write_text(
-                json.dumps({"cable_losses": {"1.0": 42.0}}), encoding="utf-8"
-            )
-            self._write_legacy_copy(paths, losses={"1.0": 7.0})
-
-            with self.assertRaises(FileNotFoundError):
-                adapter.latest_result("cable_loss")
-
-    def test_latest_result_prefers_newer_run_over_newer_file_mtime(self):
-        with tempfile.TemporaryDirectory() as directory:
-            _paths, runs, adapter = self._setup(directory)
-            old_id = "20261024T070000Z_aaaaaaaa"
-            new_id = "20261024T090000Z_bbbbbbbb"
-            old_layout = self._complete_cable_loss(
-                runs,
-                losses={"1.0": {"cable1": 1.0}},
-                run_id=old_id,
-                now=datetime(2026, 10, 24, 7, 0, tzinfo=timezone.utc),
-            )
-            self._complete_cable_loss(
-                runs,
-                losses={"1.0": {"cable1": 2.0}},
-                run_id=new_id,
-                now=datetime(2026, 10, 24, 9, 0, tzinfo=timezone.utc),
-            )
-            # 把更旧运行的结果文件 mtime 改成“更晚”，验证顺序按运行创建时间而非 mtime。
-            future = time.time() + 100000
-            os.utime(
-                old_layout.run_directory / CABLE_LOSS_INPUT_PATH, (future, future)
-            )
-
-            latest = adapter.latest_result("cable_loss")
-
-        self.assertEqual(latest.result.cable_losses()["1.0"]["cable1"], 2.0)
 
     def test_history_list_skips_non_formal_registered_files(self):
         """manifest 登记的拆分明细不是正式结果，不得出现在历史列表里。"""
@@ -313,10 +237,10 @@ class RunHistoryOnlyTests(unittest.TestCase):
             split_id = f"run::{self.RUN_ID}::results/amplifier_measurement_1.0.json"
             with self.assertRaises(ValueError):
                 adapter.load(split_id)
-            latest = adapter.latest_result("amplifier_measurement")
+            formal = adapter.load(rows[0].result_id).result
 
         self.assertEqual([row.filename for row in rows], ["amplifier_measurement.json"])
-        self.assertTrue(latest.result.is_formal_result)
+        self.assertTrue(formal.is_formal_result)
 
     def test_result_type_must_match_the_manifest_definition(self):
         """阶段是线损，但文件内容是主功放结果时不得当作线损结果返回。"""
@@ -337,14 +261,6 @@ class RunHistoryOnlyTests(unittest.TestCase):
             self.assertEqual(adapter.list_results(), [])
             with self.assertRaises(ValueError):
                 adapter.load(f"run::{self.RUN_ID}::inputs/cable_loss.json")
-            with self.assertRaises(FileNotFoundError):
-                adapter.latest_result("cable_loss")
-
-    def test_unknown_result_type_is_rejected_by_latest_result(self):
-        with tempfile.TemporaryDirectory() as directory:
-            _paths, _runs, adapter = self._setup(directory)
-            with self.assertRaises(ValueError):
-                adapter.latest_result("mystery")
 
     def test_read_bytes_and_export_use_the_run_result(self):
         with tempfile.TemporaryDirectory() as directory:

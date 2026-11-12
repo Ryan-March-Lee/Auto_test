@@ -556,11 +556,11 @@ class MeasurementResult:
     def with_saved_result(self, *, archive_path: str | None = None) -> "MeasurementResult":
         """登记本次结果的保存路径，供上层展示与定位。
 
-        步骤 7 起线损、步骤 8 起驱动映射的权威文件位于阶段结果目录
-        （``test_results/<stage>/<measurement_id>.json``）；主功放的正式结果在当前
-        阶段仍位于运行目录的 ``results/``，待后续步骤迁移。字段名 ``archive_path``
-        为兼容既有调用方与已保存文档而保留，值始终是“这份结果实际落盘的位置”，
-        不暗示它必须在运行目录内。
+        步骤 7 起线损、步骤 8 起驱动映射、步骤 20 起装配阶段产物仓库的主功放结果，
+        权威文件都位于阶段结果目录（``test_results/<stage>/<measurement_id>.json``）；
+        未装配阶段产物仓库的旧兼容流程仍可能把主功放结果保存在运行目录。字段名
+        ``archive_path`` 为兼容既有调用方与已保存文档而保留，值始终是“这份结果实际
+        落盘的位置”，不暗示它必须在运行目录内。
         """
         references = dict(self.result_reference)
         if archive_path is not None:

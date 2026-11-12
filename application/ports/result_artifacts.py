@@ -24,7 +24,9 @@
 :class:`infrastructure.persistence.artifact_generator.ReportArtifactGenerator` 在步骤 5
 接入，组合根用 ``ArchiveArtifactGenerator`` 把两者合成**一个**生成端口，声明
 ``supported_kinds = {CSV, REPORT}``；线损与驱动映射在归档服务里登记
-``not_applicable``，不会触达本端口。
+``not_applicable``，不会触达本端口。步骤 20 起新的交付产物与正式阶段结果同目录，
+由 :mod:`application.ports.stage_artifacts` 单独表达；本端口保留给旧运行目录的兼容
+归档与历史结果补生成，不再承担新阶段产物的目标路径。
 """
 
 from __future__ import annotations

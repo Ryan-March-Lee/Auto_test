@@ -6,8 +6,8 @@
   旧全局结果文件不再被发现。
 - 迁移副本登记：本步骤之后生产代码不再写全局兼容副本；历史目录里的旧文件即使
   存在也不参与历史查看，更不会登记进运行 manifest。
-- 正式运行输入：只从当前运行 manifest 校验过的相对路径读取，更新的全局历史
-  文件不会被当作“最新结果”自动带入正式运行。
+- 正式运行输入：只来自用户显式选择的阶段结果文件；运行内兼容读取仍只认当前运行
+  登记的相对路径，更新的全局历史文件不会被隐式选入正式运行。
 
 注意：这里的全局历史文件由测试**直接写入磁盘**，模拟步骤 3 之前已存在的旧数据。
 """
@@ -102,7 +102,7 @@ class HistoryIsolationTests(unittest.TestCase):
         self.assertEqual({row.source for row in rows}, {RESULT_SOURCE_RUN})
         self.assertNotIn(copy_path.name, [row.filename for row in rows])
         self.assertEqual(
-            self.adapter.latest_result("cable_loss").result.cable_losses(),
+            self.adapter.load(rows[0].result_id).result.cable_losses(),
             RUN_LOSSES,
         )
 
@@ -115,13 +115,14 @@ class HistoryIsolationTests(unittest.TestCase):
             manifest.stage(STAGE_CABLE_LOSS).result, CABLE_LOSS_INPUT_PATH
         )
 
-    def test_latest_run_result_is_already_the_formal_result(self):
+    def test_browsed_run_result_is_already_the_formal_result(self):
         """历史查询返回的已经是正式结果 DTO，不需要再解析文档。"""
         from application.dto import CableLossMeasurementResult
 
         self._complete_cable_loss()
 
-        result = self.adapter.latest_result("cable_loss").result
+        row = self.adapter.list_results()[0]
+        result = self.adapter.load(row.result_id).result
 
         self.assertIsInstance(result, CableLossMeasurementResult)
         self.assertEqual(result.run_id, RUN_ID)

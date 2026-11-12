@@ -8,8 +8,9 @@
 - 主功放不会扫描全局目录选择最新校准数据；另一个运行目录的输入只有在用户显式
   选择并通过阶段契约/摘要校验后才会被使用。
 - 驱动模式关闭时不要求映射文件存在，映射阶段在 manifest 中标记为 ``skipped``。
-- 所有最终结果与拆分文件写入当前运行的 ``results/``，都能从 manifest 找到，
-  完成时阶段状态与运行状态更新为 ``completed``。
+- 所有最终结果写入独立阶段目录（``test_results/<stage>/<measurement_id>.json``），
+  运行目录只保存引用文档与拆分审计文件，完成时阶段状态与运行状态更新为
+  ``completed``；未装配阶段结果仓库的旧兼容调用方仍写入运行目录。
 """
 
 import json
@@ -46,6 +47,7 @@ from application.run_stages import (
     CALIBRATION_INPUTS_INPUT_PATH,
     RunStageRecorder,
     StageInputUnavailable,
+    StageResultNotRecorded,
 )
 from application.ports.stage_result_repository import MeasurementStage
 from domain.measurement.values import Frequency
@@ -430,11 +432,18 @@ class AmplifierRunStageTests(unittest.TestCase):
 
         result = use_case.measure_all_frequencies()
 
-        result_path = layout.run_directory / AMPLIFIER_RESULT_PATH
-        self.assertTrue(result_path.is_file())
-        payload = json.loads(result_path.read_text(encoding="utf-8"))
+        # 步骤 20：权威结果写入阶段目录，运行目录只保存引用文档。
+        stage_path = Path(result.result_reference["archive_path"])
+        self.assertTrue(stage_path.is_file())
+        self.assertEqual(stage_path.parent, self.paths.amplifier_results_dir)
+        payload = json.loads(stage_path.read_text(encoding="utf-8"))
         self.assertEqual(payload["run_id"], RUN_ID)
         self.assertIn("results", payload)
+
+        pointer_path = layout.run_directory / AMPLIFIER_RESULT_PATH
+        pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
+        self.assertEqual(pointer["path"], str(stage_path))
+        self.assertEqual(pointer["measurement_id"], result.measurement_id)
 
         manifest = self.repository.load_manifest(RUN_ID)
         self.assertEqual(manifest.status, RunStatus.COMPLETED)
@@ -446,9 +455,9 @@ class AmplifierRunStageTests(unittest.TestCase):
         self.assertIn(AMPLIFIER_RESULT_PATH, outputs)
         self.assertIsNotNone(outputs[AMPLIFIER_RESULT_PATH].sha256)
         self.assertEqual(
-            outputs[AMPLIFIER_RESULT_PATH].size_bytes, result_path.stat().st_size
+            outputs[AMPLIFIER_RESULT_PATH].size_bytes,
+            pointer_path.stat().st_size,
         )
-        self.assertEqual(result.result_reference["archive_path"], str(result_path))
         self.assertEqual(manifest.stage(STAGE_CABLE_LOSS).status, StageStatus.COMPLETED)
 
     def test_split_files_are_written_and_registered(self):
@@ -475,9 +484,10 @@ class AmplifierRunStageTests(unittest.TestCase):
         self._complete_cable_loss()
         AmplifierMeasurementUseCase(self._request(), sleep_fn=lambda _: None).measure_all_frequencies()
 
-        saved = json.loads(
+        pointer = json.loads(
             (layout.run_directory / AMPLIFIER_RESULT_PATH).read_text(encoding="utf-8")
         )
+        saved = json.loads(Path(pointer["path"]).read_text(encoding="utf-8"))
         self.assertIn("1.0", saved["results"])
         self.assertIn("sweep_data", saved["results"]["1.0"])
 
@@ -972,19 +982,25 @@ class AmplifierRunStageTests(unittest.TestCase):
         request = replace(
             self._request(),
             stage_recorder=RunStageRecorder(
-                _FailingRunCompleteRepository(self.repository), RUN_ID
+                _FailingRunCompleteRepository(self.repository),
+                RUN_ID,
+                stage_results=self.stage_repository,
             ),
         )
         use_case = AmplifierMeasurementUseCase(request, sleep_fn=lambda _: None)
 
-        with self.assertRaisesRegex(OSError, "run complete failed"):
+        # 阶段文件已提交：必须报告“结果已保存、运行级更新失败”，而不是当成没有结果。
+        with self.assertRaisesRegex(StageResultNotRecorded, "run complete failed"):
             use_case.measure_all_frequencies()
 
         manifest = self.repository.load_manifest(RUN_ID)
         self.assertEqual(manifest.stage(STAGE_AMPLIFIER).status, StageStatus.COMPLETED)
         # 阶段已完成但运行级更新失败：状态不一致必须可见，而不是伪装成完整成功。
         self.assertEqual(manifest.status, RunStatus.RUNNING)
-        self.assertTrue((layout.run_directory / AMPLIFIER_RESULT_PATH).is_file())
+        pointer = json.loads(
+            (layout.run_directory / AMPLIFIER_RESULT_PATH).read_text(encoding="utf-8")
+        )
+        self.assertTrue(Path(pointer["path"]).is_file())
 
     def test_cancelled_token_marks_stage_cancelled_without_result_files(self):
         layout = self._create_run()
@@ -1014,11 +1030,12 @@ class AmplifierRunStageTests(unittest.TestCase):
 
         result = use_case.measure_all_frequencies()
 
-        result_path = layout.run_directory / AMPLIFIER_RESULT_PATH
-        self.assertTrue(result_path.is_file())
+        stage_path = Path(result.result_reference["archive_path"])
+        self.assertTrue(stage_path.is_file())
+        self.assertEqual(stage_path.parent, self.paths.amplifier_results_dir)
+        self.assertTrue((layout.run_directory / AMPLIFIER_RESULT_PATH).is_file())
         manifest = self.repository.load_manifest(RUN_ID)
         self.assertEqual(manifest.stage(STAGE_AMPLIFIER).status, StageStatus.COMPLETED)
-        self.assertEqual(result.result_reference["archive_path"], str(result_path))
         self.assertNotIn("legacy_copy_path", result.result_reference)
 
     def test_commit_failure_rolls_back_results_and_keeps_stage_unfinished(self):

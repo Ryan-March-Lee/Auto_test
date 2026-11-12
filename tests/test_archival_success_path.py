@@ -24,6 +24,7 @@ from application.archival_service import (
     archive_completed_stage,
 )
 from application.dto import (
+    AmplifierCalibrationInputs,
     AmplifierMeasurementRequest,
     CableLossMeasurementRequest,
     CableLossMeasurementResult,
@@ -332,6 +333,7 @@ class SuccessPathArchivalTests(unittest.TestCase):
         )
 
     def _amplifier_request(self, archival):
+        """旧兼容链路的请求：不注入阶段结果仓库，正式结果仍写在运行目录。"""
         layout = self.repository.layout(RUN_ID)
         instrument = _Instrument()
         return AmplifierMeasurementRequest(
@@ -342,11 +344,13 @@ class SuccessPathArchivalTests(unittest.TestCase):
             inputs=amplifier_inputs(),
             safety_cleanup=safety_cleanup_for(instrument),
             result_repository=self.result_repository,
-            stage_result_repository=self.stage_repository,
             input_reader=MappingInputReader(
                 cable_loss={"cable_losses": CABLE_LOSSES}
             ),
-            cable_loss_path=self._cable_loss_reference.path,
+            # 阶段结果仓库缺席是“旧兼容写入”的显式信号：结果与产物归档都留在运行目录。
+            calibration_inputs=AmplifierCalibrationInputs(
+                loss_data={"cable_losses": CABLE_LOSSES}
+            ),
             stage_recorder=RunStageRecorder(self.repository, RUN_ID),
             archival_service=archival,
             safety_options={"owns_measurement_port": True},
@@ -633,17 +637,158 @@ class CompositionWiringTests(unittest.TestCase):
             sleep_fn=lambda _: None,
         )
         self.assertIsInstance(amplifier_case.archival_service, ResultArchivalService)
-        amplifier_case.measure_all_frequencies()
+        result = amplifier_case.measure_all_frequencies()
+
+        # 步骤 20：正式结果与交付产物在同一阶段目录，运行目录只保留引用。
+        stage_path = Path(result.result_reference["archive_path"])
+        self.assertTrue(stage_path.is_file())
+        self.assertEqual(stage_path.parent.name, MeasurementStage.AMPLIFIER.value)
+        csv_path = stage_path.with_suffix(".csv")
+        report_path = stage_path.with_name(f"{stage_path.stem}_report.html")
+        self.assertTrue(csv_path.is_file())
+        self.assertTrue(report_path.is_file())
 
         run_directory = Path(prepared.run_directory)
-        self.assertTrue((run_directory / CSV_PATH).is_file())
-        self.assertTrue((run_directory / REPORT_PATH).is_file())
+        pointer = json.loads(
+            (run_directory / AMPLIFIER_RESULT_PATH).read_text(encoding="utf-8")
+        )
+        self.assertEqual(pointer["schema"], "pa_auto_test.stage_result_reference")
         manifest = self.repository.load_manifest(RUN_ID)
-        for kind, path in ((ArtifactKind.CSV, CSV_PATH), (ArtifactKind.REPORT, REPORT_PATH)):
-            record = manifest.find_artifact(kind, source_result=AMPLIFIER_RESULT_PATH)
-            self.assertIs(record.status, ArtifactStatus.COMPLETED)
-            self.assertEqual(record.path, path)
-        self.repository.verify_artifact_files(RUN_ID)
+        self.assertEqual(
+            tuple(
+                record
+                for record in manifest.artifacts
+                if record.source_result == AMPLIFIER_RESULT_PATH
+            ),
+            (),
+        )
+        self.assertEqual(manifest.stage(STAGE_AMPLIFIER).status, StageStatus.COMPLETED)
+
+    def test_composition_report_locator_finds_the_stage_report_without_run_page(self):
+        """步骤 20：数据可视化按阶段结果直接打开同目录报告，不依赖历史运行页。"""
+        from app.gui_runtime import (
+            create_amplifier_measurement,
+            create_cable_loss_measurement,
+            prepare_configuration,
+        )
+        from application.run_history_service import RunHistoryService
+        from application.dto.run_history import ResultReportState
+        from infrastructure.gui_data_service import ResultQueryAdapter
+        from infrastructure.persistence.run_history_repository import (
+            FileRunHistoryRepository,
+        )
+        from infrastructure.persistence.stage_artifact_repository import (
+            FileStageArtifactRepository,
+        )
+        from infrastructure.persistence.stage_result_repository import (
+            FileStageResultRepository,
+        )
+
+        prepared = prepare_configuration(
+            str(self.config_path), run_id=RUN_ID, run_repository=self.repository
+        )
+        cable_case = create_cable_loss_measurement(
+            prepared_run=prepared,
+            measurement_port=_Instrument(),
+            result_repository=self.result_repository,
+            paths=self.paths,
+            sleep_fn=lambda _: None,
+        )
+        cable_case.measure_all_frequencies()
+        cable_case.continue_to_step2()
+        pointer = json.loads(
+            (Path(prepared.run_directory) / CABLE_LOSS_INPUT_PATH).read_text(
+                encoding="utf-8"
+            )
+        )
+        create_amplifier_measurement(
+            prepared_run=prepared,
+            measurement_port=_Instrument(),
+            result_repository=self.result_repository,
+            paths=self.paths,
+            cable_loss_path=Path(pointer["path"]),
+            sleep_fn=lambda _: None,
+        ).measure_all_frequencies()
+
+        history = FileRunHistoryRepository(runs=self.repository)
+        query = ResultQueryAdapter(
+            self.paths,
+            run_history=history,
+            stage_results=FileStageResultRepository(paths=self.paths),
+            # 与生产装配一致：产物定位由阶段产物仓库负责目录边界与身份派生。
+            stage_artifacts=FileStageArtifactRepository(paths=self.paths),
+        )
+        [row] = [
+            item
+            for item in query.list_results()
+            if item.result_id.startswith("stage::amplifier::")
+        ]
+        service = RunHistoryService(
+            statuses=history, locations=history, results=query
+        )
+
+        report = service.report_for_result(row.result_id)
+
+        self.assertIs(report.state, ResultReportState.AVAILABLE)
+        self.assertTrue(Path(report.location).is_file())
+        self.assertEqual(
+            Path(report.location).parent, self.paths.amplifier_results_dir
+        )
+
+    def test_artifact_generation_failure_keeps_the_formal_result(self):
+        """步骤 20：CSV/报告是可选派生物，生成失败不改变正式 JSON、阶段或运行状态。"""
+        from app.gui_runtime import (
+            create_amplifier_measurement,
+            create_cable_loss_measurement,
+            prepare_configuration,
+        )
+
+        class _BrokenArtifacts:
+            def save(self, *args, **kwargs):
+                raise OSError("磁盘已满")
+
+        prepared = prepare_configuration(
+            str(self.config_path), run_id=RUN_ID, run_repository=self.repository
+        )
+        cable_case = create_cable_loss_measurement(
+            prepared_run=prepared,
+            measurement_port=_Instrument(),
+            result_repository=self.result_repository,
+            paths=self.paths,
+            sleep_fn=lambda _: None,
+        )
+        cable_case.measure_all_frequencies()
+        cable_case.continue_to_step2()
+        pointer = json.loads(
+            (Path(prepared.run_directory) / CABLE_LOSS_INPUT_PATH).read_text(
+                encoding="utf-8"
+            )
+        )
+        amplifier_case = create_amplifier_measurement(
+            prepared_run=prepared,
+            measurement_port=_Instrument(),
+            result_repository=self.result_repository,
+            paths=self.paths,
+            cable_loss_path=Path(pointer["path"]),
+            stage_artifact_repository=_BrokenArtifacts(),
+            sleep_fn=lambda _: None,
+        )
+
+        with self.assertLogs(
+            "application.measurements.amplifier_test", level="ERROR"
+        ):
+            result = amplifier_case.measure_all_frequencies()
+
+        stage_path = Path(result.result_reference["archive_path"])
+        self.assertTrue(stage_path.is_file())
+        self.assertEqual(amplifier_case.last_stage_artifact_references, ())
+        self.assertFalse(stage_path.with_suffix(".csv").exists())
+        self.assertFalse(
+            stage_path.with_name(f"{stage_path.stem}_report.html").exists()
+        )
+        manifest = self.repository.load_manifest(RUN_ID)
+        self.assertEqual(manifest.stage(STAGE_AMPLIFIER).status, StageStatus.COMPLETED)
+        self.assertEqual(manifest.status, RunStatus.COMPLETED)
 
     def test_run_without_contract_is_rejected_before_assembly(self):
         """没有运行契约就没有运行目录：装配入口必须明确失败，而不是降级。"""

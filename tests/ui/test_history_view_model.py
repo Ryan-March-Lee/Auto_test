@@ -92,9 +92,6 @@ class _FakeQuery:
     def read_bytes(self, result_id):  # pragma: no cover - 历史查看不使用
         raise AssertionError("历史查看不得逐字节读取结果")
 
-    def latest_result(self, result_type):  # pragma: no cover - 步骤 8 已移除隐式来源
-        raise AssertionError("视图模型不得按“最新结果”加载")
-
 
 class HistoryRowTests(unittest.TestCase):
     def test_row_only_carries_identifier_and_display_text(self):

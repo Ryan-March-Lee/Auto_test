@@ -13,15 +13,23 @@ from application.dto import (
 from application.measurements import AmplifierMeasurementUseCase
 from application.measurements.amplifier_test import AMPLIFIER_RESULT_PATH
 from application.dto.measurement_requests import StageResultDigest
-from application.ports.stage_result_repository import MeasurementStage
-from application.run_stages import StageInputUnavailable
+from application.dto.measurement_results import measurement_result_filename
+from application.ports.stage_artifacts import (
+    StageArtifactReference,
+    stage_artifact_filename,
+)
+from application.ports.stage_result_repository import (
+    MeasurementStage,
+    StageResultReference,
+)
+from application.run_stages import StageInputUnavailable, StageResultNotRecorded
 from domain.configuration.models import (
     RunConfiguration,
     RunResourceMapping,
     TestPlan,
 )
 from domain.measurement.values import CableLossTable, Decibels, Frequency, PowerDbm
-from domain.run.models import STAGE_AMPLIFIER
+from domain.run.models import STAGE_AMPLIFIER, ArtifactKind
 from tests.contract_doubles import (
     MappingInputReader,
     RecordingStageRecorder,
@@ -76,11 +84,12 @@ SELECTED_CABLE_LOSS = (
 
 
 class _StageRepository:
-    """阶段结果仓库替身：按阶段返回预置的已加载结果，记录加载调用。"""
+    """阶段结果仓库替身：按阶段返回预置的已加载结果，记录加载与保存调用。"""
 
     def __init__(self, loaded=None):
         self.loaded = dict(loaded or {})
         self.loads = []
+        self.saved = []
 
     def load(self, stage, path):
         self.loads.append((stage, Path(path)))
@@ -89,6 +98,48 @@ class _StageRepository:
                 stage, cable_losses=CABLE_LOSSES
             )
         return self.loaded[stage]
+
+    def save(self, stage, result):
+        target_stage = MeasurementStage(stage)
+        reference = StageResultReference(
+            stage=target_stage,
+            measurement_id=result.measurement_id,
+            path=(
+                Path("test_results")
+                / target_stage.value
+                / measurement_result_filename(result.measurement_id)
+            ),
+            sha256="a" * 64,
+            size_bytes=1,
+        )
+        self.saved.append((target_stage, result, reference))
+        return reference
+
+
+class _ArtifactStore:
+    """阶段交付产物替身：按产物类型返回引用，可让指定类型抛错。"""
+
+    def __init__(self, failing=(), error_type=OSError):
+        self.failing = frozenset(failing)
+        self.error_type = error_type
+        self.calls = []
+
+    def save(self, stage, measurement_id, kind, result):
+        kind = ArtifactKind(kind)
+        self.calls.append((stage, measurement_id, kind))
+        if kind in self.failing:
+            raise self.error_type(f"故意拒绝 {kind.value}")
+        target_stage = MeasurementStage(stage)
+        return StageArtifactReference(
+            stage=target_stage,
+            measurement_id=measurement_id,
+            kind=kind,
+            path=Path("test_results")
+            / target_stage.value
+            / stage_artifact_filename(measurement_id, kind),
+            sha256="b" * 64,
+            size_bytes=1,
+        )
 
 
 def _request(
@@ -99,6 +150,7 @@ def _request(
     recorder=None,
     reader=None,
     stage_repository=None,
+    artifacts=None,
     cable_loss_path=SELECTED_CABLE_LOSS,
     cable_loss_digest=None,
     driver_mapping_path=None,
@@ -125,6 +177,7 @@ def _request(
         result_repository=repository or _Repository(),
         input_reader=reader or MappingInputReader(cable_loss={"cable_losses": CABLE_LOSSES}),
         stage_result_repository=stage_repository or _StageRepository(),
+        stage_artifact_repository=artifacts,
         cable_loss_path=cable_loss_path,
         cable_loss_digest=cable_loss_digest,
         driver_mapping_path=driver_mapping_path,
@@ -439,8 +492,10 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
     def test_completes_and_saves_structured_result(self):
         instrument = _Instrument()
         recorder = RecordingStageRecorder("run-amplifier")
+        stage_repository = _StageRepository()
         use_case = AmplifierMeasurementUseCase(
-            _request(instrument, recorder=recorder), sleep_fn=lambda _: None
+            _request(instrument, recorder=recorder, stage_repository=stage_repository),
+            sleep_fn=lambda _: None,
         )
 
         result = use_case.measure_all_frequencies()
@@ -450,17 +505,126 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
             use_case.measurement_results,
             {item.frequency_ghz: item for item in result.frequencies},
         )
-        # 结果只写当前运行：阶段提交到记录器，路径指向本次运行目录。
+        # 步骤 20：正式结果写入阶段目录，运行目录只登记引用与拆分审计文件。
+        [(stage, saved_result, reference)] = stage_repository.saved
+        self.assertIs(stage, MeasurementStage.AMPLIFIER)
+        self.assertEqual(saved_result.measurement_id, result.measurement_id)
         self.assertEqual(
             recorder.result_paths(), {STAGE_AMPLIFIER: AMPLIFIER_RESULT_PATH}
         )
         self.assertEqual(recorder.completed_runs, 1)
         self.assertEqual(
+            result.result_reference["archive_path"], str(reference.path)
+        )
+        self.assertEqual(use_case.last_stage_artifact_references, ())
+        self.assertEqual(use_case.run_directory, Path("run-directory"))
+        self.assertEqual(instrument.close_calls, 1)
+
+    def test_stage_bookkeeping_failure_reports_the_saved_result(self):
+        """阶段文件已提交后运行登记失败：保留结果并明确报告它的位置。"""
+
+        class _FailingRecorder(RecordingStageRecorder):
+            def complete_with_stage_result(self, *args, **kwargs):
+                raise RuntimeError("manifest 不可写")
+
+        stage_repository = _StageRepository()
+        recorder = _FailingRecorder("run-amplifier")
+        use_case = AmplifierMeasurementUseCase(
+            _request(_Instrument(), recorder=recorder, stage_repository=stage_repository),
+            sleep_fn=lambda _: None,
+        )
+
+        with self.assertRaises(StageResultNotRecorded) as caught:
+            use_case.measure_all_frequencies()
+
+        self.assertEqual(caught.exception.stage, MeasurementStage.AMPLIFIER)
+        self.assertEqual(caught.exception.reference, stage_repository.saved[0][2])
+        self.assertIn(str(stage_repository.saved[0][2].path), str(caught.exception))
+        # 正式结果已提交：阶段仍记为失败，但结果文件没有被撤销或删除。
+        self.assertEqual(len(stage_repository.saved), 1)
+        self.assertEqual([stage for stage, _ in recorder.failed], [STAGE_AMPLIFIER])
+
+    def test_run_completion_failure_keeps_the_stage_result(self):
+        """阶段已登记、运行级完成写入失败时同样不能把测量报成“没有结果”。"""
+
+        class _FailingCompleteRun(RecordingStageRecorder):
+            def complete_run(self, *, now=None):
+                raise RuntimeError("运行状态不可写")
+
+        stage_repository = _StageRepository()
+        recorder = _FailingCompleteRun("run-amplifier")
+        use_case = AmplifierMeasurementUseCase(
+            _request(_Instrument(), recorder=recorder, stage_repository=stage_repository),
+            sleep_fn=lambda _: None,
+        )
+
+        with self.assertRaises(StageResultNotRecorded):
+            use_case.measure_all_frequencies()
+
+        self.assertEqual(len(stage_repository.saved), 1)
+        self.assertEqual(len(recorder.stage_references), 1)
+        # 阶段已登记完成，不能再把它改写成 failed。
+        self.assertEqual(recorder.failed, [])
+
+    def test_without_stage_repository_keeps_the_run_directory_contract(self):
+        """未装配阶段结果仓库的旧兼容调用方仍把完整结果写进运行目录。"""
+        recorder = RecordingStageRecorder("run-amplifier")
+        request = replace(
+            _request(_Instrument(), recorder=recorder),
+            stage_result_repository=None,
+            cable_loss_path=None,
+            cable_loss_digest=None,
+            calibration_inputs=AmplifierCalibrationInputs(
+                loss_data={"cable_losses": CABLE_LOSSES}
+            ),
+        )
+        use_case = AmplifierMeasurementUseCase(request, sleep_fn=lambda _: None)
+
+        result = use_case.measure_all_frequencies()
+
+        self.assertEqual(
+            recorder.result_paths(), {STAGE_AMPLIFIER: AMPLIFIER_RESULT_PATH}
+        )
+        self.assertEqual(
             result.result_reference["archive_path"],
             str(Path("run-directory") / AMPLIFIER_RESULT_PATH),
         )
-        self.assertEqual(use_case.run_directory, Path("run-directory"))
-        self.assertEqual(instrument.close_calls, 1)
+        self.assertIsNone(use_case.last_archival_outcome)
+        self.assertEqual(use_case.last_stage_artifact_references, ())
+
+    def test_artifact_failure_keeps_the_formal_result_and_tries_both_kinds(self):
+        """产物是可选派生物：CSV 意外抛错也不影响正式结果与报告尝试。"""
+        recorder = RecordingStageRecorder("run-amplifier")
+        stage_repository = _StageRepository()
+        artifacts = _ArtifactStore(
+            failing={ArtifactKind.CSV}, error_type=TypeError
+        )
+        use_case = AmplifierMeasurementUseCase(
+            _request(
+                _Instrument(),
+                recorder=recorder,
+                stage_repository=stage_repository,
+                artifacts=artifacts,
+            ),
+            sleep_fn=lambda _: None,
+        )
+
+        with self.assertLogs(
+            "application.measurements.amplifier_test", level="ERROR"
+        ):
+            result = use_case.measure_all_frequencies()
+
+        self.assertIs(result, use_case.last_result)
+        self.assertEqual(
+            [kind for _, _, kind in artifacts.calls],
+            [ArtifactKind.CSV, ArtifactKind.REPORT],
+        )
+        self.assertEqual(
+            [reference.kind for reference in use_case.last_stage_artifact_references],
+            [ArtifactKind.REPORT],
+        )
+        self.assertEqual(recorder.completed_runs, 1)
+        self.assertEqual(len(stage_repository.saved), 1)
 
     def test_measurement_port_is_required_before_input_loading(self):
         request = _request(None)

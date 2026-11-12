@@ -79,6 +79,10 @@ BROAD_CATCH_BASELINE = {
     "application/measurements/amplifier_test.py": (
         "AmplifierMeasurementUseCase.measure_all_frequencies#1",
         "AmplifierMeasurementUseCase._try_record#1",
+        # 与线损/驱动映射同一类边界：阶段文件已提交后的运行记账失败要翻译成
+        # StageResultNotRecorded；交付产物失败只记录日志，不改变正式结果。
+        "AmplifierMeasurementUseCase._save_stage_result#1",
+        "AmplifierMeasurementUseCase._generate_stage_artifacts#1",
     ),
     "application/measurements/cable_loss.py": (
         "CableLossUseCase.measure_all_frequencies#1",

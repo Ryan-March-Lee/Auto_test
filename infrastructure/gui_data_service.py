@@ -14,7 +14,8 @@
 适配器在读取边界调用唯一解析入口 ``measurement_result_from_document()``，因此上层拿到
 的一律是正式结果 DTO；不再扫描 ``test_results/`` 下的旧全局结果文件，也不提供旧历史
 回退。逐字节导出使用加载时校验过的那份字节，不会在校验之后重读可能已被替换的文件。
-步骤 20 再把交付产物定位切换到阶段结果。
+步骤 20 起交付产物与阶段结果同目录：查询端口按 ``measurement_id`` 定位
+``<id>.csv`` / ``<id>_report.html``，报告定位不再依赖运行目录或历史运行页面。
 
 报告只有一个适配器实现：:meth:`ResultExportAdapter.export_report`。它把归档结果交给
 ``build_report_result()`` 后再渲染，因此不存在第二个“页面配置 + 生成时刻”的报告入口
@@ -48,6 +49,8 @@ from application.ports.run_history import (
     RunHistoryRepository,
     result_type_for_result,
 )
+from application.ports.result_artifacts import ArtifactGenerationError
+from application.ports.stage_artifacts import StageArtifactRepository
 from application.ports.stage_result_repository import (
     LoadedStageResult,
     MeasurementStage,
@@ -58,6 +61,7 @@ from application.run_stages import (
     read_stage_result_reference,
     resolve_stage_result_reference,
 )
+from domain.run.models import ArtifactKind
 from analysis.visualization import DataVisualization
 from infrastructure.config.json_config_repository import JsonConfigurationRepository
 from infrastructure.config.json_io import load_config_file
@@ -117,6 +121,16 @@ def _decode_stage_result_id(
     return stage, measurement_id
 
 
+def _stage_directory(paths: PathService, stage: MeasurementStage) -> Path:
+    """返回阶段正式结果目录；产物与正式结果同目录（步骤 20）。"""
+    directories = {
+        MeasurementStage.CABLE_LOSS: paths.cable_loss_results_dir,
+        MeasurementStage.DRIVER_MAPPING: paths.driver_mapping_results_dir,
+        MeasurementStage.AMPLIFIER: paths.amplifier_results_dir,
+    }
+    return directories[stage]
+
+
 def _stage_result_path(
     paths: PathService, stage: MeasurementStage, measurement_id: str
 ) -> Path:
@@ -125,12 +139,7 @@ def _stage_result_path(
     路径只用于把结果标识交给阶段结果仓库：仓库仍会展开符号链接、校验它们直接位于
     阶段目录内，并按正式 DTO、状态与身份重新读取，因此这里不承担任何读取语义。
     """
-    directories = {
-        MeasurementStage.CABLE_LOSS: paths.cable_loss_results_dir,
-        MeasurementStage.DRIVER_MAPPING: paths.driver_mapping_results_dir,
-        MeasurementStage.AMPLIFIER: paths.amplifier_results_dir,
-    }
-    return directories[stage] / measurement_result_filename(measurement_id)
+    return _stage_directory(paths, stage) / measurement_result_filename(measurement_id)
 
 
 # 列表排序/时间展示使用的固定纪元：与日期相减得到秒数，避免 ``datetime.timestamp()``
@@ -254,12 +263,16 @@ class ResultQueryAdapter:
         *,
         run_history: RunHistoryRepository,
         stage_results: StageResultRepository | None = None,
+        stage_artifacts: StageArtifactRepository | None = None,
     ):
         self.paths = paths
         self.run_history = run_history
         # 引用解析必须经过阶段结果仓库（端口实现由组装层注入）。省略时只能读取旧运行
         # 目录里的完整结果文档：遇到阶段结果引用会明确失败，绝不退回引用文档本身。
         self.stage_results = stage_results
+        # 阶段交付产物定位由组装层注入（与本适配器不写运行快照的边界一致）：目录
+        # 边界、身份派生文件名与“普通文件”判断只由该端口实现一次。
+        self.stage_artifacts = stage_artifacts
 
     # -- 列表 ---------------------------------------------------------------
 
@@ -457,47 +470,28 @@ class ResultQueryAdapter:
             size_bytes=loaded.size_bytes,
         )
 
-    def latest_result(self, result_type: str) -> LoadedResultDto:
-        """返回最新的**可校验**正式运行结果。
+    def stage_artifact_path(
+        self,
+        stage: MeasurementStage | str,
+        measurement_id: str,
+        kind: ArtifactKind | str,
+    ) -> str | None:
+        """按阶段与测量身份定位同目录交付产物；不存在时返回 ``None``。
 
-        顺序是确定性的：先按运行创建时间从新到旧（``list_runs`` 的顺序），同一运行
-        内再按结果修改时间从新到旧，不依赖文件系统 mtime 的跨运行比较。某个候选
-        损坏（被篡改、缺失、未登记、非正式 schema）时记录日志并继续尝试更旧的候选。
-        没有任何可用运行结果时抛出 ``FileNotFoundError``。
+        定位委托阶段产物仓库：文件名由正式身份与产物类型构造，目标必须展开符号
+        链接后仍直接位于阶段目录内且是普通文件。未装配定位端口、参数非法或目录
+        边界不成立时抛出 ``ValueError``（页面据此报告“不可用”），文件确实不存在
+        时才返回 ``None``。
         """
-        target = measurement_type_for_result_type(result_type)
-        if target is None:
-            raise ValueError(f"无法识别的结果类型: {result_type!r}")
-        for run in self.run_history.list_runs():
-            if not run.browsable:
-                continue
-            try:
-                entries = self.run_history.list_results(run.run_id)
-            except (OSError, ValueError) as error:
-                logger.warning("跳过无法列出的运行 %s 的历史结果: %s", run.run_id, error)
-                continue
-            matches = [
-                entry
-                for entry in entries
-                if measurement_type_for_result_type(entry.result_type) is target
-            ]
-            for entry in sorted(
-                matches, key=lambda item: _utc_seconds(item.modified_at), reverse=True
-            ):
-                result_id = _encode_run_result_id(run.run_id, entry.result_id)
-                try:
-                    result = self._load_verified(run.run_id, entry.result_id, target)
-                except (OSError, ValueError, TypeError) as error:
-                    logger.warning("跳过损坏的运行结果 %s: %s", result_id, error)
-                    continue
-                return LoadedResultDto(
-                    result_id,
-                    Path(entry.result_id).name,
-                    result,
-                    run_id=run.run_id,
-                    source_result=entry.result_id,
-                )
-        raise FileNotFoundError(f"未找到结果类型为 {result_type} 的运行结果")
+        if self.stage_artifacts is None:
+            raise ValueError("未装配阶段产物定位，无法定位阶段结果产物")
+        try:
+            target = self.stage_artifacts.locate(stage, measurement_id, kind)
+        except ArtifactGenerationError as error:
+            # 端口用产物异常表达“目录边界不成立”；查询边界统一成参数/路径错误，
+            # 让上层按同一个可预期失败分支处理，而不是区分实现细节。
+            raise ValueError(f"阶段产物定位参数非法: {error}") from error
+        return str(target) if target is not None else None
 
     # -- 内部工具 -----------------------------------------------------------
 
@@ -533,9 +527,8 @@ class ResultQueryAdapter:
         """把运行目录登记的结果文档解析为正式结果 DTO。
 
         运行目录里可能只是阶段结果引用（步骤 7 起的阶段正式结果）：此时按引用中的
-        阶段、路径与校验值读取阶段目录里的权威结果，列表、最新结果和导出因此看到
-        同一份已校验的正式 DTO。引用不是正式结果文档时仍按原路径解析，保持旧运行
-        目录的读取语义。
+        阶段、路径与校验值读取阶段目录里的权威结果，列表和导出因此看到同一份已校验
+        的正式 DTO。引用不是正式结果文档时仍按原路径解析，保持旧运行目录的读取语义。
         """
         loaded = resolve_stage_result_reference(document, self.stage_results)
         if loaded is not None:

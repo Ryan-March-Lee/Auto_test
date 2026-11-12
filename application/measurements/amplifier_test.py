@@ -6,6 +6,7 @@ import logging
 import re
 import time
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -19,6 +20,7 @@ from application.dto import (
     DriverMappingInput,
     MeasurementResult,
     MeasurementStatus,
+    generate_measurement_id,
 )
 from application.errors import ConfigurationError
 from application.measurements.driver_target_grid import require_driver_target_grid
@@ -30,8 +32,9 @@ from application.inputs.explicit_stage_input import (
     load_selected_stage_result,
 )
 from application.ports.measurement_session import CleanupRecord
+from application.ports.stage_artifacts import StageArtifactReference
 from application.ports.stage_result_repository import MeasurementStage
-from application.run_stages import StageInputUnavailable
+from application.run_stages import StageInputUnavailable, StageResultNotRecorded
 from domain.measurement.values import (
     CableLossTable,
     Frequency,
@@ -42,6 +45,7 @@ from domain.run.models import (
     AMPLIFIER_RESULT_PATH,
     STAGE_AMPLIFIER,
     STAGE_DRIVER_MAPPING,
+    ArtifactKind,
 )
 
 
@@ -61,9 +65,12 @@ class AmplifierMeasurementUseCase:
 
     校准输入只使用组合入口预检并随请求交来的同一份对象，或页面显式选择的阶段结果
     路径（含选择时摘要）；步骤 17 起不再读取当前运行登记的 ``inputs/cable_loss.json`` /
-    ``inputs/driver_mapping.json``，缺失显式来源时在硬件动作前失败。主功放所有结果
-    写入当前运行的 ``results/``，完成后把主功放阶段和运行级状态更新为 ``completed``。
-    驱动模式关闭时不要求映射文件存在。绝不回退到按时间扫描的“最新结果”读取。
+    ``inputs/driver_mapping.json``，缺失显式来源时在硬件动作前失败。步骤 20 起，正式
+    结果保存位置只由 ``stage_result_repository`` 决定：装配了它就把主功放结果写入
+    ``test_results/amplifier/``，运行目录只登记引用；``stage_artifact_repository`` 只
+    决定是否额外生成与结果同目录、由 ``measurement_id`` 关联的 CSV 与报告。未装配阶段
+    结果仓库的旧兼容调用方仍把完整结果写入运行目录并触发原来的运行目录归档。驱动模式
+    关闭时不要求映射文件存在。绝不回退到按时间扫描的“最新结果”读取。
     """
 
     def __init__(
@@ -94,6 +101,14 @@ class AmplifierMeasurementUseCase:
         self.input_reader = request.input_reader
         # 显式输入带选择时摘要时，用阶段结果仓库重新加载并核对，不消费被替换的文件。
         self.stage_result_repository = request.stage_result_repository
+        # 阶段交付产物仓库：只决定是否额外生成 CSV/报告，不决定正式结果往哪写。
+        # 未装配时仍按阶段结果仓库保存正式结果，只是没有派生产物。
+        self.stage_artifact_repository = request.stage_artifact_repository
+        if self.stage_artifact_repository is not None and self.stage_result_repository is None:
+            raise ValueError(
+                "主功放生成阶段交付产物时必须同时注入 stage_result_repository"
+            )
+        self.last_stage_artifact_references: tuple[StageArtifactReference, ...] = ()
         # 阶段记录器是请求契约的一部分（D1）：结果写入当前运行的 results/ 并更新
         # manifest；本次消费的线损/驱动映射来源也由它登记。
         self.stage_recorder = request.stage_recorder
@@ -385,13 +400,17 @@ class AmplifierMeasurementUseCase:
     # -- 运行契约：结果持久化 ----------------------------------------------
 
     def _save(self, result: MeasurementResult) -> MeasurementResult:
-        """运行契约运行：权威结果写入当前运行的 ``results/``。
+        """运行契约运行：保存权威结果，并按需生成交付产物。
 
-        主功放结果及拆分文件先原子提交并登记 manifest，运行目录结果是本次运行的权威
-        来源；返回值只暴露该权威路径，不再同时写全局兼容副本。正式结果提交后立即触发
-        自动归档（计划步骤 4）：CSV 生成失败只把该产物登记为 ``failed``，不回滚正式
-        结果、不改变阶段或运行状态。
+        正式结果写到哪里只由 ``stage_result_repository`` 决定：装配了阶段结果仓库的
+        正式链路把主功放结果写入 ``test_results/amplifier/<measurement_id>.json``，
+        运行目录只登记引用；未装配它的旧兼容调用方仍把完整结果写入运行目录并触发
+        原来的运行目录归档。阶段交付产物仓库是**独立**的可选能力：装配时在正式结果
+        提交后尽力生成同目录 CSV 与报告，失败只记录日志，正式结果、阶段和运行状态
+        都不受影响。
         """
+        if self.stage_result_repository is not None:
+            return self._save_stage_result(result)
         reference = self._record_complete(result)
         self.last_archival_outcome = archive_completed_stage(
             self.archival_service,
@@ -400,6 +419,63 @@ class AmplifierMeasurementUseCase:
         )
         archive_path = Path(self.run_directory) / reference.path
         return result.with_saved_result(archive_path=str(archive_path))
+
+    def _save_stage_result(self, result: MeasurementResult) -> MeasurementResult:
+        """把主功放正式结果写入阶段目录，并尽力生成同目录交付产物。"""
+        if result.measurement_id is None:
+            result = replace(result, measurement_id=generate_measurement_id())
+        payload = result.to_dict()
+        reference = self.stage_result_repository.save(
+            MeasurementStage.AMPLIFIER, result
+        )
+        try:
+            self.stage_recorder.complete_with_stage_result(
+                STAGE_AMPLIFIER,
+                reference,
+                result_path=AMPLIFIER_RESULT_PATH,
+                extra_files=_split_result_files(payload),
+            )
+            self._stage_open = False
+            # 运行级完成是权威提交的一部分：更新失败必须向调用方暴露。
+            self.stage_recorder.complete_run()
+        except Exception as error:
+            # 阶段目录文件已提交，是正式结果的权威副本：不能因为运行记账失败就删除
+            # 或隐藏它。调用方据异常消息提示“结果已保存、运行引用登记失败”。
+            raise StageResultNotRecorded(
+                STAGE_AMPLIFIER,
+                reference,
+                str(error) or error.__class__.__name__,
+            ) from error
+        self._generate_stage_artifacts(result)
+        return result.with_saved_result(archive_path=str(reference.path))
+
+    def _generate_stage_artifacts(self, result: MeasurementResult) -> None:
+        """尽力生成与阶段结果同目录的 CSV 与报告；任何失败都不改变正式结果。
+
+        产物是正式结果的可选派生物，不属于权威提交：CSV 与报告分别尝试，单项失败
+        不阻止另一项；日志保留完整堆栈便于诊断，但异常不向测量调用方传播（``
+        BaseException`` 仍按原语义中断）。
+        """
+        if self.stage_artifact_repository is None:
+            return
+        references: list[StageArtifactReference] = []
+        for kind in (ArtifactKind.CSV, ArtifactKind.REPORT):
+            try:
+                references.append(
+                    self.stage_artifact_repository.save(
+                        MeasurementStage.AMPLIFIER,
+                        result.measurement_id,
+                        kind,
+                        result,
+                    )
+                )
+            except Exception:  # 产物失败不能把已完成的测量变成失败
+                logger.exception(
+                    "主功放交付产物生成失败 stage=amplifier kind=%s measurement_id=%s",
+                    kind.value,
+                    result.measurement_id,
+                )
+        self.last_stage_artifact_references = tuple(references)
 
 
 def validate_amplifier_calibration_inputs(

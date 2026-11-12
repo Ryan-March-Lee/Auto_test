@@ -10,10 +10,11 @@
    （另存副本走 :class:`application.export_service.ResultExportUseCase`）；
 3. **删除用户选中的历史运行**：整目录删除，只接受历史列表中的运行标识；进行中的
    运行明确拒绝，未知运行与单个删除失败按运行逐项返回，不影响同批次的其它运行；
-4. **按结果定位最终报告**：数据可视化页加载一条历史结果后，用例把结果映射到所属
-   运行，并按来源结果精确匹配该运行的归档报告，返回“可用 / 不适用 / 缺失 / 不可用”
-   的结构化状态。独立阶段目录结果暂时没有运行内来源路径，因此不猜报告归属，返回
-   不可用并提示另存副本（产物跟随阶段目录由重构计划步骤 20 接入）。
+4. **按结果定位最终报告**：数据可视化页加载一条历史结果后，用例按结果的**来源**
+   定位报告：阶段目录结果按测量身份在阶段目录中查找 ``<id>_report.html``（同目录
+   ``<id>.csv`` 由报告自行链接）；旧运行目录里的完整结果即使带 ``measurement_id``，
+   仍按来源结果精确匹配该运行的归档报告。返回“可用 / 不适用 / 缺失 / 不可用”的
+   结构化状态，页面只消费状态与位置。
 
 边界：
 
@@ -53,6 +54,8 @@ from application.ports.gui_data_service import (
     RunDeletionPort,
     RunLocationPort,
 )
+from application.ports.result_artifacts import ArtifactGenerationError
+from application.ports.stage_result_repository import measurement_stage_for_type
 from domain.run.models import ArtifactKind, RunStatus
 
 logger = logging.getLogger("pa_auto_test." + __name__)
@@ -227,12 +230,20 @@ class RunHistoryService:
         return target if isinstance(target, str) and target.strip() else None
 
     def report_for_result(self, result_id: str) -> ResultReportLocation:
-        """按历史结果定位所属运行的最终报告。
+        """按历史结果定位它的最终报告。
 
         结果不在历史列表中属于调用错误，直接抛 :class:`RunHistoryRequestError`；
         结果不生成报告、报告缺失或位置入口未装配属于可展示状态，用结构化结果返回。
-        报告只按“运行 + 运行内来源路径”精确匹配：独立阶段目录结果没有这条路径，
-        不会退回该运行的第一份报告，而是返回不可用状态并提示另存副本。
+
+        定位规则（重构计划步骤 20）：
+
+        - **来源决定定位方式**：阶段目录结果按测量身份在阶段目录中查找
+          ``<id>_report.html``，同目录的 ``<id>.csv`` 由报告自行链接；旧运行目录里的
+          完整结果即使带 ``measurement_id``，报告仍在原运行目录，继续按“运行 +
+          运行内来源路径”精确匹配归档报告；
+        - 两条路径都不退回该运行的第一份报告，也不把另一份测量的报告当成目标。
+
+        阶段结果缺少测量身份、或定位入口未装配时明确返回不可用，不猜测归属。
         """
         if not isinstance(result_id, str) or not result_id.strip():
             raise RunHistoryRequestError("打开测试报告必须指定历史结果标识")
@@ -241,12 +252,6 @@ class RunHistoryService:
                 result_id,
                 ResultReportState.UNAVAILABLE,
                 reason="未装配历史结果查询，无法定位测试报告",
-            )
-        if self.locations is None:
-            return ResultReportLocation(
-                result_id,
-                ResultReportState.UNAVAILABLE,
-                reason="未装配运行位置入口，无法打开测试报告",
             )
         try:
             rows = self.results.list_results()
@@ -257,7 +262,7 @@ class RunHistoryService:
             raise RunHistoryRequestError(
                 f"结果不在历史列表中，无法打开测试报告: {result_id}"
             )
-        if not row.run_id:
+        if not row.run_id and row.source != RESULT_SOURCE_STAGE:
             return ResultReportLocation(
                 result_id,
                 ResultReportState.UNAVAILABLE,
@@ -277,23 +282,32 @@ class RunHistoryService:
                 ResultReportState.NOT_APPLICABLE,
                 reason="只有主功放测试结果会生成测试报告",
             )
+        measurement_id = loaded.result.measurement_id
         if row.source == RESULT_SOURCE_STAGE:
-            # 阶段目录结果没有运行内相对路径，而运行归档的产物只能按该路径精确匹配；
-            # 传 ``None`` 会退回“该运行第一份报告”，可能把另一份测量的报告当成它的。
-            # 在产物跟随阶段目录（重构计划步骤 20）之前，明确报告不可定位，不猜。
-            return ResultReportLocation(
-                result_id,
-                ResultReportState.UNAVAILABLE,
-                reason=(
-                    "阶段结果尚未关联运行归档报告，"
-                    "可用“另存为 → 测试报告…”生成副本"
-                ),
+            # 阶段目录结果只能按自身测量身份定位同目录报告；缺少身份说明读取实现
+            # 违反了契约，不能退回运行目录或“第一份报告”去猜归属。
+            if measurement_id is None:
+                return ResultReportLocation(
+                    result_id,
+                    ResultReportState.UNAVAILABLE,
+                    reason="阶段结果缺少测量身份，无法定位同目录测试报告",
+                )
+            return self._report_for_stage_result(
+                result_id, loaded.result.measurement_type, measurement_id
             )
+        # 旧运行目录里的完整结果即使带测量身份，报告仍在原运行目录：定位方式由
+        # 来源决定，不能因为字段存在就改去阶段目录查找，否则会误报缺失或命中另一份。
         if row.source_result is None:
             return ResultReportLocation(
                 result_id,
                 ResultReportState.UNAVAILABLE,
                 reason="历史结果没有登记运行内来源路径，无法确认哪份报告属于它",
+            )
+        if self.locations is None:
+            return ResultReportLocation(
+                result_id,
+                ResultReportState.UNAVAILABLE,
+                reason="未装配运行位置入口，无法打开测试报告",
             )
         try:
             # 直接走只读位置端口：结果列表已经给出运行标识，不再重复读取全部运行摘要。
@@ -314,6 +328,46 @@ class RunHistoryService:
                 ResultReportState.MISSING,
                 reason=(
                     "该运行的报告未生成或文件缺失，"
+                    "可用“另存为 → 测试报告…”生成副本"
+                ),
+            )
+        return ResultReportLocation(
+            result_id,
+            ResultReportState.AVAILABLE,
+            location=target,
+        )
+
+    def _report_for_stage_result(
+        self,
+        result_id: str,
+        measurement_type: Any,
+        measurement_id: str,
+    ) -> ResultReportLocation:
+        """在阶段目录中按测量身份定位 ``<id>_report.html``。"""
+        locate = getattr(self.results, "stage_artifact_path", None)
+        if not callable(locate):
+            return ResultReportLocation(
+                result_id,
+                ResultReportState.UNAVAILABLE,
+                reason="未装配阶段产物定位，无法打开阶段结果报告",
+            )
+        try:
+            stage = measurement_stage_for_type(measurement_type)
+            target = locate(stage, measurement_id, ArtifactKind.REPORT)
+        except (ArtifactGenerationError, OSError, ValueError) as error:
+            # 定位参数非法、阶段目录边界不成立等属于“无法定位”，不是“缺失”：
+            # 页面据此提示不可用，而不是让用户以为文件只是尚未生成。
+            return ResultReportLocation(
+                result_id,
+                ResultReportState.UNAVAILABLE,
+                reason=f"无法定位阶段结果报告: {error}",
+            )
+        if target is None:
+            return ResultReportLocation(
+                result_id,
+                ResultReportState.MISSING,
+                reason=(
+                    "该阶段结果的报告未生成或文件缺失，"
                     "可用“另存为 → 测试报告…”生成副本"
                 ),
             )

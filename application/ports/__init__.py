@@ -29,6 +29,12 @@ from .run_history import (
     RunStageResultEntry,
 )
 from .run_repository import RunLayout, RunRepositoryPort
+from .stage_artifacts import (
+    StageArtifactReference,
+    StageArtifactRepository,
+    stage_artifact_filename,
+    validate_stage_artifact_filename,
+)
 from .stage_result_repository import (
     LoadedStageResult,
     MeasurementStage,
@@ -71,6 +77,8 @@ __all__ = [
     "SafetyCleanupError",
     "SafetyCleanupPort",
     "SavedMeasurementResult",
+    "StageArtifactReference",
+    "StageArtifactRepository",
     "StageResultEntry",
     "StageResultError",
     "StageResultReference",
@@ -81,4 +89,6 @@ __all__ = [
     "measurement_type_for_stage",
     "require_stage_result",
     "require_stage_result_path",
+    "stage_artifact_filename",
+    "validate_stage_artifact_filename",
 ]

@@ -76,9 +76,6 @@ class _FakeQuery:
     def read_bytes(self, result_id):  # pragma: no cover
         raise AssertionError("可视化页不逐字节读取结果")
 
-    def latest_result(self, result_type):  # pragma: no cover - 步骤 8 已移除
-        raise AssertionError("可视化页不得加载“最新结果”")
-
 
 class _RecordingExport:
     """记录导出请求；按需返回结构化结果或抛出导出用例的错误。"""

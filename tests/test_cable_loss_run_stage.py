@@ -693,10 +693,6 @@ class CableLossRunStageTests(unittest.TestCase):
         loaded = query.load(row.result_id)
         self.assertEqual(loaded.result.measurement_id, result.measurement_id)
         self.assertTrue(loaded.result.points)
-        self.assertEqual(
-            query.latest_result("cable_loss").result.measurement_id,
-            result.measurement_id,
-        )
         exported = json.loads(query.read_bytes(row.result_id))
         self.assertEqual(exported["measurement_id"], result.measurement_id)
         self.assertIn("cable_losses", exported)

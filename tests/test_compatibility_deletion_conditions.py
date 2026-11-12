@@ -48,6 +48,7 @@ FORMAL_SUCCESSORS = {
 # 已删除兼容接口的标识符：生产代码零引用，防止以别名、转发或字符串属性访问回归。
 RETIRED_IDENTIFIERS = (
     "latest_path",
+    "latest_result",
     "latest_compatibility_path",
     "LegacyResultInputReader",
     "LegacyResultQueryPort",

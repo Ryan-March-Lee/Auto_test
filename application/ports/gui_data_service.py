@@ -92,6 +92,9 @@ class ResultQueryPort(Protocol):
     查询结果一律是已解析的正式结果 DTO：非正式 schema、损坏、未完成、类型与阶段/
     运行登记不一致的文档不会出现在列表中，也不会被 ``load()`` 或
     ``load_stage_result()`` 返回。
+
+    端口不声明 ``latest_result()`` 一类隐式入口：正式测量输入只能由用户显式选择，
+    非测量浏览也必须先通过 ``list_results()`` 得到明确标识，再按标识加载。
     """
 
     def list_results(self) -> list[ResultFileDto]: ...
@@ -117,11 +120,20 @@ class ResultQueryPort(Protocol):
         """
         ...
 
-    def latest_result(self, result_type: str) -> LoadedResultDto:
-        """返回最新的可校验运行目录结果；没有结果时抛出 ``FileNotFoundError``。
+    def stage_artifact_path(
+        self,
+        stage: MeasurementStage | str,
+        measurement_id: str,
+        kind: ArtifactKind | str,
+    ) -> str | None:
+        """返回阶段目录中按 ``measurement_id`` 关联的交付产物位置。
 
-        仅供非测量浏览的兼容入口使用；正式测量的输入必须由用户显式选择。
+        步骤 20 起 CSV 与报告与正式阶段结果同目录（``<id>.csv`` /
+        ``<id>_report.html``）。实现只按阶段、测量身份与产物类型定位，不扫描目录、
+        不按时间选择；文件不存在时返回 ``None``，参数非法或目标在展开符号链接后不再
+        直接位于阶段目录内时抛出 ``ValueError``。页面不得退回“该运行第一份报告”。
         """
+        ...
 
 
 class ResultExportPort(Protocol):

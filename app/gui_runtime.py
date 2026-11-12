@@ -22,6 +22,9 @@ from instrument.measurement_factory import create_measurement_port
 from instrument.flow.cleanup import SafetyCleanupAdapter
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 from infrastructure.persistence.stage_result_repository import FileStageResultRepository
+from infrastructure.persistence.stage_artifact_repository import (
+    FileStageArtifactRepository,
+)
 from infrastructure.persistence.artifact_generator import ArchiveArtifactGenerator
 from application.inputs import ResultInputReader
 from application.inputs.explicit_stage_input import (
@@ -537,6 +540,12 @@ def _request_kwargs(
         "stage_result_repository": (
             callbacks.get("stage_result_repository")
             or FileStageResultRepository(paths=paths)
+        ),
+        # 步骤 20：CSV/报告与阶段结果同目录，由 measurement_id 关联。正式结果落盘位置
+        # 由 stage_result_repository 决定；本仓库只负责派生产物，失败不改变正式结果。
+        "stage_artifact_repository": (
+            callbacks.get("stage_artifact_repository")
+            or FileStageArtifactRepository(paths=paths)
         ),
         "stage_recorder": _stage_recorder(prepared_run, paths),
         "archival_service": archival_service,

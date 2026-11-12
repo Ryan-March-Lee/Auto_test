@@ -844,16 +844,32 @@ class ConfigurationPageTests(unittest.TestCase):
             {"supply_id": "DP8B1519", "channel": "CH1"},
         )
 
-    def test_frequency_controls_share_one_row_in_requested_order(self):
-        """频率四项同排（起始/步长/结束/增补），频点预览紧接在下一行。"""
+    def test_frequency_block_mirrors_the_power_scan_plan_layout(self):
+        """频率块与功率计划同构：加粗标题、计划编号行、行内频点 + 汇总灰字。"""
         page = self.make_page()
         layout = page.test_parameters_group.layout()
 
-        # 四个频率控件都在同一个嵌套行布局里，因此必然同排；预览是外层网格的下一行。
-        row_layout = layout.itemAtPosition(0, 0).layout()
-        preview_index = layout.indexOf(page.freq_preview)
-        self.assertEqual(layout.getItemPosition(preview_index)[0], 1)
+        # 两块计划的标题都用 section 角色（加粗放大），文案按页面名称书写。
+        self.assertEqual(page.frequency_sweep_title.property("role"), "section")
+        self.assertEqual(
+            page.frequency_sweep_title.property("role"),
+            page.power_scan_plan_title.property("role"),
+        )
+        texts = {label.text() for label in page.findChildren(QLabel)}
+        self.assertIn("DUT频率扫描计划", texts)
+        self.assertIn("计划 1", texts)
+        for text in (
+            "起始频率 (GHz)",
+            "步长 (GHz)",
+            "终止频率 (GHz)",
+            "增补 (GHz)",
+        ):
+            self.assertIn(text, texts)
+        # 单位写在字段标签里，不再有行首的“频率（GHz）：”前缀。
+        self.assertNotIn("频率（GHz）：", texts)
 
+        # 四个频率控件仍在同一行，顺序为 起始/步长/终止/增补；预览与汇总紧随其后。
+        row_layout = layout.itemAtPosition(1, 0).layout()
         order = []
         for index in range(row_layout.count()):
             widget = row_layout.itemAt(index).widget()
@@ -868,11 +884,16 @@ class ConfigurationPageTests(unittest.TestCase):
             order,
             [page.freq_start, page.freq_step, page.freq_stop, page.freq_extra],
         )
+        for widget, row in ((page.freq_preview, 2), (page.freq_summary, 3)):
+            index = layout.indexOf(widget)
+            self.assertEqual(layout.getItemPosition(index)[0], row)
 
-        texts = {label.text() for label in page.findChildren(QLabel)}
-        self.assertIn("频率（GHz）：", texts)
-        for text in ("起始", "步长", "结束", "增补"):
-            self.assertIn(text, texts)
+        # 汇总与功率计划的汇总使用同一种灰字角色。
+        self.assertEqual(page.freq_summary.property("role"), "note")
+        self.assertEqual(
+            page.freq_summary.property("role"),
+            page.power_scan_summary.property("role"),
+        )
 
     def test_frequency_sweep_controls_generate_the_saved_list(self):
         page = self.make_page()
@@ -886,6 +907,9 @@ class ConfigurationPageTests(unittest.TestCase):
             page.build_config()["test_frequencies"], [2.3, 2.4, 2.5]
         )
         self.assertIn("3 个频点", page.freq_preview.text())
+        # 汇总与功率计划同句构：段数、点数与首尾范围。
+        self.assertIn("DUT 频率扫描：1 段，共 3 个频点", page.freq_summary.text())
+        self.assertIn("2.3 → 2.5 GHz", page.freq_summary.text())
 
     def test_non_uniform_loaded_frequencies_are_rejected_without_rewriting_the_list(self):
         config = {
@@ -897,6 +921,9 @@ class ConfigurationPageTests(unittest.TestCase):
         self.app.processEvents()
 
         self.assertIn("不是严格等步长", page.freq_preview.text())
+        # 汇总给出问题数量，停在与行内预览相同的警告语气。
+        self.assertIn("DUT 频率扫描：1 段，1 个问题", page.freq_summary.text())
+        self.assertEqual(page.freq_summary.property("tone"), "warning")
         self.assertFalse(page.validate())
         # 原列表仍留在基线文档里，页面没有把它猜成另一组频点。
         self.assertEqual(

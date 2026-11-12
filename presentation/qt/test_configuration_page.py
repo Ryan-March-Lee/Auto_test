@@ -33,10 +33,12 @@
 提交，窗口用 :class:`presentation.qt.configuration_editor.ConfigurationEditor` 统一
 回填/切换模式/汇总 dirty，协调器负责合并整份草稿与最终校验（步骤 13）。
 
-测试频率不再逐点输入：页面提供“起始/步长/结束/增补”四个控件，由
+测试频率不再逐点输入：页面提供“起始/步长/终止/增补”四个控件，由
 :mod:`presentation.qt.frequency_sweep` 生成配置文档仍使用的 ``test_frequencies``
 列表。结束频率必须落在步长上；旧配置里非等步长的列表不做兼容拆分，页面保留原列表
-并禁止保存，直到用户重新输入合法扫描参数。
+并禁止保存，直到用户重新输入合法扫描参数。频率块与下面的功率计划块同构：加粗放大的
+“DUT频率扫描计划”标题、带编号与单位的输入行、行内频点预览，再加一行汇总；两层灰字
+的排版规则在 :mod:`presentation.qt.frequency_scan_preview`。
 
 起止功率表示**主功放输入功率**，功率步长是目标输入功率网格的间隔；“驱动功放预估
 增益 (dB)”是测试配置里的单一全局值，只在启用驱动模式时可用。页面不做功率反算或
@@ -95,16 +97,11 @@ from .config_page_widgets import (
     combo_box,
     number_field,
 )
-from .frequency_sweep import (
-    FrequencySweepError,
-    format_frequency,
-    generate_frequencies,
-    parse_extra_frequencies,
-)
+from .frequency_scan_preview import preview_frequency_scan
 from .instrument_discovery_panel import role_label
 from .pages import PageControllerBindingMixin
 from .power_scan_preview import preview_power_scan_plans
-from .power_sweep_plan_row import PowerSweepPlanRow
+from .power_sweep_plan_row import PLAN_NUMBER_LABEL_SAMPLE, PowerSweepPlanRow
 from .theme import PAGE_CONTENT_MAX_WIDTH, set_button_variant, set_tone
 
 __all__ = [
@@ -287,18 +284,31 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         if not isinstance(dut, dict): dut = {}
         self.max_input_power = number_field(dut.get("max_input_power", DEFAULT_MAX_INPUT_POWER), 0, 50)
         self.pa_unit_count_combo = combo_box(("1", "2", "3"), str(dut.get("power_supply_count", DEFAULT_PA_UNIT_COUNT)))
-        # 四种频率设置放在同一行：单位只在行首出现一次，各字段用“起始/步长/结束/增补”
-        # 短标签，避免四个“(GHz)”挤占输入框宽度。预览紧随其后，跨满整行。
+        # 频率扫描与下面的 DUT 功率扫描计划同构：首行是加粗放大的区块标题，输入行带
+        # “计划 1”编号与带单位的字段标签，输入行下面先给该段的频点预览，再给一行汇总。
+        # 频率固定只有一段，因此没有“添加计划/删除”；编号保留是为了与功率计划对齐。
+        frequency_header = QHBoxLayout()
+        frequency_header.setSpacing(8)
+        self.frequency_sweep_title = QLabel("DUT频率扫描计划")
+        self.frequency_sweep_title.setProperty("role", "section")
+        frequency_header.addWidget(self.frequency_sweep_title)
+        frequency_header.addStretch(1)
+        form.addLayout(frequency_header, 0, 0, 1, 4)
+
         frequency_row = QHBoxLayout()
         frequency_row.setSpacing(6)
-        frequency_prefix = QLabel("频率（GHz）：")
-        frequency_prefix.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        frequency_row.addWidget(frequency_prefix)
+        self.frequency_plan_number = QLabel("计划 1")
+        self.frequency_plan_number.setProperty("role", "fieldLabel")
+        # 与功率计划行预留同一份编号宽度：两块计划的编号列起点一致，字段才能上下对齐。
+        self.frequency_plan_number.setFixedWidth(
+            self.fontMetrics().horizontalAdvance(PLAN_NUMBER_LABEL_SAMPLE) + 8
+        )
+        frequency_row.addWidget(self.frequency_plan_number)
         for label, widget in (
-            ("起始", self.freq_start),
-            ("步长", self.freq_step),
-            ("结束", self.freq_stop),
-            ("增补", self.freq_extra),
+            ("起始频率 (GHz)", self.freq_start),
+            ("步长 (GHz)", self.freq_step),
+            ("终止频率 (GHz)", self.freq_stop),
+            ("增补 (GHz)", self.freq_extra),
         ):
             field_label = QLabel(label)
             field_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
@@ -306,9 +316,17 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
             frequency_row.addWidget(widget)
             frequency_row.addSpacing(6)
         frequency_row.addStretch(1)
-        form.addLayout(frequency_row, 0, 0, 1, 4)
-        form.addWidget(self.freq_preview, 1, 0, 1, 4)
-        first_parameter_row = self._build_power_scan_plan_editor(form, 2, test)
+        form.addLayout(frequency_row, 1, 0, 1, 4)
+        form.addWidget(self.freq_preview, 2, 0, 1, 4)
+        # 汇总与功率计划的汇总同一位置、同一样式：行内给出这一段会生成什么，汇总给出
+        # 段数、点数与首尾范围。
+        self.freq_summary = QLabel()
+        self.freq_summary.setObjectName("frequencySweepSummary")
+        self.freq_summary.setProperty("role", "note")
+        self.freq_summary.setWordWrap(True)
+        self.freq_summary.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        form.addWidget(self.freq_summary, 3, 0, 1, 4)
+        first_parameter_row = self._build_power_scan_plan_editor(form, 4, test)
         parameter_rows = (("驱动功放预估增益 (dB)", self.driver_gain),
                           ("压缩点", self.compression_combo), ("衰减器", self.attenuator_combo),
                           ("DUT最大输入功率 (dBm)", self.max_input_power), ("PA单元数量", self.pa_unit_count_combo))
@@ -733,45 +751,27 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         self.frequency_import_error = None
         self._refresh_frequency_preview()
 
-    @staticmethod
-    def _frequency_list_text(values, limit: int = 24) -> str:
-        """把频点列表压成一行预览；过长的列表只显示首尾并注明总数。"""
-        if len(values) <= limit:
-            return "，".join(format_frequency(value) for value in values)
-        head = "，".join(format_frequency(value) for value in values[: limit - 4])
-        tail = "，".join(format_frequency(value) for value in values[-3:])
-        return f"{head}，…，{tail}"
-
     def _refresh_frequency_preview(self) -> None:
-        """刷新频率预览：合法时显示生成结果，非法时显示具体原因。"""
-        error = self.frequency_import_error
-        extras: tuple[float, ...] = ()
-        if not error:
-            try:
-                extras = parse_extra_frequencies(self.freq_extra.text())
-                values = generate_frequencies(
-                    self.freq_start.value(),
-                    self.freq_stop.value(),
-                    self.freq_step.value(),
-                    extras,
-                )
-            except FrequencySweepError as failure:
-                error = str(failure)
-        if error:
-            prefix = "" if self.frequency_import_error else "无法生成频点："
-            self.freq_preview.setText(f"{prefix}{error}")
-            if self.freq_preview.property("tone") != "warning":
-                set_tone(self.freq_preview, "warning")
-            return
-        text = (
-            f"共 {len(values)} 个频点："
-            f"{self._frequency_list_text(values)}"
+        """刷新频率的行内预览与汇总：合法时显示生成结果，非法时显示具体原因。
+
+        文案与语义色的排版规则在 :mod:`presentation.qt.frequency_scan_preview`，与功率
+        计划的两层灰字同构；这里只把结果写进控件。
+        """
+        preview = preview_frequency_scan(
+            self.freq_start.value(),
+            self.freq_stop.value(),
+            self.freq_step.value(),
+            self.freq_extra.text(),
+            import_error=self.frequency_import_error,
         )
-        if extras:
-            text += "（含增补 " + "，".join(format_frequency(value) for value in extras) + "）"
-        self.freq_preview.setText(text)
-        if self.freq_preview.property("tone") != "muted":
-            set_tone(self.freq_preview, "muted")
+        self.freq_preview.setText(preview.row_text)
+        self.freq_preview.setToolTip(preview.row_tooltip)
+        if self.freq_preview.property("tone") != preview.row_tone:
+            set_tone(self.freq_preview, preview.row_tone)
+        self.freq_summary.setText(preview.summary)
+        self.freq_summary.setToolTip(preview.summary_tooltip)
+        if self.freq_summary.property("tone") != preview.summary_tone:
+            set_tone(self.freq_summary, preview.summary_tone)
 
     def request_save(self):
         if self.read_only_reason:

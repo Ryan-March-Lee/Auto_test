@@ -16,10 +16,11 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWi
 from .config_page_widgets import POWER_RANGE_DBM, POWER_STEP_RANGE_DB, number_field
 from .theme import set_button_variant, set_tone
 
-__all__ = ["PowerSweepPlanRow"]
+__all__ = ["PLAN_NUMBER_LABEL_SAMPLE", "PowerSweepPlanRow"]
 
-# 编号标签按四位计划数预留宽度：编号文本变化只改文字，不重新分配行内空间。
-_NUMBER_LABEL_SAMPLE = "计划 0000"
+#: 编号标签按四位计划数预留宽度：编号文本变化只改文字，不重新分配行内空间。
+#: 配置页的频率计划行也取这一份样本宽度，两块计划块的编号列才能上下对齐。
+PLAN_NUMBER_LABEL_SAMPLE = "计划 0000"
 
 
 class PowerSweepPlanRow(QWidget):
@@ -44,7 +45,7 @@ class PowerSweepPlanRow(QWidget):
         # 固定宽度而不是只设最小值：编号文本变长时标签的 sizeHint 会变，行内其它输入框
         # 就会跟着横移；计划数到三位以上时尤其明显。
         self.number_label.setFixedWidth(
-            self.fontMetrics().horizontalAdvance(_NUMBER_LABEL_SAMPLE) + 8
+            self.fontMetrics().horizontalAdvance(PLAN_NUMBER_LABEL_SAMPLE) + 8
         )
 
         # 显示顺序固定为“起始、步长、终止”，与用户填写顺序一致。

@@ -59,6 +59,7 @@ class ConfigurationPageTests(unittest.TestCase):
         self.assertTrue(page.read_only_notice.isVisibleTo(page))
         self.assertIn("迁移器", page.read_only_notice.text())
         self.assertFalse(page.test_parameters_group.isEnabled())
+        self.assertFalse(page.driver_parameters_group.isEnabled())
         self.assertFalse(page.save_config_btn.isEnabled())
         self.assertFalse(page.finalize_run_btn.isEnabled())
         self.assertTrue(page.return_welcome_btn.isEnabled())
@@ -68,6 +69,7 @@ class ConfigurationPageTests(unittest.TestCase):
         page.set_read_only(None)
         self.assertFalse(page.read_only_notice.isVisibleTo(page))
         self.assertTrue(page.test_parameters_group.isEnabled())
+        self.assertTrue(page.driver_parameters_group.isEnabled())
         self.assertTrue(page.save_config_btn.isEnabled())
 
     def test_driver_mode_emits_change_signal(self):
@@ -654,6 +656,57 @@ class ConfigurationPageTests(unittest.TestCase):
         self.assertTrue(page.driver_gain_label.isEnabled())
         self.assertEqual(page.driver_gain.text(), "20.5")
 
+    def test_parameter_area_splits_dut_and_driver_into_two_cards(self):
+        """参数区按被测对象分组：DUT 与驱放各一张同级卡片，衰减器归 DUT。"""
+        from PySide6.QtWidgets import QGroupBox
+
+        page = self.make_page()
+
+        self.assertIsInstance(page.dut_parameters_group, QGroupBox)
+        self.assertIsInstance(page.driver_parameters_group, QGroupBox)
+        self.assertEqual(page.dut_parameters_group.title(), "DUT 参数")
+        self.assertEqual(page.driver_parameters_group.title(), "驱放参数")
+        # 兼容旧名称：只读与既有调用仍把 DUT 组当作“测试参数区”。
+        self.assertIs(page.test_parameters_group, page.dut_parameters_group)
+
+        column = page.dut_parameters_group.parentWidget().layout()
+        self.assertGreater(
+            column.indexOf(page.driver_parameters_group),
+            column.indexOf(page.dut_parameters_group),
+            "驱放组应排在 DUT 组之后",
+        )
+        for widget in (
+            page.compression_combo,
+            page.attenuator_combo,
+            page.max_input_power,
+        ):
+            self.assertTrue(page.dut_parameters_group.isAncestorOf(widget))
+        self.assertTrue(page.driver_parameters_group.isAncestorOf(page.driver_gain))
+        self.assertFalse(page.dut_parameters_group.isAncestorOf(page.driver_gain))
+        dut_labels = {
+            label.text() for label in page.dut_parameters_group.findChildren(QLabel)
+        }
+        for text in ("压缩点", "衰减器", "DUT最大输入功率 (dBm)"):
+            self.assertIn(text, dut_labels)
+
+    def test_driver_group_explains_the_current_test_mode(self):
+        """驱放组用一行状态说明模式；无驱放时只灰显控件，分组自身保留。"""
+        page = self.make_page(
+            driver_mode={"enabled": True, "estimated_gain_db": 20.5}
+        )
+
+        self.assertIn("有驱放测试", page.driver_mode_status.text())
+        self.assertEqual(page.driver_mode_status.property("tone"), "info")
+        self.assertTrue(page.driver_gain.isEnabled())
+
+        page.set_test_mode(False)
+
+        self.assertIn("无驱放测试", page.driver_mode_status.text())
+        self.assertEqual(page.driver_mode_status.property("tone"), "muted")
+        self.assertFalse(page.driver_gain.isEnabled())
+        self.assertTrue(page.driver_parameters_group.isEnabled())
+        self.assertTrue(page.driver_mode_status.isVisibleTo(page))
+
     def test_driver_gain_round_trips_through_save_and_backfill(self):
         page = self.make_page(driver_mode={"enabled": True})
         self.assertEqual(page.driver_gain.text(), "", "缺失的增益不伪造默认值")
@@ -1109,12 +1162,14 @@ class ConfigurationPageTests(unittest.TestCase):
 
         self.assertFalse(page.finalize_run_btn.isEnabled())
         self.assertFalse(page.test_parameters_group.isEnabled())
+        self.assertFalse(page.driver_parameters_group.isEnabled())
         self.assertFalse(page.previous_step_btn.isEnabled())
 
         page.set_finalizing(False)
 
         self.assertTrue(page.finalize_run_btn.isEnabled())
         self.assertTrue(page.test_parameters_group.isEnabled())
+        self.assertTrue(page.driver_parameters_group.isEnabled())
         self.assertTrue(page.previous_step_btn.isEnabled())
         self.assertFalse(page.save_config_btn.isEnabled(), "进入前就禁用的控件保持禁用")
 

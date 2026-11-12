@@ -33,6 +33,11 @@
 提交，窗口用 :class:`presentation.qt.configuration_editor.ConfigurationEditor` 统一
 回填/切换模式/汇总 dirty，协调器负责合并整份草稿与最终校验（步骤 13）。
 
+参数区按被测对象分成两张卡片：**“DUT 参数”**承载 DUT 频率扫描计划、DUT 功率扫描
+计划、压缩点、衰减器与 DUT 最大输入功率；**“驱放参数”**只承载驱放模式下才生效的
+驱动功放预估增益，无驱放测试时保留该组、灰显控件并说明不参与运行。运行入口和底部
+操作栏不属于参数分组，仍独立成块。
+
 测试频率不再逐点输入：页面提供“起始/步长/终止/增补”四个控件，由
 :mod:`presentation.qt.frequency_sweep` 生成配置文档仍使用的 ``test_frequencies``
 列表。结束频率必须落在步长上；旧配置里非等步长的列表不做兼容拆分，页面保留原列表
@@ -225,7 +230,13 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         # 设备发现与设备勾选都在“仪表配置”页（欢迎页之后的第一步）：本页只配置测试
         # 参数与运行，设备地址与身份来自那一页写入的设备绑定，页面不再提供手工填写地址
         # 的控件，也不再有设备发现入口。
-        params = QGroupBox("测试参数配置")
+        #
+        # 参数区按被测对象分成两张卡片：DUT 组承载频率/功率扫描计划与压缩点、衰减器、
+        # 最大输入功率；驱放组只承载驱放模式下才生效的全局预估增益。两条扫描计划与
+        # 三个 DUT 电气参数同属被测件，混排会让“这一项到底约束谁”难以判断。
+        params = QGroupBox("DUT 参数")
+        self.dut_parameters_group = params
+        # 旧名称保留：只读/最终动作与既有用例都通过它判断“参数区”是否可用。
         self.test_parameters_group = params
         form = QGridLayout(params)
         form.setHorizontalSpacing(10)
@@ -260,25 +271,12 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         self.freq_preview.setProperty("role", "note")
         self.freq_preview.setWordWrap(True)
         self.freq_preview.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        # 驱动功放预估增益是测试配置里的单一全局值（dB）。空文本表示尚未填写；
-        # 增益的业务校验（有限数值、驱动模式下必填）由配置 DTO 承担，页面不推算。
-        self.driver_gain = QLineEdit(DEFAULT_DRIVER_GAIN_ESTIMATE)
-        self.driver_gain.setPlaceholderText("例如 30.0（启用驱动时填写）")
-        self.driver_gain.setMaximumWidth(140)
         compression = self.config.get("compression_point", {})
         attenuator = self.config.get("attenuator", {})
         if not isinstance(compression, dict): compression = {}
         if not isinstance(attenuator, dict): attenuator = {}
         self.compression_combo = combo_box(("1dB", "3dB", "5dB"), compression.get("type", DEFAULT_COMPRESSION_TYPE))
         self.attenuator_combo = combo_box(("30dB", "40dB"), attenuator.get("type", DEFAULT_ATTENUATOR_TYPE))
-        mode = self.config.get("driver_mode", {})
-        mode = mode if isinstance(mode, dict) else {}
-        # 与配置回填使用同一套解析：只接受真正的布尔值（``"false"``/``0``/``None``
-        # 都按缺失处理），增益渲染也复用投影规则，构造与 ``apply_config`` 不会各判一次。
-        self.test_mode_enabled = bool_or_default(
-            mode.get("enabled"), DEFAULT_DRIVER_MODE_ENABLED
-        )
-        self.driver_gain.setText(driver_gain_text(mode.get("estimated_gain_db")))
         dut = self.config.get("dut_config", {})
         if not isinstance(dut, dict): dut = {}
         self.max_input_power = number_field(dut.get("max_input_power", DEFAULT_MAX_INPUT_POWER), 0, 50)
@@ -325,24 +323,77 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         self.freq_summary.setTextInteractionFlags(Qt.TextSelectableByMouse)
         form.addWidget(self.freq_summary, 3, 0, 1, 4)
         first_parameter_row = self._build_power_scan_plan_editor(form, 4, test)
-        parameter_rows = (("驱动功放预估增益 (dB)", self.driver_gain),
-                          ("压缩点", self.compression_combo), ("衰减器", self.attenuator_combo),
-                          ("DUT最大输入功率 (dBm)", self.max_input_power))
+        parameter_rows = (
+            ("压缩点", self.compression_combo),
+            ("衰减器", self.attenuator_combo),
+            ("DUT最大输入功率 (dBm)", self.max_input_power),
+        )
         for offset, (label, widget) in enumerate(parameter_rows):
             row, column = divmod(offset, 2)
             field_label = QLabel(label)
             field_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            if widget is self.driver_gain:
-                # 驱动关闭时连同标签一起禁用，已填写的值仍保留在控件里。
-                self.driver_gain_label = field_label
             form.addWidget(field_label, row + first_parameter_row, column * 2)
             form.addWidget(widget, row + first_parameter_row, column * 2 + 1)
-        self._apply_driver_gain_state()
         page_column.addWidget(params)
+        self._build_driver_parameters(page_column)
+        self._apply_driver_gain_state()
         # 运行入口紧随测试参数，保存与返回放在页面底部固定操作栏。
         self._build_run_widgets(page_column)
         page_column.addStretch(1)
         root.addWidget(self._build_action_bar())
+
+    # -- 驱放参数组 ---------------------------------------------------------
+    def _build_driver_parameters(self, layout) -> None:
+        """建立驱放参数组：只有驱放模式下才生效的全局预估增益。
+
+        本页与驱放直接相关的配置只有 ``driver_mode.estimated_gain_db``：驱放上电计划
+        归电源配置页，有/无驱放由欢迎页选择。组内第一行说明当前模式与该参数是否参与
+        运行，第二行才是唯一输入项；这样“驱放组为什么只有一项”不需要靠猜。
+        """
+        # 驱动功放预估增益是测试配置里的单一全局值（dB）。空文本表示尚未填写；
+        # 增益的业务校验（有限数值、驱动模式下必填）由配置 DTO 承担，页面不推算。
+        self.driver_gain = QLineEdit(DEFAULT_DRIVER_GAIN_ESTIMATE)
+        self.driver_gain.setPlaceholderText("例如 30.0（启用驱动时填写）")
+        self.driver_gain.setMaximumWidth(140)
+        mode = self.config.get("driver_mode", {})
+        mode = mode if isinstance(mode, dict) else {}
+        # 与配置回填使用同一套解析：只接受真正的布尔值（``"false"``/``0``/``None``
+        # 都按缺失处理），增益渲染也复用投影规则，构造与 ``apply_config`` 不会各判一次。
+        self.test_mode_enabled = bool_or_default(
+            mode.get("enabled"), DEFAULT_DRIVER_MODE_ENABLED
+        )
+        self.driver_gain.setText(driver_gain_text(mode.get("estimated_gain_db")))
+
+        group = QGroupBox("驱放参数")
+        self.driver_parameters_group = group
+        form = QGridLayout(group)
+        form.setHorizontalSpacing(10)
+        form.setVerticalSpacing(8)
+        # 与 DUT 组同一套标签列宽：两张卡片的标签起点一致，上下扫读时不会左右跳。
+        form.setColumnMinimumWidth(0, 118)
+        form.setColumnStretch(1, 1)
+
+        self.driver_mode_status = QLabel()
+        self.driver_mode_status.setObjectName("driverModeStatus")
+        self.driver_mode_status.setWordWrap(True)
+        self.driver_mode_status.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        set_tone(self.driver_mode_status, "muted")
+        form.addWidget(self.driver_mode_status, 0, 0, 1, 2)
+
+        self.driver_gain_label = QLabel("驱动功放预估增益 (dB)")
+        self.driver_gain_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        form.addWidget(self.driver_gain_label, 1, 0)
+        form.addWidget(self.driver_gain, 1, 1, Qt.AlignLeft)
+
+        self.driver_gain_hint = QLabel(
+            "驱放上电计划在“电源配置”页设置；有/无驱放由欢迎页的测试模式决定。"
+        )
+        self.driver_gain_hint.setProperty("role", "note")
+        self.driver_gain_hint.setWordWrap(True)
+        self.driver_gain_hint.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        set_tone(self.driver_gain_hint, "muted")
+        form.addWidget(self.driver_gain_hint, 2, 0, 1, 2)
+        layout.addWidget(group)
 
     # -- DUT 功率扫描计划编辑器 ---------------------------------------------
     @staticmethod
@@ -803,6 +854,7 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         self.read_only_notice.setVisible(bool(reason))
         widgets = (
             self.test_parameters_group,
+            self.driver_parameters_group,
             self.save_config_btn,
             self.finalize_run_btn,
         )
@@ -839,6 +891,7 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
             self.load_run_btn,
             self.load_run_id_edit,
             self.test_parameters_group,
+            self.driver_parameters_group,
         )
         self._finalizing = active
         if active:
@@ -855,6 +908,7 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         if self.read_only_reason:
             for widget in (
                 self.test_parameters_group,
+                self.driver_parameters_group,
                 self.save_config_btn,
                 self.finalize_run_btn,
             ):
@@ -938,6 +992,14 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         enabled = bool(self.test_mode_enabled)
         for widget in (self.driver_gain_label, self.driver_gain):
             widget.setEnabled(enabled)
+        status = getattr(self, "driver_mode_status", None)
+        if status is not None:
+            status.setText(
+                "当前为有驱放测试：预估增益用于驱动映射与输入功率换算。"
+                if enabled
+                else "当前为无驱放测试：本组参数不参与运行，控件保持禁用。"
+            )
+            set_tone(status, "info" if enabled else "muted")
         self.driver_gain.setToolTip(
             "驱动功放预估增益（dB），用于推算驱动映射的起点；仅启用驱动模式时填写"
             if enabled

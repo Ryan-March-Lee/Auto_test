@@ -1,13 +1,15 @@
 """内容过渡件的契约（重构计划步骤 2）。
 
-这里锁定用户能看见、后续步骤会依赖的四件事：
+这里锁定用户能看见、后续步骤会依赖的五件事：
 
 - 动效令牌集中在 :mod:`presentation.qt.theme`，页面不再各写时长；
-- 效果只做透明度和水平偏移，进度从 0 走到 1 时偏移归零；
+- 效果真的把透明度和水平偏移画到像素上（不是只改内部属性）；
 - 过渡结束后控件上不再残留 ``QGraphicsEffect``，页面自己的效果不会被覆盖；
-- ``duration_ms=0`` 直接落到终态，不创建效果也不启动计时器；重复调用先中止上一条。
+- ``duration_ms=0`` 直接落到终态，不创建效果也不启动计时器；重复调用先中止上一条；
+- 收尾之后（包括控件先被销毁）句柄仍可安全查询，不抛 ``RuntimeError``。
 
-动画等待使用很短的时长（30ms），避免离屏用例为 220ms 的真实时长排队。
+像素断言抓取的是**父容器**而不是控件自己：Qt 在 ``QWidget.grab()`` 时不应用控件
+自身的效果，只应用子控件的效果。
 """
 
 import os
@@ -15,14 +17,8 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import (  # noqa: E402
-    QCoreApplication,
-    QEasingCurve,
-    QEvent,
-    QRectF,
-)
-from PySide6.QtGui import QPainter  # noqa: E402
-from PySide6.QtTest import QTest  # noqa: E402
+from PySide6.QtCore import QCoreApplication, QEvent, QEasingCurve  # noqa: E402
+from PySide6.QtGui import QColor, QPainter  # noqa: E402
 from PySide6.QtWidgets import QApplication, QGraphicsEffect, QWidget  # noqa: E402
 
 from presentation.qt.motion import (  # noqa: E402
@@ -52,6 +48,43 @@ class _ForeignEffect(QGraphicsEffect):
         self.drawSource(painter)
 
 
+class _Strip(QWidget):
+    """红底 + 左侧 10px 蓝条：像素位置能直接看出偏移与透明度。"""
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(255, 0, 0))
+        painter.fillRect(0, 0, 10, self.height(), QColor(0, 0, 255))
+        painter.end()
+
+
+class _MotionTestCase(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _widget(self, *, visible=True):
+        widget = QWidget()
+        widget.resize(160, 80)
+        if visible:
+            widget.show()
+        self.addCleanup(_destroy, widget)
+        self.app.processEvents()
+        return widget
+
+    def _flush_deferred_deletes(self):
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+
+    def assert_color_close(self, actual, expected, tolerance=3):
+        for channel in ("red", "green", "blue"):
+            self.assertAlmostEqual(
+                getattr(actual, channel)(),
+                getattr(expected, channel)(),
+                delta=tolerance,
+                msg=f"{actual.name()} 与 {expected.name()} 的 {channel} 通道不一致",
+            )
+
+
 class MotionTokenTests(unittest.TestCase):
     def test_tokens_match_the_reconstruction_plan(self):
         self.assertEqual(MOTION_REVEAL_MS, 220)
@@ -64,7 +97,7 @@ class MotionTokenTests(unittest.TestCase):
         self.assertEqual(RevealDirection.FROM_RIGHT.value, "right")
 
 
-class SlideFadeEffectTests(unittest.TestCase):
+class SlideFadeEffectTests(_MotionTestCase):
     def test_progress_moves_opacity_and_offset(self):
         effect = SlideFadeEffect()
         self.addCleanup(effect.deleteLater)
@@ -93,34 +126,38 @@ class SlideFadeEffectTests(unittest.TestCase):
         effect.set_opacity(2.0)
         self.assertEqual(effect.opacity(), 1.0)
 
-    def test_bounding_rect_covers_the_slid_side(self):
-        effect = SlideFadeEffect()
-        self.addCleanup(effect.deleteLater)
-        source = QRectF(0.0, 0.0, 100.0, 50.0)
-
-        effect.set_offset(MOTION_SLIDE_PX)
-        self.assertEqual(effect.boundingRectFor(source), QRectF(0.0, 0.0, 110.0, 50.0))
-        effect.set_offset(-MOTION_SLIDE_PX)
-        self.assertEqual(
-            effect.boundingRectFor(source), QRectF(-10.0, 0.0, 110.0, 50.0)
-        )
-        effect.set_offset(0.0)
-        self.assertEqual(effect.boundingRectFor(source), source)
-
-
-class RevealTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.app = QApplication.instance() or QApplication([])
-
-    def _widget(self):
-        widget = QWidget()
-        widget.resize(160, 80)
-        widget.show()
-        self.addCleanup(_destroy, widget)
+    def test_the_effect_is_actually_painted_as_a_fade_and_a_slide(self):
+        """锁定像素级契约：只用属性断言抓不到“效果没画出来”的回归。"""
+        container = QWidget()
+        container.resize(300, 200)
+        container.setStyleSheet("background: #FFFFFF;")
+        self.addCleanup(_destroy, container)
+        strip = _Strip(container)
+        strip.setGeometry(50, 50, 100, 50)
+        container.show()
         self.app.processEvents()
-        return widget
 
+        effect = SlideFadeEffect()
+        effect.set_opacity(0.5)
+        effect.set_offset(float(MOTION_SLIDE_PX))
+        strip.setGraphicsEffect(effect)
+        self.app.processEvents()
+
+        image = container.grab().toImage()
+
+        def pixel(x, y=60):
+            return image.pixelColor(x, y)
+
+        # 内容整体右移 10px：原来的左边缘让出来，露出父容器底色。
+        self.assert_color_close(pixel(52), QColor(255, 255, 255))
+        # 蓝条从 50–59 挪到 60–69，并且以 50% 不透明度混在白底上。
+        self.assert_color_close(pixel(65), QColor(128, 128, 255))
+        # 红底同样整体右移并淡入。
+        self.assert_color_close(pixel(80), QColor(255, 128, 128))
+        self.assert_color_close(pixel(145), QColor(255, 128, 128))
+
+
+class RevealTests(_MotionTestCase):
     def test_reveal_starts_transparent_from_the_requested_edge(self):
         widget = self._widget()
         handle = reveal(widget, RevealDirection.FROM_RIGHT, MOTION_REVEAL_MS)
@@ -140,9 +177,11 @@ class RevealTests(unittest.TestCase):
     def test_progress_animates_opacity_and_offset_together(self):
         widget = self._widget()
         handle = reveal(widget, RevealDirection.FROM_RIGHT, MOTION_REVEAL_MS)
+        animation = handle.animation()
+        # 停掉计时器再手动推进，避免真实计时与断言赛跑。
+        animation.stop()
+        animation.setCurrentTime(MOTION_REVEAL_MS // 2)
 
-        handle.animation().setCurrentTime(MOTION_REVEAL_MS // 2)
-        self.app.processEvents()
         effect = widget.graphicsEffect()
         self.assertGreater(effect.opacity(), 0.0)
         self.assertLess(effect.opacity(), 1.0)
@@ -151,14 +190,24 @@ class RevealTests(unittest.TestCase):
 
     def test_animation_finishes_without_residual_effect(self):
         widget = self._widget()
-        reveal(widget, RevealDirection.FROM_LEFT, 30)
+        handle = reveal(widget, RevealDirection.FROM_LEFT, MOTION_REVEAL_MS)
+        animation = handle.animation()
         self.assertIsNotNone(widget.graphicsEffect())
 
-        QTest.qWait(80)
+        animation.setCurrentTime(animation.duration())
 
         self.assertIsNone(
             widget.graphicsEffect(), "过渡结束后必须摘除效果，不能长期拖慢页面"
         )
+        self.assertFalse(handle.is_running())
+        self.assertIsNone(handle.effect())
+        self.assertIsNone(handle.animation())
+
+        # 句柄的 deleteLater 由事件循环处理；之后查询仍必须是安全的。
+        self._flush_deferred_deletes()
+        self.assertFalse(handle.is_running())
+        self.assertIsNone(handle.effect())
+        self.assertIsNone(handle.animation())
 
     def test_zero_duration_lands_directly_without_a_timer(self):
         widget = self._widget()
@@ -171,6 +220,12 @@ class RevealTests(unittest.TestCase):
         self.assertFalse(running.is_running())
         self.assertIsNone(widget.graphicsEffect())
 
+        self._flush_deferred_deletes()
+        self.assertFalse(running.is_running())
+        self.assertIsNone(running.effect())
+        self.assertIsNone(running.animation())
+        running.cancel()
+
     def test_a_second_reveal_replaces_the_first(self):
         widget = self._widget()
         first = reveal(widget, RevealDirection.FROM_RIGHT, 1000)
@@ -182,6 +237,10 @@ class RevealTests(unittest.TestCase):
         self.assertIsNot(widget.graphicsEffect(), first_effect)
         self.assertIs(widget.graphicsEffect(), second.effect())
         self.assertEqual(second.effect().offset(), -float(MOTION_SLIDE_PX))
+
+        self._flush_deferred_deletes()
+        self.assertFalse(first.is_running())
+        self.assertIsNone(first.effect())
 
     def test_direction_accepts_left_right_strings(self):
         widget = self._widget()
@@ -198,6 +257,60 @@ class RevealTests(unittest.TestCase):
 
         self.assertIsNone(reveal(widget, RevealDirection.FROM_RIGHT, 220))
         self.assertIs(widget.graphicsEffect(), foreign)
+
+    def test_a_page_effect_installed_mid_transition_stops_the_transition(self):
+        """Qt 会同步销毁被替换的效果，动画不能继续写已删除的对象。"""
+        widget = self._widget()
+        handle = reveal(widget, RevealDirection.FROM_RIGHT, 1000)
+        foreign = _ForeignEffect()
+
+        widget.setGraphicsEffect(foreign)
+
+        self.assertIs(widget.graphicsEffect(), foreign)
+        self.assertFalse(handle.is_running())
+        self.assertIsNone(handle.effect())
+        self.assertIsNone(handle.animation())
+        self._flush_deferred_deletes()
+        handle.cancel()
+
+    def test_cancel_removes_the_effect_and_is_idempotent(self):
+        widget = self._widget()
+        handle = reveal(widget, RevealDirection.FROM_RIGHT, 1000)
+
+        handle.cancel()
+        self.assertIsNone(widget.graphicsEffect())
+        handle.cancel()
+
+        self._flush_deferred_deletes()
+        self.assertFalse(handle.is_running())
+        self.assertIsNone(handle.effect())
+        self.assertIsNone(handle.animation())
+
+    def test_widget_destroyed_mid_transition_leaves_a_safe_handle(self):
+        widget = QWidget()
+        widget.resize(160, 80)
+        widget.show()
+        self.app.processEvents()
+        handle = reveal(widget, RevealDirection.FROM_RIGHT, 1000)
+
+        widget.deleteLater()
+        self._flush_deferred_deletes()
+
+        self.assertFalse(handle.is_running())
+        self.assertIsNone(handle.effect())
+        self.assertIsNone(handle.animation())
+        handle.cancel()
+
+    def test_hidden_widget_lands_directly(self):
+        widget = self._widget(visible=False)
+        self.assertIsNone(reveal(widget, RevealDirection.FROM_RIGHT, 1000))
+        self.assertIsNone(widget.graphicsEffect())
+
+    def test_reveal_does_not_change_widget_geometry(self):
+        widget = self._widget()
+        before = widget.geometry()
+        reveal(widget, RevealDirection.FROM_RIGHT, MOTION_REVEAL_MS)
+        self.assertEqual(widget.geometry(), before, "过渡只影响绘制，不改变布局")
 
     def test_widget_must_be_a_widget(self):
         with self.assertRaises(TypeError):
@@ -218,16 +331,14 @@ class RevealTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             reveal(widget, RevealDirection.FROM_RIGHT, -1)
 
-    def test_effect_can_be_drawn_without_changing_widget_geometry(self):
+    def test_invalid_arguments_do_not_disturb_a_running_transition(self):
         widget = self._widget()
-        before = widget.geometry()
-        handle = reveal(widget, RevealDirection.FROM_RIGHT, MOTION_REVEAL_MS)
-        handle.animation().setCurrentTime(MOTION_REVEAL_MS // 3)
+        handle = reveal(widget, RevealDirection.FROM_RIGHT, 1000)
 
-        image = widget.grab()
+        with self.assertRaises(ValueError):
+            reveal(widget, "up", 220)
 
-        self.assertFalse(image.isNull())
-        self.assertEqual(widget.geometry(), before, "过渡只影响绘制，不改变布局")
+        self.assertTrue(handle.is_running())
 
 
 if __name__ == "__main__":

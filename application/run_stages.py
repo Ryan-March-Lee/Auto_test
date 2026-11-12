@@ -34,6 +34,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping
 
+from application.dto.calibration_inputs import CalibrationInputSource
 from application.dto.measurement_results import (
     measurement_result_filename,
     validate_measurement_id,
@@ -73,6 +74,12 @@ _MISSING_RESULT_PATH = "阶段 {stage} 没有固定结果路径，调用方必�
 # ``schema`` 是识别标记，旧运行目录的完整结果文档没有该字段，因此不会被误判。
 STAGE_RESULT_REFERENCE_SCHEMA = "pa_auto_test.stage_result_reference"
 STAGE_RESULT_REFERENCE_VERSION = 1
+
+# 本次运行消费的外部校准输入来源：只记录阶段、身份、路径、摘要、大小与来源运行，
+# 与本运行产出的阶段结果引用分开，避免把“消费的输入”误读成“产出的结果”。
+CALIBRATION_INPUTS_INPUT_PATH = "inputs/calibration_inputs.json"
+CALIBRATION_INPUTS_SCHEMA = "pa_auto_test.calibration_inputs"
+CALIBRATION_INPUTS_VERSION = 1
 
 
 class StageInputUnavailable(ConfigurationError, RuntimeError):
@@ -351,6 +358,114 @@ class RunStageRecorder:
             result_path=path,
             description=description,
             now=now,
+        )
+
+    # -- 运行契约：本次消费的校准输入来源 -------------------------------
+
+    def record_calibration_inputs(
+        self,
+        sources: tuple[CalibrationInputSource, ...] | list[CalibrationInputSource],
+        *,
+        now: datetime | None = None,
+    ) -> FileReference | None:
+        """登记本次测量实际消费的校准输入来源，返回来源文档的运行引用。
+
+        ``sources`` 是阶段结果仓库在**同一次读取**中给出的事实（阶段、身份、路径、
+        摘要、大小与来源运行）。本方法只写运行目录内的来源文档并登记 manifest，不
+        写入、不复制阶段结果正文，也不重新读取被消费的文件。
+
+        同一运行可能先后做驱动映射与主功放测量，因此记录按
+        ``(消费方测量类型, 输入阶段)`` 合并：同一键重复登记相同事实是幂等 no-op，
+        不会因为二次预检改写已登记的来源。合并后的集合与既有记录一致时不落盘。
+
+        运行目录只保存“谁消费了什么”；旧 manifest 没有这份文档时按无记录处理，
+        不影响阶段结果按显式路径加载。
+        """
+        existing = self._read_calibration_inputs()
+        entries = self._merged_calibration_inputs(sources, existing)
+        if not entries:
+            return None
+        if entries == existing:
+            return self._calibration_inputs_reference()
+        document = {
+            "schema": CALIBRATION_INPUTS_SCHEMA,
+            "version": CALIBRATION_INPUTS_VERSION,
+            "run_id": self.run_id,
+            "registered_at": utc_now_iso(now),
+            "inputs": entries,
+        }
+        relative = self.repository.write_run_json(
+            self.run_id,
+            CALIBRATION_INPUTS_INPUT_PATH,
+            document,
+            overwrite=True,
+        )
+        return self.repository.register_file(
+            self.run_id,
+            relative,
+            description="本次测量消费的校准输入来源",
+            now=now,
+        )
+
+    def _merged_calibration_inputs(
+        self,
+        sources: tuple[CalibrationInputSource, ...] | list[CalibrationInputSource],
+        existing: list[dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
+        """按 ``(消费方测量类型, 输入阶段)`` 合并来源记录，顺序稳定。"""
+        merged: dict[tuple[str, str], dict[str, Any]] = {}
+        for entry in existing or ():
+            merged[(entry["measurement_type"], entry["stage"])] = entry
+        for source in sources:
+            if not isinstance(source, CalibrationInputSource):
+                raise ValueError(
+                    "校准输入来源必须是 CalibrationInputSource，"
+                    f"收到 {type(source).__name__}"
+                )
+            entry = source.to_dict()
+            merged[(entry["measurement_type"], entry["stage"])] = entry
+        return [merged[key] for key in sorted(merged)]
+
+    def _read_calibration_inputs(self) -> list[dict[str, Any]]:
+        """读取已登记的来源记录；缺失、未登记或不可校验时按“没有记录”处理。
+
+        来源文档是审计信息，不是阶段结果的权威副本：它丢失或被改写时，新一次登记
+        应当完整重写，而不是让测量因为审计文档不可读而停止。阶段结果仍必须按显式
+        路径重新加载校验。
+        """
+        try:
+            document = self.repository.read_run_json(
+                self.run_id, CALIBRATION_INPUTS_INPUT_PATH
+            )
+        except (FileNotFoundError, ValueError):
+            return []
+        if not isinstance(document, Mapping):
+            return []
+        if document.get("schema") != CALIBRATION_INPUTS_SCHEMA:
+            return []
+        raw_inputs = document.get("inputs")
+        if not isinstance(raw_inputs, list):
+            return []
+        entries: list[dict[str, Any]] = []
+        for item in raw_inputs:
+            if not isinstance(item, Mapping):
+                return []
+            try:
+                entries.append(CalibrationInputSource.from_dict(item).to_dict())
+            except (TypeError, ValueError):
+                return []
+        return entries
+
+    def _calibration_inputs_reference(self) -> FileReference | None:
+        """返回来源文档已登记的运行引用；尚未登记时返回 ``None``。"""
+        manifest = self.repository.load_manifest(self.run_id)
+        return next(
+            (
+                item
+                for item in manifest.inputs
+                if item.path == CALIBRATION_INPUTS_INPUT_PATH
+            ),
+            None,
         )
 
     def _verify_stage_result_reference(self, reference: StageResultReference) -> None:
@@ -667,6 +782,9 @@ def _stage_result_reference_target(
 
 
 __all__ = [
+    "CALIBRATION_INPUTS_INPUT_PATH",
+    "CALIBRATION_INPUTS_SCHEMA",
+    "CALIBRATION_INPUTS_VERSION",
     "STAGE_CABLE_LOSS",
     "STAGE_DRIVER_MAPPING",
     "STAGE_RESULT_REFERENCE_SCHEMA",

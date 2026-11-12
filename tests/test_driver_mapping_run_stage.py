@@ -67,6 +67,10 @@ CREATED_AT = datetime(2026, 10, 22, 15, 30, tzinfo=timezone.utc)
 
 CABLE_LOSSES = {"1.0": {"cable2": 2.0}}
 
+# 步骤 17：新测量链路只消费显式选择的阶段结果或组合入口预检对象。运行阶段用例用
+# 预检对象代替真实文件读取，阶段目录边界另由显式输入用例覆盖。
+_UNSET = object()
+
 
 def _fully_valid_gui_config(*, power_scan_plans=None) -> dict:
     """完整有效的 GUI 组合配置（驱动模式开启，DUT 通道已确认接线）。
@@ -236,16 +240,18 @@ class DriverMappingRunStageTests(unittest.TestCase):
             {"run_id": run_id, "cable_losses": cable_losses},
             now=CREATED_AT,
         )
+        if run_id == RUN_ID:
+            self._seeded_loss_data = {"cable_losses": cable_losses}
         return recorder
 
-    def _saved_stage_cable_loss(self, *, run_id=RUN_ID):
+    def _saved_stage_cable_loss(self, *, run_id=RUN_ID, cable_losses=CABLE_LOSSES):
         """把一份正式线损结果写入阶段目录（不登记运行引用）。"""
         result = CableLossMeasurementResult(
             run_id=run_id,
             measurement_id=generate_measurement_id(),
             points=tuple(
                 CableLossRow(frequency_ghz=frequency, cable_losses=values)
-                for frequency, values in CABLE_LOSSES.items()
+                for frequency, values in cable_losses.items()
             ),
         )
         return self.stage_repository.save(MeasurementStage.CABLE_LOSS, result)
@@ -279,10 +285,14 @@ class DriverMappingRunStageTests(unittest.TestCase):
         stage_repository=None,
         cable_loss_path=None,
         cable_loss_digest=None,
-        loss_data=None,
+        loss_data=_UNSET,
     ):
         layout = self.repository.layout(run_id)
         instrument = instrument or _Instrument()
+        if loss_data is _UNSET and cable_loss_path is None:
+            loss_data = getattr(self, "_seeded_loss_data", None)
+        elif loss_data is _UNSET:
+            loss_data = None
         return DriverPowerMappingRequest(
             configuration={
                 "test_frequencies": [1.0],
@@ -515,10 +525,10 @@ class DriverMappingRunStageTests(unittest.TestCase):
 
         self.assertEqual(verified, layout.run_directory / DRIVER_MAPPING_INPUT_PATH)
 
-    def test_current_run_input_does_not_use_deprecated_latest_lookup(self):
+    def test_preloaded_input_avoids_the_run_directory_lookup(self):
+        """步骤 17：组合入口交出的预检对象直接消费，不再读取运行目录。"""
         self._create_run()
         self._complete_cable_loss()
-        expected_path = self.repository.layout(RUN_ID).run_directory / CABLE_LOSS_INPUT_PATH
         loaded_paths = []
         original_load = self.result_repository.load
 
@@ -531,15 +541,10 @@ class DriverMappingRunStageTests(unittest.TestCase):
                 self._request(), sleep_fn=lambda _: None
             ).measure_all_frequencies()
 
-        self.assertEqual(loaded_paths[0], expected_path)
+        self.assertEqual(loaded_paths, [])
 
     def test_newer_global_history_file_is_not_used_as_formal_input(self):
-        """步骤 D：更新的全局历史副本不会被正式测量当作输入。
-
-        与 ``test_current_run_input_does_not_use_deprecated_latest_lookup`` 相比，
-        本用例先制造一个**比当前运行输入更新**的全局历史结果，再跑真实测量链，
-        同时记录所有实际读取路径，证明正式测量只消费当前运行目录内的输入。
-        """
+        """步骤 D/17：正式测量不消费全局历史副本，也不查找最新结果。"""
         self._create_run()
         self._complete_cable_loss()
         global_copy = (
@@ -568,11 +573,7 @@ class DriverMappingRunStageTests(unittest.TestCase):
                 self._request(), sleep_fn=lambda _: None
             ).measure_all_frequencies()
 
-        run_directory = self.repository.layout(RUN_ID).run_directory.resolve()
-        self.assertTrue(loaded_paths)
-        for path in loaded_paths:
-            # 每个实际读取的输入都必须在当前运行目录内，且不是全局历史副本。
-            path.relative_to(run_directory)
+        self.assertEqual(loaded_paths, [])
         self.assertNotIn(global_copy.resolve(), loaded_paths)
 
     def test_global_compatibility_copy_is_not_written(self):
@@ -594,13 +595,14 @@ class DriverMappingRunStageTests(unittest.TestCase):
 
     # -- 输入隔离与前置失败 ------------------------------------------------
 
-    def test_missing_current_run_cable_loss_fails_before_hardware(self):
+    def test_missing_explicit_cable_loss_fails_before_hardware(self):
         self._create_run()
         instrument = _Instrument()
 
-        with self.assertRaisesRegex(StageInputUnavailable, "cable_loss"):
+        with self.assertRaisesRegex(StageInputUnavailable, "显式选择线损"):
             DriverPowerMappingUseCase(
-                self._request(instrument=instrument), sleep_fn=lambda _: None
+                self._request(instrument=instrument, loss_data=None),
+                sleep_fn=lambda _: None,
             )
 
         self.assertEqual(instrument.measured, 0)
@@ -633,15 +635,16 @@ class DriverMappingRunStageTests(unittest.TestCase):
             StageStatus.PENDING,
         )
 
-    def test_other_run_cable_loss_is_not_used(self):
+    def test_other_run_cable_loss_is_not_auto_selected(self):
         self._create_run(RUN_ID)
         self._create_run(OTHER_RUN_ID)
         self._complete_cable_loss(OTHER_RUN_ID)
         instrument = _Instrument()
 
-        with self.assertRaisesRegex(StageInputUnavailable, "cable_loss"):
+        with self.assertRaisesRegex(StageInputUnavailable, "显式选择线损"):
             DriverPowerMappingUseCase(
-                self._request(instrument=instrument), sleep_fn=lambda _: None
+                self._request(instrument=instrument, loss_data=None),
+                sleep_fn=lambda _: None,
             )
 
         self.assertEqual(instrument.measured, 0)
@@ -716,7 +719,8 @@ class DriverMappingRunStageTests(unittest.TestCase):
         with self.assertRaises(StageInputUnavailable):
             DriverPowerMappingUseCase(self._request(), sleep_fn=lambda _: None)
 
-    def test_tampered_cable_loss_file_is_rejected(self):
+    def test_tampered_run_directory_copy_no_longer_feeds_the_measurement(self):
+        """步骤 17：运行目录的固定校准文件不再参与新测量输入。"""
         layout = self._create_run()
         self._complete_cable_loss()
         result_path = layout.run_directory / CABLE_LOSS_INPUT_PATH
@@ -727,16 +731,23 @@ class DriverMappingRunStageTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-        with self.assertRaises(StageInputUnavailable):
-            DriverPowerMappingUseCase(self._request(), sleep_fn=lambda _: None)
+        result = DriverPowerMappingUseCase(
+            self._request(), sleep_fn=lambda _: None
+        ).measure_all_frequencies()
 
-    def test_completed_stage_with_missing_file_is_rejected(self):
+        self.assertTrue(result.raw_points)
+
+    def test_missing_run_directory_copy_no_longer_blocks_the_measurement(self):
+        """步骤 17：运行目录的固定校准文件缺失不影响已显式提供的输入。"""
         layout = self._create_run()
         self._complete_cable_loss()
         (layout.run_directory / CABLE_LOSS_INPUT_PATH).unlink()
 
-        with self.assertRaises(StageInputUnavailable):
-            DriverPowerMappingUseCase(self._request(), sleep_fn=lambda _: None)
+        result = DriverPowerMappingUseCase(
+            self._request(), sleep_fn=lambda _: None
+        ).measure_all_frequencies()
+
+        self.assertTrue(result.raw_points)
 
     # -- 失败与取消 --------------------------------------------------------
 
@@ -962,11 +973,17 @@ class DriverMappingRunStageTests(unittest.TestCase):
         cable_case.measure_all_frequencies()
         cable_case.continue_to_step2()
 
+        pointer = json.loads(
+            (Path(prepared.run_directory) / CABLE_LOSS_INPUT_PATH).read_text(
+                encoding="utf-8"
+            )
+        )
         mapping_case = create_driver_mapping_measurement(
             prepared_run=prepared,
             measurement_port=_Instrument(),
             result_repository=self.result_repository,
             paths=self.paths,
+            cable_loss_path=Path(pointer["path"]),
             sleep_fn=lambda _: None,
         )
         mapping_case.measure_all_frequencies()
@@ -1013,12 +1030,16 @@ class DriverMappingRunStageTests(unittest.TestCase):
             run_id=RUN_ID,
             run_repository=self.repository,
         )
-        self._complete_cable_loss(cable_losses={"2.4": {"cable2": 2.0}})
+        cable_reference = self._saved_stage_cable_loss(
+            cable_losses={"2.4": {"cable2": 2.0}}
+        )
 
         mapping_case = create_driver_mapping_measurement(
             prepared_run=prepared,
             measurement_port=_Instrument(),
             result_repository=self.result_repository,
+            paths=self.paths,
+            cable_loss_path=cable_reference.path,
             sleep_fn=lambda _: None,
         )
         mapping_case.measure_all_frequencies()

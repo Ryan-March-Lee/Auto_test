@@ -26,6 +26,7 @@ from tests.contract_doubles import (
     MappingInputReader,
     RecordingStageRecorder,
     amplifier_inputs,
+    loaded_stage_result,
 )
 from tests.fakes import safety_cleanup_for
 
@@ -67,6 +68,27 @@ class _Repository:
 CABLE_LOSSES = {
     "1.0": {"cable1": 0.0, "cable2": 0.0, "cable3": 0.0, "cable4": 0.0}
 }
+# 步骤 17：新测量链路只接受显式选择的阶段结果文件；用例替身默认给出一条
+# 合法外观的阶段路径，具体阶段目录边界由真实仓库用例覆盖。
+SELECTED_CABLE_LOSS = (
+    Path("test_results") / "cable_loss" / "20260101T000000Z_abcd.json"
+)
+
+
+class _StageRepository:
+    """阶段结果仓库替身：按阶段返回预置的已加载结果，记录加载调用。"""
+
+    def __init__(self, loaded=None):
+        self.loaded = dict(loaded or {})
+        self.loads = []
+
+    def load(self, stage, path):
+        self.loads.append((stage, Path(path)))
+        if stage not in self.loaded:
+            self.loaded[stage] = loaded_stage_result(
+                stage, cable_losses=CABLE_LOSSES
+            )
+        return self.loaded[stage]
 
 
 def _request(
@@ -77,7 +99,7 @@ def _request(
     recorder=None,
     reader=None,
     stage_repository=None,
-    cable_loss_path=None,
+    cable_loss_path=SELECTED_CABLE_LOSS,
     cable_loss_digest=None,
     driver_mapping_path=None,
     driver_mapping_digest=None,
@@ -102,7 +124,7 @@ def _request(
         cancellation_token=token,
         result_repository=repository or _Repository(),
         input_reader=reader or MappingInputReader(cable_loss={"cable_losses": CABLE_LOSSES}),
-        stage_result_repository=stage_repository,
+        stage_result_repository=stage_repository or _StageRepository(),
         cable_loss_path=cable_loss_path,
         cable_loss_digest=cable_loss_digest,
         driver_mapping_path=driver_mapping_path,
@@ -156,6 +178,8 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
             safety_cleanup=request.safety_cleanup,
             result_repository=request.result_repository,
             input_reader=request.input_reader,
+            stage_result_repository=request.stage_result_repository,
+            cable_loss_path=request.cable_loss_path,
         )
 
         use_case = AmplifierMeasurementUseCase(request, sleep_fn=lambda _: None)
@@ -235,11 +259,12 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
         reader = MappingInputReader(cable_loss={"cable_losses": CABLE_LOSSES})
         selected = Path("test_results") / "cable_loss" / "20260101T000000Z_abcd.json"
         digest = StageResultDigest(sha256="a" * 64, size_bytes=32)
-        sentinel = object()
-        loaded = SimpleNamespace(
-            sha256="a" * 64, size_bytes=32, path=selected, result=sentinel
+        loaded = loaded_stage_result(
+            MeasurementStage.CABLE_LOSS, sha256="a" * 64, size_bytes=32
         )
-        stage_repository = SimpleNamespace(load=lambda stage, path: loaded)
+        stage_repository = _StageRepository(
+            {MeasurementStage.CABLE_LOSS: loaded}
+        )
 
         use_case = AmplifierMeasurementUseCase(
             _request(
@@ -254,8 +279,36 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
 
         self.assertEqual(use_case.loss_data, {"cable_losses": CABLE_LOSSES})
         self.assertIsNone(use_case.driver_mapping)
+        self.assertEqual(
+            stage_repository.loads,
+            [(MeasurementStage.CABLE_LOSS, selected)],
+        )
         self.assertEqual(reader.paths, [])
-        self.assertEqual(reader.results, [("cable_loss", sentinel)])
+        self.assertEqual(reader.results, [("cable_loss", loaded.result)])
+
+    def test_explicit_cable_loss_path_without_digest_still_uses_the_stage_repository(
+        self,
+    ):
+        """省略选择时摘要只跳过内容比对，阶段契约仍由仓库完整校验。"""
+        reader = MappingInputReader(cable_loss={"cable_losses": CABLE_LOSSES})
+        stage_repository = _StageRepository()
+
+        use_case = AmplifierMeasurementUseCase(
+            _request(
+                _Instrument(),
+                reader=reader,
+                stage_repository=stage_repository,
+            ),
+            sleep_fn=lambda _: None,
+        )
+
+        self.assertEqual(use_case.loss_data, {"cable_losses": CABLE_LOSSES})
+        self.assertEqual(
+            stage_repository.loads,
+            [(MeasurementStage.CABLE_LOSS, SELECTED_CABLE_LOSS)],
+        )
+        self.assertEqual(reader.paths, [])
+        self.assertEqual(len(reader.results), 1)
 
     def test_explicit_driver_mapping_path_is_used_without_preloaded_inputs(self):
         """没有预检对象时，显式选择的驱动映射同样是校准输入的权威来源。"""
@@ -269,21 +322,18 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
             / "20260102T000000Z_ef01.json"
         )
         digest = StageResultDigest(sha256="b" * 64, size_bytes=64)
-        sentinel = object()
-        loaded = SimpleNamespace(
-            sha256="b" * 64, size_bytes=64, path=selected, result=sentinel
+        loaded = loaded_stage_result(
+            MeasurementStage.DRIVER_MAPPING, sha256="b" * 64, size_bytes=64
         )
-        loads = []
-
-        def load(stage, path):
-            loads.append((stage, path))
-            return loaded
+        stage_repository = _StageRepository(
+            {MeasurementStage.DRIVER_MAPPING: loaded}
+        )
 
         request = replace(
             _request(
                 _Instrument(),
                 reader=reader,
-                stage_repository=SimpleNamespace(load=load),
+                stage_repository=stage_repository,
                 driver_mapping_path=selected,
                 driver_mapping_digest=digest,
             ),
@@ -292,15 +342,23 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
 
         use_case = AmplifierMeasurementUseCase(request, sleep_fn=lambda _: None)
 
-        # 映射路径按驱动映射阶段重新加载并核对摘要；线损仍走当前运行引用。
-        self.assertEqual(loads, [(MeasurementStage.DRIVER_MAPPING, selected)])
+        # 线损与映射都按各自阶段加载并核对摘要；映射结果直接转成正式输入。
+        self.assertEqual(
+            stage_repository.loads,
+            [
+                (MeasurementStage.CABLE_LOSS, SELECTED_CABLE_LOSS),
+                (MeasurementStage.DRIVER_MAPPING, selected),
+            ],
+        )
         self.assertEqual(
             use_case.driver_mapping.raw_mapping(), {"1.0": {"-20.0": -20.0}}
         )
-        self.assertEqual(reader.results, [("driver_mapping", sentinel)])
+        self.assertEqual(reader.paths, [])
         self.assertEqual(
-            [path.name for path in reader.paths], ["cable_loss.json"]
+            [kind for kind, _result in reader.results],
+            ["cable_loss", "driver_mapping"],
         )
+        self.assertIs(reader.results[1][1], loaded.result)
 
     def test_replaced_explicit_driver_mapping_is_rejected_before_measurement(self):
         """显式驱动映射在选择后被替换时，构造阶段就失败，不消费被替换的内容。"""
@@ -315,20 +373,18 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
             / "20260102T000000Z_ef01.json"
         )
         digest = StageResultDigest(sha256="b" * 64, size_bytes=64)
-        loaded = SimpleNamespace(
-            sha256="c" * 64, size_bytes=64, path=selected, result=object()
+        loaded = loaded_stage_result(
+            MeasurementStage.DRIVER_MAPPING, sha256="c" * 64, size_bytes=64
         )
-        loads = []
-
-        def load(stage, path):
-            loads.append((stage, path))
-            return loaded
+        stage_repository = _StageRepository(
+            {MeasurementStage.DRIVER_MAPPING: loaded}
+        )
 
         request = replace(
             _request(
                 instrument,
                 reader=reader,
-                stage_repository=SimpleNamespace(load=load),
+                stage_repository=stage_repository,
                 driver_mapping_path=selected,
                 driver_mapping_digest=digest,
             ),
@@ -338,12 +394,18 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
         with self.assertRaisesRegex(StageInputUnavailable, "已被修改或替换"):
             AmplifierMeasurementUseCase(request, sleep_fn=lambda _: None)
 
-        self.assertEqual(loads, [(MeasurementStage.DRIVER_MAPPING, selected)])
-        # 被替换的映射不会转成校准输入；线损仍按当前运行引用读取。
-        self.assertEqual(reader.results, [])
         self.assertEqual(
-            [path.name for path in reader.paths], ["cable_loss.json"]
+            stage_repository.loads,
+            [
+                (MeasurementStage.CABLE_LOSS, SELECTED_CABLE_LOSS),
+                (MeasurementStage.DRIVER_MAPPING, selected),
+            ],
         )
+        # 被替换的映射不会转成校准输入；线损仍按显式选择的阶段文件读取。
+        self.assertEqual(
+            [kind for kind, _result in reader.results], ["cable_loss"]
+        )
+        self.assertEqual(reader.paths, [])
         # 构造阶段的失败发生在任何仪器动作之前。
         self.assertEqual(instrument.measured, 0)
         self.assertEqual(instrument.close_calls, 0)
@@ -352,10 +414,12 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
         reader = MappingInputReader(cable_loss={"cable_losses": CABLE_LOSSES})
         selected = Path("test_results") / "cable_loss" / "20260101T000000Z_abcd.json"
         digest = StageResultDigest(sha256="a" * 64, size_bytes=32)
-        loaded = SimpleNamespace(
-            sha256="b" * 64, size_bytes=32, path=selected, result=object()
+        loaded = loaded_stage_result(
+            MeasurementStage.CABLE_LOSS, sha256="b" * 64, size_bytes=32
         )
-        stage_repository = SimpleNamespace(load=lambda stage, path: loaded)
+        stage_repository = _StageRepository(
+            {MeasurementStage.CABLE_LOSS: loaded}
+        )
 
         with self.assertRaisesRegex(StageInputUnavailable, "已被修改或替换"):
             AmplifierMeasurementUseCase(

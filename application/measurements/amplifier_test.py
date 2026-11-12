@@ -23,9 +23,15 @@ from application.dto import (
 from application.errors import ConfigurationError
 from application.measurements.driver_target_grid import require_driver_target_grid
 from application.measurements.services import AmplifierMeasurementService
-from application.inputs.explicit_stage_input import load_selected_stage_result
+from application.dto.calibration_inputs import CalibrationInputSource
+from application.dto.measurement_results import MeasurementType
+from application.inputs.explicit_stage_input import (
+    calibration_input_source,
+    load_selected_stage_result,
+)
 from application.ports.measurement_session import CleanupRecord
 from application.ports.stage_result_repository import MeasurementStage
+from application.run_stages import StageInputUnavailable
 from domain.measurement.values import (
     CableLossTable,
     Frequency,
@@ -35,7 +41,6 @@ from domain.measurement.values import (
 from domain.run.models import (
     AMPLIFIER_RESULT_PATH,
     STAGE_AMPLIFIER,
-    STAGE_CABLE_LOSS,
     STAGE_DRIVER_MAPPING,
 )
 
@@ -54,10 +59,10 @@ class AmplifierCalibrationError(ConfigurationError):
 class AmplifierMeasurementUseCase:
     """Coordinate the amplifier sweep and its calibration inputs.
 
-    校准输入优先使用组合入口预检并随请求交来的同一份对象；没有预检对象时，页面
-    显式选择的阶段结果路径（含选择时摘要）优先，其次是当前运行登记的
-    ``inputs/cable_loss.json`` / ``inputs/driver_mapping.json``。主功放所有结果写入
-    当前运行的 ``results/``，完成后把主功放阶段和运行级状态更新为 ``completed``。
+    校准输入只使用组合入口预检并随请求交来的同一份对象，或页面显式选择的阶段结果
+    路径（含选择时摘要）；步骤 17 起不再读取当前运行登记的 ``inputs/cable_loss.json`` /
+    ``inputs/driver_mapping.json``，缺失显式来源时在硬件动作前失败。主功放所有结果
+    写入当前运行的 ``results/``，完成后把主功放阶段和运行级状态更新为 ``completed``。
     驱动模式关闭时不要求映射文件存在。绝不回退到按时间扫描的“最新结果”读取。
     """
 
@@ -89,13 +94,14 @@ class AmplifierMeasurementUseCase:
         self.input_reader = request.input_reader
         # 显式输入带选择时摘要时，用阶段结果仓库重新加载并核对，不消费被替换的文件。
         self.stage_result_repository = request.stage_result_repository
-        # 阶段记录器是请求契约的一部分（D1）：省略显式来源时输入才从当前运行目录读取，
-        # 结果写入当前运行的 results/ 并更新 manifest。
+        # 阶段记录器是请求契约的一部分（D1）：结果写入当前运行的 results/ 并更新
+        # manifest；本次消费的线损/驱动映射来源也由它登记。
         self.stage_recorder = request.stage_recorder
         self._stage_open = False
         # 阶段成功提交后的自动归档入口；组装层总是注入。
         self.archival_service = request.archival_service
         self.last_archival_outcome: ArchivalOutcome | None = None
+        self._calibration_sources: list[CalibrationInputSource] = []
         self.loss_data = self._load_loss_data()
         self.driver_mapping = self._load_driver_mapping()
         # 构造阶段就拒绝结构无效的校准输入，避免先连接仪器或执行 RF 动作后才在扫描
@@ -110,6 +116,8 @@ class AmplifierMeasurementUseCase:
         # 服务构造期使用同一个纯校验入口，数量、顺序、频率或功率不一致都在任何
         # 仪器动作之前失败，而不是扫到某个频点才发现目标表不完整。
         require_driver_target_grid(self.inputs, self.driver_mapping)
+        # 输入通过结构校验后才登记来源：未真正消费的输入不留审计记录。
+        self._record_calibration_sources()
         self.sleep_fn = sleep_fn or time.sleep
         self._token = request.cancellation_token or CancellationToken()
         self._service = AmplifierMeasurementService(
@@ -223,11 +231,11 @@ class AmplifierMeasurementUseCase:
         """解析本次测量实际消费的线损输入。
 
         组合入口已在预检时读取并交出同一份对象时直接复用，避免同一运行文件被读取
-        两次。没有预检对象时，显式选择的阶段结果路径优先：带选择时摘要的路径会经
-        阶段结果仓库重新加载并核对，随后把**同一次读取**的正式结果转成线损文档；
-        省略显式来源的旧调用方才读取当前运行登记的 ``inputs/cable_loss.json``，并由
-        :meth:`RunStageRecorder.verified_result_path` 按 manifest 复核摘要。绝不回退到
-        全局兼容结果或按时间扫描的“最新结果”读取。
+        两次。没有预检对象时只接受显式选择的阶段结果路径：路径一律经阶段结果仓库
+        加载（阶段目录边界、正式 DTO、类型与 ``completed`` 状态），带选择时摘要时再
+        核对“内容仍是用户选择的那一份”，随后把**同一次读取**的正式结果转成线损
+        文档并登记来源。步骤 17 起不再回退到当前运行登记的 ``inputs/cable_loss.json``，
+        省略显式来源时直接失败；``verified_result_path`` 只保留给旧数据/迁移。
         """
         preloaded = self.request.calibration_inputs
         if preloaded is not None:
@@ -238,22 +246,31 @@ class AmplifierMeasurementUseCase:
             MeasurementStage.CABLE_LOSS,
             label="线损",
         )
-        if explicit is not None:
-            return explicit
-        return self._read_run_input(STAGE_CABLE_LOSS)
+        if explicit is None:
+            raise StageInputUnavailable(
+                "主功放测量必须显式选择线损结果文件；"
+                "新测量链路不再读取当前运行目录的固定校准输入"
+            )
+        return explicit
 
     def _load_driver_mapping(self) -> DriverMappingInput | None:
         """解析本次测量实际消费的驱动映射输入。
 
         驱动模式关闭时不要求映射文件存在，直接返回 ``None``。启用时优先复用组合入口
-        预检的同一份对象；没有预检对象时按显式选择的阶段结果路径（带摘要时先核对）
-        读取，省略显式来源的旧调用方才读取当前运行登记的 ``inputs/driver_mapping.json``。
-        返回类型不是裸映射，避免下游把原始曲线误当成目标输入表。
+        预检的同一份对象；没有预检对象时只接受显式选择的阶段结果路径，路径同样经
+        阶段结果仓库加载校验（摘要只用于额外核对内容）。步骤 17 起不再读取当前运行
+        登记的 ``inputs/driver_mapping.json``，省略显式来源时直接失败，而不是把运行
+        目录当成校准输入。返回类型不是裸映射，避免下游把原始曲线误当成目标输入表。
         """
         if not self._driver_mode_enabled():
             return None
         preloaded = self.request.calibration_inputs
         if preloaded is not None:
+            if preloaded.driver_mapping is None:
+                raise StageInputUnavailable(
+                    "驱动模式下的主功放测量必须显式选择驱动映射结果文件；"
+                    "新测量链路不再读取当前运行目录的固定校准输入"
+                )
             return preloaded.driver_mapping
         explicit = self._read_explicit_input(
             self.request.driver_mapping_path,
@@ -261,9 +278,12 @@ class AmplifierMeasurementUseCase:
             MeasurementStage.DRIVER_MAPPING,
             label="驱动映射",
         )
-        if explicit is not None:
-            return explicit
-        return self._read_run_input(STAGE_DRIVER_MAPPING)
+        if explicit is None:
+            raise StageInputUnavailable(
+                "驱动模式下的主功放测量必须显式选择驱动映射结果文件；"
+                "新测量链路不再读取当前运行目录的固定校准输入"
+            )
+        return explicit
 
     def _read_explicit_input(
         self,
@@ -275,37 +295,42 @@ class AmplifierMeasurementUseCase:
     ) -> Any:
         """按显式选择的阶段结果文件读取校准输入；未给出路径时返回 ``None``。
 
-        带摘要时先经阶段结果仓库加载并核对“内容仍是用户选择的那一份”，再用同一次
-        读取的正式结果构造输入，不做第二次文件读取；省略摘要只锁定路径，阶段契约
-        仍由仓库完整校验。
+        显式路径一律先经阶段结果仓库加载：省略摘要只表示不比较选择时的文件事实，
+        阶段目录边界、文件名身份、正式 DTO、类型与完成状态仍会被完整校验，因此
+        “有路径但没有摘要”的调用方也不能把运行目录的旧文件当作新链路输入。随后
+        用同一次读取的正式结果构造输入，不做第二次文件读取，并记录这次消费的来源。
         """
         if path is None:
             return None
         if self.input_reader is None:
             raise ValueError("主功放消费显式输入时必须注入 input_reader")
-        if digest is None:
-            if stage is MeasurementStage.CABLE_LOSS:
-                return self.input_reader.read_cable_loss(path)
-            return self.input_reader.read_driver_mapping(path)
         repository = self.stage_result_repository
         if repository is None:
             raise ValueError(
-                "主功放消费带摘要的显式输入时必须注入 stage_result_repository"
+                "主功放消费显式阶段结果时必须注入 stage_result_repository"
             )
         loaded = load_selected_stage_result(
             repository, stage, path, digest=digest, label=label
+        )
+        self._calibration_sources.append(
+            calibration_input_source(MeasurementType.AMPLIFIER, loaded)
         )
         if stage is MeasurementStage.CABLE_LOSS:
             return self.input_reader.read_cable_loss_result(loaded.result)
         return self.input_reader.read_driver_mapping_result(loaded.result)
 
-    def _read_run_input(self, stage: str) -> Mapping[str, Any] | DriverMappingInput:
-        if self.input_reader is None:
-            raise ValueError("主功放读取当前运行输入时必须注入 input_reader")
-        path = self.stage_recorder.verified_result_path(stage)
-        if stage == STAGE_CABLE_LOSS:
-            return self.input_reader.read_cable_loss(path)
-        return self.input_reader.read_driver_mapping(path)
+    def _record_calibration_sources(self) -> None:
+        """在硬件动作前登记本次实际消费的校准输入来源。
+
+        组装层已在连接仪器前完成登记；这里覆盖绕过组装层、直接带显式阶段路径构造
+        请求的调用方。记录按“消费方测量类型 + 输入阶段”合并且幂等，重复预检不会
+        改写既有来源。登记失败直接终止构造，避免带着无法追溯的输入开始测量。
+        """
+        if not self._calibration_sources:
+            return
+        self.stage_recorder.record_calibration_inputs(
+            tuple(self._calibration_sources)
+        )
 
     # -- 运行契约：阶段生命周期 --------------------------------------------
 

@@ -19,11 +19,16 @@ from application.dto import (
     generate_measurement_id,
 )
 from application.measurements.services import DriverPowerMappingService
-from application.inputs.explicit_stage_input import load_selected_stage_result
+from application.dto.calibration_inputs import CalibrationInputSource
+from application.dto.measurement_results import MeasurementType
+from application.inputs.explicit_stage_input import (
+    calibration_input_source,
+    load_selected_stage_result,
+)
 from application.ports.measurement_session import CleanupRecord
 from application.ports.stage_result_repository import MeasurementStage
-from application.run_stages import StageResultNotRecorded
-from domain.run.models import STAGE_CABLE_LOSS, STAGE_DRIVER_MAPPING
+from application.run_stages import StageInputUnavailable, StageResultNotRecorded
+from domain.run.models import STAGE_DRIVER_MAPPING
 
 
 logger = logging.getLogger(__name__)
@@ -32,12 +37,12 @@ logger = logging.getLogger(__name__)
 class DriverPowerMappingUseCase:
     """Coordinate driver mapping with explicit inputs and stage-directory persistence.
 
-    线损输入优先使用**页面显式选择的阶段结果文件**（请求中的 ``loss_data``/
-    ``cable_loss_path``），允许复用其它运行的线损结果；省略显式来源的旧调用方才
-    读取当前运行登记的 ``inputs/cable_loss.json``。已完成映射结果仍然写入独立阶段
-    目录 ``test_results/driver_mapping/``，当前运行只登记指向该阶段文件的引用文档。
-    线损输入缺失、损坏或阶段契约不满足时，都在硬件动作前失败；绝不回退到按时间
-    扫描的“最新结果”读取。
+    线损输入只使用**页面显式选择的阶段结果文件**（请求中的 ``loss_data``/
+    ``cable_loss_path``），允许复用其它运行的线损结果；步骤 17 起不再读取当前运行
+    登记的 ``inputs/cable_loss.json``，缺失显式来源时在硬件动作前失败。已完成映射结果
+    仍然写入独立阶段目录 ``test_results/driver_mapping/``，当前运行只登记指向该阶段
+    文件的引用文档。线损输入缺失、损坏或阶段契约不满足时，都在硬件动作前失败；
+    绝不回退到按时间扫描的“最新结果”读取。
     """
 
     def __init__(
@@ -70,14 +75,16 @@ class DriverPowerMappingUseCase:
                 "DriverPowerMappingUseCase 必须由应用组装层注入 stage_result_repository"
             )
         self.input_reader = request.input_reader
-        # 阶段记录器是请求契约的一部分（D1）：省略显式来源时线损输入才从当前运行
-        # 目录读取；映射结果的引用登记到 inputs/driver_mapping.json 并更新 manifest。
+        # 阶段记录器是请求契约的一部分（D1）：结果的引用登记到
+        # inputs/driver_mapping.json 并更新 manifest；本次消费的线损来源也由它登记。
         self.stage_recorder = request.stage_recorder
         self._stage_open = False
         # 阶段成功提交后的自动归档入口；组装层总是注入。
         self.archival_service = request.archival_service
         self.last_archival_outcome: ArchivalOutcome | None = None
+        self._calibration_sources: list[CalibrationInputSource] = []
         self.loss_data = self._load_loss_data()
+        self._record_calibration_sources()
         self.sleep_fn = sleep_fn or time.sleep
         self._token = request.cancellation_token or CancellationToken()
         self._service = DriverPowerMappingService(
@@ -167,16 +174,17 @@ class DriverPowerMappingUseCase:
         """解析本次测量实际消费的线损输入。
 
         优先级固定且不推断：组合入口预检读取的 ``loss_data``（与显式选择路径指向
-        同一份文件）→ 请求中的显式 ``cable_loss_path`` → 当前运行 manifest 登记的
-        线损引用。前两者与 ``run_id`` 无关，因此可以使用其它运行产生的线损结果；
-        只有省略显式来源的旧调用方才走运行引用，并由
-        :meth:`RunStageRecorder.verified_result_path` 复核摘要。绝不按时间扫描其它
-        运行目录或“最新结果”。
+        同一份文件）→ 请求中的显式 ``cable_loss_path``。两者都与 ``run_id`` 无关，
+        因此可以使用其它运行产生的线损结果。步骤 17 起新正式测量链路不再读取当前
+        运行目录的固定校准输入：省略显式来源时直接失败，
+        :meth:`RunStageRecorder.verified_result_path` 只保留给旧数据/迁移。绝不按时间
+        扫描其它运行目录或“最新结果”。
 
-        显式路径带选择时摘要时，这里用注入的阶段结果仓库重新加载并核对摘要——调用方
-        绕过组装层直接构造请求时同样不会消费被替换的文件；随后把**同一次读取**得到
-        的正式结果直接转成线损文档，不再按路径二次读取。省略摘要只表示旧调用方锁定
-        路径，阶段契约仍会被完整校验。
+        显式路径一律经阶段结果仓库加载：阶段目录边界、文件名身份、正式 DTO、类型
+        与 ``completed`` 状态都在这里校验，摘要只用于额外核对“内容仍是用户选择的那
+        一份”。因此“有路径但没有选择时摘要”的调用方也无法把运行目录的旧文件当作
+        新链路输入；阶段契约校验通过后，用**同一次读取**的正式结果转成线损文档，
+        不再按路径二次读取，并登记这次消费的来源事实。
         """
         if self.input_reader is None:
             raise ValueError("DriverPowerMappingUseCase 必须注入 input_reader")
@@ -184,20 +192,36 @@ class DriverPowerMappingUseCase:
         if preloaded is not None:
             return preloaded
         path = self.request.cable_loss_path
-        if path is not None:
-            digest = self.request.cable_loss_digest
-            if digest is None:
-                return self.input_reader.read_cable_loss(path)
-            loaded = load_selected_stage_result(
-                self.stage_result_repository,
-                MeasurementStage.CABLE_LOSS,
-                path,
-                digest=digest,
-                label="线损",
+        if path is None:
+            raise StageInputUnavailable(
+                "驱动映射测量必须显式选择线损结果文件；"
+                "新测量链路不再读取当前运行目录的固定校准输入"
             )
-            return self.input_reader.read_cable_loss_result(loaded.result)
-        return self.input_reader.read_cable_loss(
-            self.stage_recorder.verified_result_path(STAGE_CABLE_LOSS)
+        loaded = load_selected_stage_result(
+            self.stage_result_repository,
+            MeasurementStage.CABLE_LOSS,
+            path,
+            digest=self.request.cable_loss_digest,
+            label="线损",
+        )
+        self._calibration_sources.append(
+            calibration_input_source(
+                MeasurementType.DRIVER_POWER_MAPPING, loaded
+            )
+        )
+        return self.input_reader.read_cable_loss_result(loaded.result)
+
+    def _record_calibration_sources(self) -> None:
+        """在硬件动作前登记本次实际消费的校准输入来源。
+
+        组装层已在连接仪器前完成登记；这里覆盖绕过组装层、直接带显式阶段路径构造
+        请求的调用方。记录是幂等的，同一份阶段文件重复登记不会改写既有来源。登记
+        失败直接终止构造，避免带着无法追溯的输入开始测量。
+        """
+        if not self._calibration_sources:
+            return
+        self.stage_recorder.record_calibration_inputs(
+            tuple(self._calibration_sources)
         )
 
     # -- 运行契约：阶段生命周期 --------------------------------------------

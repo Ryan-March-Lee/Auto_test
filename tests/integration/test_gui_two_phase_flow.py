@@ -27,6 +27,12 @@ from app.gui_runtime import (
 )
 from application.run_service import RunNotResumable
 from application.run_stages import RunStageRecorder
+from application.dto import (
+    CableLossMeasurementResult,
+    CableLossRow,
+    generate_measurement_id,
+)
+from application.ports.stage_result_repository import MeasurementStage
 from domain.run.models import (
     AMPLIFIER_RESULT_PATH,
     CABLE_LOSS_INPUT_PATH,
@@ -39,6 +45,8 @@ from domain.run.models import (
 )
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 from infrastructure.persistence.run_repository import RunRepository
+from infrastructure.persistence.stage_result_repository import FileStageResultRepository
+from infrastructure.filesystem.paths import PathService
 from application.configuration_authoring import author_official_configuration
 from presentation.qt.measurement_controller import MeasurementController
 from presentation.qt.measurement_controller_contract import MeasurementCommand
@@ -1737,6 +1745,8 @@ class MultiPlanGuiToMeasurementFlowTests(unittest.TestCase):
         self.result_repository = FileMeasurementResultRepository(
             results_directory=self.base / "test_results"
         )
+        self.paths = PathService(self.base)
+        self.stage_repository = FileStageResultRepository(paths=self.paths)
 
     @staticmethod
     def _destroy_page(page):
@@ -1796,32 +1806,51 @@ class MultiPlanGuiToMeasurementFlowTests(unittest.TestCase):
         return prepared, config_path
 
     def _seed_cable_loss(self, *, cable_losses=None):
-        """种入当前运行的线损输入（前置阶段产物，不是本次要验证的链路）。"""
+        """种入一份正式线损阶段结果并登记到运行引用（前置阶段的正常产物）。"""
         created_at = datetime(2026, 10, 22, 15, 30, tzinfo=timezone.utc)
-        recorder = RunStageRecorder(self.repository, RUN_ID)
-        recorder.start(STAGE_CABLE_LOSS, now=created_at)
-        recorder.complete(
-            STAGE_CABLE_LOSS,
-            {
-                "run_id": RUN_ID,
-                "cable_losses": cable_losses
-                or {
-                    "2.4": {
-                        "cable1": 1.0,
-                        "cable2": 0.0,
-                        "cable3": 0.0,
-                        "cable4": 0.0,
-                    }
-                },
-            },
-            now=created_at,
+        losses = cable_losses or {
+            "2.4": {
+                "cable1": 1.0,
+                "cable2": 0.0,
+                "cable3": 0.0,
+                "cable4": 0.0,
+            }
+        }
+        result = CableLossMeasurementResult(
+            run_id=RUN_ID,
+            measurement_id=generate_measurement_id(),
+            points=tuple(
+                CableLossRow(frequency_ghz=frequency, cable_losses=values)
+                for frequency, values in losses.items()
+            ),
         )
+        reference = self.stage_repository.save(
+            MeasurementStage.CABLE_LOSS, result
+        )
+        recorder = RunStageRecorder(
+            self.repository, RUN_ID, stage_results=self.stage_repository
+        )
+        recorder.start(STAGE_CABLE_LOSS, now=created_at)
+        recorder.complete_with_stage_result(
+            STAGE_CABLE_LOSS, reference, now=created_at
+        )
+        return reference
 
-    def _measure_amplifier(self, prepared, instrument):
+    def _measure_amplifier(
+        self,
+        prepared,
+        instrument,
+        *,
+        cable_loss_path,
+        driver_mapping_path=None,
+    ):
         return create_amplifier_measurement(
             prepared_run=prepared,
             measurement_port=instrument,
             result_repository=self.result_repository,
+            paths=self.paths,
+            cable_loss_path=cable_loss_path,
+            driver_mapping_path=driver_mapping_path,
             sleep_fn=lambda _: None,
         ).measure_all_frequencies()
 
@@ -1829,10 +1858,12 @@ class MultiPlanGuiToMeasurementFlowTests(unittest.TestCase):
         page = self._page_with_multi_plan()
         official = self._official_from_page(page)
         prepared, _config_path = self._create_run(official)
-        self._seed_cable_loss()
+        cable_reference = self._seed_cable_loss()
 
         instrument = _AmplifierSweepInstrument()
-        result = self._measure_amplifier(prepared, instrument)
+        result = self._measure_amplifier(
+            prepared, instrument, cable_loss_path=cable_reference.path
+        )
 
         sweep = result.frequencies[0].sweep_data
         self.assertEqual(sweep["input_power_dut"], self.TARGETS)
@@ -1892,7 +1923,7 @@ class MultiPlanGuiToMeasurementFlowTests(unittest.TestCase):
 
         # 线损：cable2=2 dB，衰减器 30 dB。映射假仪器返回源功率 -11 dB 的读数，
         # 补偿后输出 = 源功率 + 21 dB，因此每个目标都能在源功率范围内命中。
-        self._seed_cable_loss(
+        cable_reference = self._seed_cable_loss(
             cable_losses={
                 "2.4": {
                     "cable1": 1.0,
@@ -1906,6 +1937,8 @@ class MultiPlanGuiToMeasurementFlowTests(unittest.TestCase):
             prepared_run=frozen,
             measurement_port=_AmplifierSweepInstrument(gain_db=-11.0),
             result_repository=self.result_repository,
+            paths=self.paths,
+            cable_loss_path=cable_reference.path,
             sleep_fn=lambda _: None,
         )
         mapping_case.measure_all_frequencies()
@@ -1919,7 +1952,12 @@ class MultiPlanGuiToMeasurementFlowTests(unittest.TestCase):
         )
 
         instrument = _AmplifierSweepInstrument(gain_db=0.0)
-        result = self._measure_amplifier(frozen, instrument)
+        result = self._measure_amplifier(
+            frozen,
+            instrument,
+            cable_loss_path=cable_reference.path,
+            driver_mapping_path=Path(pointer["path"]),
+        )
 
         sweep = result.frequencies[0].sweep_data
         sources = tuple(row["source_power_dbm"] for row in rows)

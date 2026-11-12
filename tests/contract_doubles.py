@@ -17,9 +17,19 @@ from types import SimpleNamespace
 from typing import Any, Mapping
 
 from application.dto import (
+    CableLossMeasurementResult,
+    CableLossRow,
     DriverMappingInput,
     DriverMappingRawPoint,
     DriverMappingTargetPoint,
+    DriverPowerMappingMeasurementResult,
+    generate_measurement_id,
+    measurement_result_filename,
+)
+from application.ports.stage_result_repository import (
+    LoadedStageResult,
+    MeasurementStage,
+    StageResultReference,
 )
 
 DEFAULT_RUN_ID = "20260101T000000Z_contract"
@@ -102,6 +112,7 @@ class RecordingStageRecorder:
         self.partials: list[tuple[str, Any, str]] = []
         self.stage_references: list[tuple[str, Any]] = []
         self.verified: list[str] = []
+        self.calibration_sources: list[tuple[Any, ...]] = []
         self.completed_runs = 0
 
     def start(self, stage: str, *, now: Any = None) -> None:
@@ -174,6 +185,12 @@ class RecordingStageRecorder:
         self.verified.append(stage)
         relative = self.inputs.get(stage, f"inputs/{stage}.json")
         return Path("runs") / self.run_id / relative
+
+    def record_calibration_inputs(self, sources: Any, *, now: Any = None) -> Any:
+        """记录本次测量登记的外部校准输入来源。"""
+        recorded = tuple(sources)
+        self.calibration_sources.append(recorded)
+        return None
 
     def result_paths(self) -> dict[str, str]:
         """返回本次测试写入的阶段结果路径（阶段 → 相对路径）。"""
@@ -344,10 +361,123 @@ def _driver_mapping_input(mapping: Mapping[str, Mapping[str, float]]) -> DriverM
     return DriverMappingInput(raw_points=raw_points, target_points=target_points)
 
 
+def loaded_stage_result(
+    stage: MeasurementStage | str,
+    *,
+    run_id: str = "run-source",
+    measurement_id: str | None = None,
+    sha256: str = "a" * 64,
+    size_bytes: int = 1,
+    cable_losses: Mapping[str, Mapping[str, float]] | None = None,
+) -> LoadedStageResult:
+    """构造一份“已通过仓库加载”的阶段结果替身。
+
+    阶段目录边界与磁盘读取由真实仓库用例覆盖；这里只提供用例层所需的正式 DTO 与
+    文件事实（身份、绝对路径、摘要、大小、来源运行），使“显式路径必须经阶段仓库
+    加载”的分支可以在不触碰磁盘的情况下验证。
+    """
+    target = (
+        stage if isinstance(stage, MeasurementStage) else MeasurementStage(stage)
+    )
+    identity = measurement_id or generate_measurement_id()
+    if target is MeasurementStage.CABLE_LOSS:
+        losses = cable_losses or {
+            "1.0": {"cable1": 0.0, "cable2": 0.0, "cable3": 0.0, "cable4": 0.0}
+        }
+        result: Any = CableLossMeasurementResult(
+            run_id=run_id,
+            measurement_id=identity,
+            points=tuple(
+                CableLossRow(frequency_ghz=frequency, cable_losses=values)
+                for frequency, values in losses.items()
+            ),
+        )
+    else:
+        result = DriverPowerMappingMeasurementResult(
+            run_id=run_id,
+            measurement_id=identity,
+            raw_points=(),
+            target_points=(),
+        )
+    path = (
+        Path.cwd()
+        / "test_results"
+        / target.value
+        / measurement_result_filename(identity)
+    )
+    reference = StageResultReference(
+        stage=target,
+        measurement_id=identity,
+        path=path,
+        sha256=sha256,
+        size_bytes=size_bytes,
+    )
+    return LoadedStageResult(reference=reference, result=result)
+
+
+def loaded_stage_result_for_digest(
+    stage: MeasurementStage | str,
+    digest: Any,
+    *,
+    run_id: str = "run-source",
+    measurement_id: str | None = None,
+    cable_losses: Mapping[str, Mapping[str, float]] | None = None,
+) -> LoadedStageResult:
+    """构造与“选择时摘要”一致的结果替身，供带摘要的用例分支使用。"""
+    return loaded_stage_result(
+        stage,
+        run_id=run_id,
+        measurement_id=measurement_id,
+        sha256=digest.sha256,
+        size_bytes=digest.size_bytes,
+        cable_losses=cable_losses,
+    )
+
+
+class StageResultRepositoryStub:
+    """阶段结果仓库替身：返回预置的已加载结果，记录加载/保存调用。"""
+
+    def __init__(
+        self,
+        *,
+        loaded: Mapping[MeasurementStage | str, LoadedStageResult] | None = None,
+        save_error: Exception | None = None,
+    ) -> None:
+        self.loaded = {
+            (
+                key
+                if isinstance(key, MeasurementStage)
+                else MeasurementStage(key)
+            ): value
+            for key, value in (loaded or {}).items()
+        }
+        self.save_error = save_error
+        self.loads: list[tuple[MeasurementStage, Path]] = []
+        self.saves: list[tuple[Any, Any]] = []
+
+    def load(self, stage: Any, path: Any) -> LoadedStageResult:
+        target = (
+            stage if isinstance(stage, MeasurementStage) else MeasurementStage(stage)
+        )
+        self.loads.append((target, Path(path)))
+        if target not in self.loaded:  # pragma: no cover - 测试配置错误
+            raise AssertionError(f"测试替身没有预置阶段 {target.value} 的加载结果")
+        return self.loaded[target]
+
+    def save(self, stage: Any, result: Any) -> StageResultReference:
+        self.saves.append((stage, result))
+        if self.save_error is not None:
+            raise self.save_error
+        raise AssertionError("测试替身没有预置保存行为")
+
+
 __all__ = [
     "DEFAULT_RUN_ID",
     "amplifier_inputs",
     "contract_run",
-    "RecordingStageRecorder",
+    "loaded_stage_result",
+    "loaded_stage_result_for_digest",
     "MappingInputReader",
+    "RecordingStageRecorder",
+    "StageResultRepositoryStub",
 ]

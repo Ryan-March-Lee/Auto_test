@@ -26,10 +26,13 @@ from application.archival_service import (
 from application.dto import (
     AmplifierMeasurementRequest,
     CableLossMeasurementRequest,
+    CableLossMeasurementResult,
+    CableLossRow,
     DriverPowerMappingRequest,
+    generate_measurement_id,
 )
 from application.dto.archival import ArchivalStatus, ArchivalTestStatus
-from application.inputs import ResultInputReader
+from application.ports.stage_result_repository import MeasurementStage
 from application.measurements import (
     AmplifierMeasurementUseCase,
     CableLossUseCase,
@@ -55,7 +58,7 @@ from infrastructure.persistence.result_repository import FileMeasurementResultRe
 from infrastructure.persistence.run_repository import RunRepository
 from infrastructure.persistence.stage_result_repository import FileStageResultRepository
 from application.configuration_authoring import author_official_configuration
-from tests.contract_doubles import amplifier_inputs
+from tests.contract_doubles import MappingInputReader, amplifier_inputs
 from tests.fakes import safety_cleanup_for
 
 
@@ -253,13 +256,27 @@ class SuccessPathArchivalTests(unittest.TestCase):
         )
 
     def _complete_cable_loss(self):
-        recorder = RunStageRecorder(self.repository, RUN_ID)
-        recorder.start(STAGE_CABLE_LOSS, now=CREATED_AT)
-        recorder.complete(
-            STAGE_CABLE_LOSS,
-            {"run_id": RUN_ID, "cable_losses": CABLE_LOSSES},
-            now=CREATED_AT,
+        """写入一份正式线损阶段结果并登记运行引用，供后续校准输入显式选择。"""
+        result = CableLossMeasurementResult(
+            run_id=RUN_ID,
+            measurement_id=generate_measurement_id(),
+            points=tuple(
+                CableLossRow(frequency_ghz=frequency, cable_losses=values)
+                for frequency, values in CABLE_LOSSES.items()
+            ),
         )
+        reference = self.stage_repository.save(
+            MeasurementStage.CABLE_LOSS, result
+        )
+        recorder = RunStageRecorder(
+            self.repository, RUN_ID, stage_results=self.stage_repository
+        )
+        recorder.start(STAGE_CABLE_LOSS, now=CREATED_AT)
+        recorder.complete_with_stage_result(
+            STAGE_CABLE_LOSS, reference, now=CREATED_AT
+        )
+        self._cable_loss_reference = reference
+        return reference
 
     def _run_directory(self) -> Path:
         return self.repository.layout(RUN_ID).run_directory
@@ -303,7 +320,10 @@ class SuccessPathArchivalTests(unittest.TestCase):
             safety_cleanup=safety_cleanup_for(instrument),
             result_repository=self.result_repository,
             stage_result_repository=self.stage_repository,
-            input_reader=ResultInputReader(self.result_repository),
+            input_reader=MappingInputReader(
+                cable_loss={"cable_losses": CABLE_LOSSES}
+            ),
+            cable_loss_path=self._cable_loss_reference.path,
             stage_recorder=RunStageRecorder(
                 self.repository, RUN_ID, stage_results=self.stage_repository
             ),
@@ -322,7 +342,11 @@ class SuccessPathArchivalTests(unittest.TestCase):
             inputs=amplifier_inputs(),
             safety_cleanup=safety_cleanup_for(instrument),
             result_repository=self.result_repository,
-            input_reader=ResultInputReader(self.result_repository),
+            stage_result_repository=self.stage_repository,
+            input_reader=MappingInputReader(
+                cable_loss={"cable_losses": CABLE_LOSSES}
+            ),
+            cable_loss_path=self._cable_loss_reference.path,
             stage_recorder=RunStageRecorder(self.repository, RUN_ID),
             archival_service=archival,
             safety_options={"owns_measurement_port": True},
@@ -595,11 +619,17 @@ class CompositionWiringTests(unittest.TestCase):
         cable_case.measure_all_frequencies()
         cable_case.continue_to_step2()
 
+        pointer = json.loads(
+            (Path(prepared.run_directory) / CABLE_LOSS_INPUT_PATH).read_text(
+                encoding="utf-8"
+            )
+        )
         amplifier_case = create_amplifier_measurement(
             prepared_run=prepared,
             measurement_port=_Instrument(),
             result_repository=self.result_repository,
             paths=self.paths,
+            cable_loss_path=Path(pointer["path"]),
             sleep_fn=lambda _: None,
         )
         self.assertIsInstance(amplifier_case.archival_service, ResultArchivalService)

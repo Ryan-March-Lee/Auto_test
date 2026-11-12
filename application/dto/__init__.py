@@ -22,6 +22,7 @@ from .measurement_requests import (
     DriverPowerMappingRequest,
     MeasurementRequest,
 )
+from .calibration_inputs import CalibrationInputSource
 from .export_requests import ExportFormat, ExportOutcome, ExportRequest
 from .measurement_results import (
     DRIVER_MAPPING_SCHEMA_VERSION,
@@ -59,6 +60,7 @@ __all__ = [
     "DriverPowerMappingRequest",
     "AmplifierCalibrationInputs",
     "AmplifierMeasurementRequest",
+    "CalibrationInputSource",
     "AMPLIFIER_COMPRESSION_TARGETS_DB",
     "AmplifierInputError",
     "AmplifierMeasurementInputs",

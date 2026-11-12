@@ -12,16 +12,26 @@ from application.dto.measurement_requests import StageResultDigest
 from application.measurements import DriverPowerMappingUseCase
 from application.ports.stage_result_repository import (
     MeasurementStage,
+    StageResultError,
     StageResultReference,
 )
 from application.run_stages import StageInputUnavailable, StageResultNotRecorded
 from app.events import RealtimeDataEvent
 from domain.run.models import STAGE_CABLE_LOSS, STAGE_DRIVER_MAPPING
-from tests.contract_doubles import MappingInputReader, RecordingStageRecorder
+from tests.contract_doubles import (
+    MappingInputReader,
+    RecordingStageRecorder,
+    loaded_stage_result,
+)
 from tests.fakes import safety_cleanup_for
 
 
 CABLE_LOSS = {"cable_losses": {"1.0": {"cable2": 2.0}}}
+# 步骤 17：新测量链路只接受显式选择的阶段结果文件；用例替身默认给出一条
+# 合法外观的阶段路径，具体阶段目录边界由真实仓库用例覆盖。
+SELECTED_CABLE_LOSS = (
+    Path("test_results") / "cable_loss" / "20260101T000000Z_abcd.json"
+)
 
 
 class _Instrument:
@@ -72,6 +82,11 @@ class _StageRepository:
 
     def __init__(self):
         self.calls = []
+        self.loads = []
+
+    def load(self, stage, path):
+        self.loads.append((stage, Path(path)))
+        return loaded_stage_result(stage)
 
     def save(self, stage, result):
         self.calls.append((stage, result))
@@ -86,12 +101,24 @@ class _StageRepository:
         )
 
 
+class _MissingStageResultRepository:
+    """阶段结果仓库替身：显式路径不满足阶段契约时拒绝加载。"""
+
+    def load(self, stage, path):
+        raise StageResultError(
+            f"阶段结果路径必须直接位于 {stage} 阶段目录: {path!r}"
+        )
+
+
 class _FailingStageRepository:
     """阶段结果仓库替身：正式结果写入阶段目录时失败。"""
 
     def __init__(self, error):
         self.error = error
         self.calls = []
+
+    def load(self, stage, path):
+        return loaded_stage_result(stage)
 
     def save(self, stage, result):
         self.calls.append((stage, result))
@@ -150,7 +177,7 @@ def _request(
     stage_repository=None,
     frequencies=(1.0,),
     loss_data=None,
-    cable_loss_path=None,
+    cable_loss_path=SELECTED_CABLE_LOSS,
     cable_loss_digest=None,
 ):
     configuration = {
@@ -189,19 +216,33 @@ class DriverPowerMappingUseCaseTests(unittest.TestCase):
         reader = MappingInputReader(cable_loss=CABLE_LOSS)
         recorder = RecordingStageRecorder("run-mapping")
         selected = Path("test_results") / "cable_loss" / "20260101T000000Z_abcd.json"
+        stage_repository = _StageRepository()
         use_case = DriverPowerMappingUseCase(
             _request(
                 _Instrument(),
                 reader=reader,
                 recorder=recorder,
+                stage_repository=stage_repository,
                 cable_loss_path=selected,
             ),
             sleep_fn=lambda _: None,
         )
 
-        self.assertEqual(reader.paths, [selected])
+        # 没有选择时摘要也必须经阶段结果仓库加载，阶段目录边界与正式结果契约照常校验。
+        self.assertEqual(
+            stage_repository.loads, [(MeasurementStage.CABLE_LOSS, selected)]
+        )
         self.assertEqual(use_case.loss_data, CABLE_LOSS)
+        self.assertEqual(reader.paths, [])
         self.assertEqual(recorder.verified, [])
+        # 本次消费的来源由阶段事实登记，来源运行来自被加载的结果而不是当前运行。
+        [(source,)] = recorder.calibration_sources
+        self.assertEqual(source.stage, MeasurementStage.CABLE_LOSS.value)
+        self.assertEqual(
+            source.measurement_type.value, "driver_power_mapping"
+        )
+        self.assertEqual(source.source_run_id, "run-source")
+        self.assertTrue(Path(source.path).is_absolute())
 
     def test_pinned_cable_loss_path_is_verified_and_read_once(self):
         """带选择时摘要的显式路径：仓库加载 + 摘要核对 + 同一份结果转成输入。"""
@@ -209,9 +250,8 @@ class DriverPowerMappingUseCaseTests(unittest.TestCase):
         recorder = RecordingStageRecorder("run-mapping")
         selected = Path("test_results") / "cable_loss" / "20260101T000000Z_abcd.json"
         digest = StageResultDigest(sha256="a" * 64, size_bytes=32)
-        sentinel = object()
-        loaded = SimpleNamespace(
-            sha256="a" * 64, size_bytes=32, path=selected, result=sentinel
+        loaded = loaded_stage_result(
+            MeasurementStage.CABLE_LOSS, sha256="a" * 64, size_bytes=32
         )
         stage_repository = SimpleNamespace(load=lambda stage, path: loaded)
 
@@ -229,7 +269,7 @@ class DriverPowerMappingUseCaseTests(unittest.TestCase):
 
         self.assertEqual(use_case.loss_data, CABLE_LOSS)
         self.assertEqual(reader.paths, [])
-        self.assertEqual(reader.results, [("cable_loss", sentinel)])
+        self.assertEqual(reader.results, [("cable_loss", loaded.result)])
         self.assertEqual(recorder.verified, [])
 
     def test_replaced_pinned_cable_loss_is_rejected_before_measurement(self):
@@ -238,8 +278,8 @@ class DriverPowerMappingUseCaseTests(unittest.TestCase):
         instrument = _Instrument()
         selected = Path("test_results") / "cable_loss" / "20260101T000000Z_abcd.json"
         digest = StageResultDigest(sha256="a" * 64, size_bytes=32)
-        loaded = SimpleNamespace(
-            sha256="b" * 64, size_bytes=32, path=selected, result=object()
+        loaded = loaded_stage_result(
+            MeasurementStage.CABLE_LOSS, sha256="b" * 64, size_bytes=32
         )
         stage_repository = SimpleNamespace(load=lambda stage, path: loaded)
 
@@ -271,7 +311,7 @@ class DriverPowerMappingUseCaseTests(unittest.TestCase):
         self.assertIs(use_case.loss_data, preloaded)
         self.assertEqual(reader.paths, [])
 
-    def test_current_run_loss_input_completes_and_saves_result(self):
+    def test_explicit_loss_input_completes_and_saves_result(self):
         instrument = _Instrument()
         events = _Events()
         recorder = RecordingStageRecorder("run-mapping")
@@ -331,15 +371,17 @@ class DriverPowerMappingUseCaseTests(unittest.TestCase):
             },
         )
 
-    def test_unfinished_cable_loss_stage_is_rejected_before_hardware_action(self):
-        """前置阶段没有完成时，映射测量必须在任何硬件动作前失败。"""
+    def test_missing_explicit_loss_is_rejected_before_hardware_action(self):
+        """步骤 17：没有显式线损时不再读取运行目录，直接在硬件动作前失败。"""
         instrument = _Instrument()
-        recorder = RecordingStageRecorder("run-mapping", missing_stages=(STAGE_CABLE_LOSS,))
-        with self.assertRaises(StageInputUnavailable):
+        recorder = RecordingStageRecorder("run-mapping")
+        with self.assertRaisesRegex(StageInputUnavailable, "显式选择线损"):
             DriverPowerMappingUseCase(
-                _request(instrument, recorder=recorder), sleep_fn=lambda _: None
+                _request(instrument, recorder=recorder, cable_loss_path=None),
+                sleep_fn=lambda _: None,
             )
         self.assertEqual(instrument.measured, 0)
+        self.assertEqual(recorder.verified, [])
 
     def test_measurement_port_is_required_before_input_loading(self):
         request = _request(None)
@@ -452,23 +494,36 @@ class DriverPowerMappingUseCaseTests(unittest.TestCase):
 
         self.assertEqual(order, ["stage-save", "register-reference", "archive"])
 
-    def test_reader_reads_the_current_run_input_path(self):
+    def test_explicit_stage_path_is_loaded_by_the_stage_repository(self):
+        """步骤 17：显式路径只经阶段结果仓库加载，不再直读任意文件。"""
         reader = MappingInputReader(cable_loss=CABLE_LOSS)
+        stage_repository = _StageRepository()
         use_case = DriverPowerMappingUseCase(
-            _request(_Instrument(), reader=reader), sleep_fn=lambda _: None
+            _request(
+                _Instrument(), reader=reader, stage_repository=stage_repository
+            ),
+            sleep_fn=lambda _: None,
         )
         self.assertEqual(use_case.loss_data, CABLE_LOSS)
         self.assertEqual(
-            reader.paths,
-            [Path("runs") / "run-mapping" / "inputs" / f"{STAGE_CABLE_LOSS}.json"],
+            stage_repository.loads,
+            [(MeasurementStage.CABLE_LOSS, SELECTED_CABLE_LOSS)],
         )
+        self.assertEqual(reader.paths, [])
+        self.assertEqual(len(reader.results), 1)
 
-    def test_missing_run_input_file_fails_before_hardware_action(self):
-        """运行目录里的输入读不到时，映射测量必须在任何硬件动作前失败。"""
+    def test_missing_explicit_input_file_fails_before_hardware_action(self):
+        """显式阶段文件无法按阶段契约加载时，映射测量必须在任何硬件动作前失败。"""
         instrument = _Instrument()
-        with self.assertRaises(FileNotFoundError):
+        stage_repository = _MissingStageResultRepository()
+        with self.assertRaises(StageResultError):
             DriverPowerMappingUseCase(
-                _request(instrument, reader=MappingInputReader()), sleep_fn=lambda _: None
+                _request(
+                    instrument,
+                    reader=MappingInputReader(),
+                    stage_repository=stage_repository,
+                ),
+                sleep_fn=lambda _: None,
             )
         self.assertEqual(instrument.measured, 0)
 

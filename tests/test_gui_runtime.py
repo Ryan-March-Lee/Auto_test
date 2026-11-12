@@ -29,10 +29,10 @@ from application.ports.stage_result_repository import MeasurementStage
 from application.run_service import RunNotResumable
 from application.run_stages import StageInputUnavailable
 from domain.configuration.models import RunConfiguration, RunResourceMapping, TestPlan
-from domain.run.models import STAGE_CABLE_LOSS, STAGE_DRIVER_MAPPING
 from infrastructure.filesystem.paths import DEFAULT_PATHS
 from infrastructure.persistence.run_repository import RunRepository
 from application.configuration_authoring import author_official_configuration
+from tests.contract_doubles import RecordingStageRecorder, loaded_stage_result
 
 
 
@@ -192,15 +192,15 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
         # 三处前置校验各有专门用例（tests/test_*_run_stage.py 与门禁覆盖），装配测试
         # 只断言“端口与请求拿到同一份快照”，因此把它们替换成空动作。
         self.enterContext(patch("app.gui_runtime._ensure_run_snapshots_are_intact"))
-        self.require_stage_inputs = self.enterContext(
-            patch("app.gui_runtime._require_stage_inputs")
-        )
         # 预检替身必须返回真实校准输入 DTO：正式请求会携带它交给用例复用。
         self.preflight_amplifier = self.enterContext(
             patch(
                 "app.gui_runtime._preflight_amplifier_inputs",
                 return_value=AmplifierCalibrationInputs(loss_data={"cable_losses": {}}),
             )
+        )
+        self.enterContext(
+            patch("app.gui_runtime._preflight_driver_mapping_inputs", return_value=None)
         )
         # 自动归档服务要求仓储具备 read_run_json 等能力；装配测试用的替身仓储没有
         # 这些能力，也不在本用例的验证范围内。
@@ -311,63 +311,6 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
         self.assertIsNone(request.cable_loss_path)
         self.assertIsNone(request.driver_mapping_path)
 
-    def test_driver_mapping_factory_uses_the_explicit_cable_loss_path(self):
-        cable = Path("selected") / "cable_loss" / "20260101T000000Z_abcd.json"
-        verified = Path("resolved") / "20260101T000000Z_abcd.json"
-        loss_data = {"cable_losses": {"2.4": {"cable2": 1.0}}}
-        digest = StageResultDigest(sha256="a" * 64, size_bytes=321)
-        reader = _RecordingInputReader(cable_loss=loss_data)
-        loaded = SimpleNamespace(result=object(), path=verified)
-        expected = object()
-        with patch("app.gui_runtime.connect_instruments", return_value=_Port()), patch(
-            "app.gui_runtime.DriverPowerMappingUseCase", return_value=expected
-        ) as use_case, patch(
-            "app.gui_runtime._load_explicit_stage_result", return_value=loaded
-        ) as load:
-            result = create_driver_mapping_measurement(
-                prepared_run=_prepared_run(),
-                cable_loss_path=str(cable),
-                cable_loss_digest=digest,
-                input_reader=reader,
-            )
-
-        self.assertIs(result, expected)
-        # 显式路径先经阶段结果仓库加载（边界 + 正式结果契约 + 选择时摘要），
-        # 再用同一次读取的结果构造输入，不按路径二次读取。
-        load.assert_called_once_with(
-            cable,
-            MeasurementStage.CABLE_LOSS,
-            DEFAULT_PATHS,
-            digest=digest,
-            label="线损",
-        )
-        self.assertEqual(reader.paths, [])
-        self.assertEqual(reader.results, [("cable_loss", loaded.result)])
-        self.require_stage_inputs.assert_not_called()
-        request = use_case.call_args.args[0]
-        # 路径、摘要与预检读取的线损文档一起进入请求：与运行身份无关。
-        self.assertEqual(request.cable_loss_path, cable)
-        self.assertEqual(request.cable_loss_digest, digest)
-        self.assertIs(request.loss_data, loss_data)
-        self.assertIsNone(request.driver_mapping_path)
-        self.assertEqual(request.run_id, "run-assembly-test")
-
-    def test_driver_mapping_factory_keeps_the_run_reference_without_an_explicit_path(self):
-        prepared = _prepared_run()
-        with patch("app.gui_runtime.connect_instruments", return_value=_Port()), patch(
-            "app.gui_runtime.DriverPowerMappingUseCase", return_value=object()
-        ) as use_case:
-            create_driver_mapping_measurement(prepared_run=prepared)
-
-        request = use_case.call_args.args[0]
-        self.assertIsNone(request.cable_loss_path)
-        self.assertIsNone(request.cable_loss_digest)
-        self.assertIsNone(request.loss_data)
-        # 省略显式来源的旧调用方仍走运行引用的已校验读取。
-        self.require_stage_inputs.assert_called_once_with(
-            prepared, STAGE_CABLE_LOSS, paths=DEFAULT_PATHS
-        )
-
     def test_amplifier_factory_forwards_explicit_calibration_paths(self):
         cable = Path("selected") / "cable_loss" / "20260101T000000Z_abcd.json"
         mapping = Path("selected") / "driver_mapping" / "20260102T000000Z_ef01.json"
@@ -442,36 +385,6 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
         self.assertEqual(kwargs["driver_mapping_path"], mapping)
         self.assertEqual(kwargs["cable_loss_digest"], cable_digest)
         self.assertEqual(kwargs["driver_mapping_digest"], mapping_digest)
-
-    def test_invalid_explicit_cable_loss_fails_before_opening_instruments(self):
-        with patch("app.gui_runtime.connect_instruments") as connect, patch(
-            "app.gui_runtime._load_explicit_stage_result",
-            side_effect=ValueError("阶段结果路径必须直接位于 cable_loss 阶段目录"),
-        ), patch("app.gui_runtime.DriverPowerMappingUseCase") as use_case:
-            with self.assertRaisesRegex(ValueError, "阶段目录"):
-                create_driver_mapping_measurement(
-                    prepared_run=_prepared_run(),
-                    cable_loss_path="elsewhere/cable_loss.json",
-                    input_reader=_RecordingInputReader(cable_loss={}),
-                )
-        connect.assert_not_called()
-        use_case.assert_not_called()
-
-    def test_replaced_explicit_cable_loss_fails_before_opening_instruments(self):
-        digest = StageResultDigest(sha256="a" * 64, size_bytes=10)
-        with patch("app.gui_runtime.connect_instruments") as connect, patch(
-            "app.gui_runtime.load_selected_stage_result",
-            side_effect=StageInputUnavailable("线损结果文件在选择后已被修改或替换"),
-        ), patch("app.gui_runtime.DriverPowerMappingUseCase") as use_case:
-            with self.assertRaisesRegex(StageInputUnavailable, "已被修改或替换"):
-                create_driver_mapping_measurement(
-                    prepared_run=_prepared_run(),
-                    cable_loss_path="test_results/cable_loss/20260101T000000Z_abcd.json",
-                    cable_loss_digest=digest,
-                    input_reader=_RecordingInputReader(cable_loss={}),
-                )
-        connect.assert_not_called()
-        use_case.assert_not_called()
 
     def test_invalid_explicit_calibration_inputs_fail_before_opening_instruments(self):
         self.preflight_amplifier.side_effect = ValueError(
@@ -668,7 +581,7 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
 
 
 class ExplicitStageInputPreflightTests(unittest.TestCase):
-    """显式选择的阶段文件优先于运行引用，并在连接仪器前完成读取。"""
+    """显式选择的阶段文件是新测量链路的唯一校准输入来源。"""
 
     LOSS_DOCUMENT = {
         "cable_losses": {
@@ -677,23 +590,168 @@ class ExplicitStageInputPreflightTests(unittest.TestCase):
     }
     DIGEST = StageResultDigest(sha256="c" * 64, size_bytes=512)
 
-    @staticmethod
-    def _recorder_that_must_not_be_read():
-        def verified_result_path(stage):
-            raise AssertionError(f"显式输入不应读取运行引用: {stage}")
+    def setUp(self):
+        # 预检会在连接仪器前登记本次消费的校准输入来源；这里用替身记录调用，
+        # 不触碰真实运行目录。
+        self.recorder = RecordingStageRecorder("run-assembly-test")
+        self.enterContext(
+            patch("app.gui_runtime._stage_recorder", return_value=self.recorder)
+        )
 
-        return SimpleNamespace(verified_result_path=verified_result_path)
+    def _loaded_cable_loss(self, digest=None):
+        digest = digest or self.DIGEST
+        return loaded_stage_result(
+            MeasurementStage.CABLE_LOSS,
+            run_id="run-source",
+            sha256=digest.sha256,
+            size_bytes=digest.size_bytes,
+        )
+
+    def _loaded_driver_mapping(self, digest):
+        return loaded_stage_result(
+            MeasurementStage.DRIVER_MAPPING,
+            run_id="run-source",
+            sha256=digest.sha256,
+            size_bytes=digest.size_bytes,
+        )
+
+    def test_new_measurement_chain_does_not_call_verified_result_path(self):
+        """步骤 17 的静态护栏：新链路不得从运行目录取固定校准输入。"""
+        root = Path(__file__).parents[1]
+        for relative in (
+            "app/gui_runtime.py",
+            "application/measurements/driver_mapping.py",
+            "application/measurements/amplifier_test.py",
+        ):
+            with self.subTest(file=relative):
+                source = (root / relative).read_text(encoding="utf-8")
+                self.assertNotIn(".verified_result_path(", source)
+
+    def test_driver_mapping_factory_uses_the_explicit_cable_loss_path(self):
+        cable = Path("selected") / "cable_loss" / "20260101T000000Z_abcd.json"
+        loss_data = {"cable_losses": {"2.4": {"cable2": 1.0}}}
+        digest = StageResultDigest(sha256="a" * 64, size_bytes=321)
+        reader = _RecordingInputReader(cable_loss=loss_data)
+        loaded = self._loaded_cable_loss(digest)
+        expected = object()
+        with patch("app.gui_runtime.connect_instruments", return_value=_Port()), patch(
+            "app.gui_runtime.DriverPowerMappingUseCase", return_value=expected
+        ) as use_case, patch(
+            "app.gui_runtime._load_explicit_stage_result", return_value=loaded
+        ) as load, patch("app.gui_runtime._ensure_run_snapshots_are_intact"), patch(
+            "app.gui_runtime.ArchiveArtifactGenerator"
+        ), patch("app.gui_runtime.ResultArchivalService"):
+            result = create_driver_mapping_measurement(
+                prepared_run=_prepared_run(),
+                cable_loss_path=str(cable),
+                cable_loss_digest=digest,
+                input_reader=reader,
+            )
+
+        self.assertIs(result, expected)
+        # 显式路径先经阶段结果仓库加载（边界 + 正式结果契约 + 选择时摘要），
+        # 再用同一次读取的结果构造输入，不按路径二次读取。
+        load.assert_called_once_with(
+            cable,
+            MeasurementStage.CABLE_LOSS,
+            DEFAULT_PATHS,
+            digest=digest,
+            label="线损",
+        )
+        self.assertEqual(reader.paths, [])
+        self.assertEqual(reader.results, [("cable_loss", loaded.result)])
+        # 连接仪器前已把“消费了哪份线损”写进运行目录的来源记录。
+        [(source,)] = self.recorder.calibration_sources
+        self.assertEqual(source.measurement_type.value, "driver_power_mapping")
+        self.assertEqual(source.stage, MeasurementStage.CABLE_LOSS.value)
+        self.assertEqual(source.path, str(loaded.path))
+        request = use_case.call_args.args[0]
+        # 路径、摘要与预检读取的线损文档一起进入请求：与运行身份无关。
+        self.assertEqual(request.cable_loss_path, cable)
+        self.assertEqual(request.cable_loss_digest, digest)
+        self.assertIs(request.loss_data, loss_data)
+        self.assertIsNone(request.driver_mapping_path)
+        self.assertEqual(request.run_id, "run-assembly-test")
+
+    def test_calibration_sources_are_recorded_before_connecting_instruments(self):
+        """来源登记先于连接仪器：登记失败不会打开端口或产生 RF 动作。"""
+        order = []
+        loaded = self._loaded_cable_loss()
+
+        class _Recorder:
+            def record_calibration_inputs(self, sources, *, now=None):
+                order.append(("record", tuple(sources)))
+
+        def connect(_prepared):
+            order.append(("connect", None))
+            return _Port()
+
+        with patch(
+            "app.gui_runtime._stage_recorder", return_value=_Recorder()
+        ), patch(
+            "app.gui_runtime._load_explicit_stage_result", return_value=loaded
+        ), patch("app.gui_runtime.connect_instruments", side_effect=connect), patch(
+            "app.gui_runtime.DriverPowerMappingUseCase"
+        ), patch("app.gui_runtime._ensure_run_snapshots_are_intact"), patch(
+            "app.gui_runtime.ArchiveArtifactGenerator"
+        ), patch("app.gui_runtime.ResultArchivalService"):
+            create_driver_mapping_measurement(
+                prepared_run=_prepared_run(),
+                cable_loss_path="test_results/cable_loss/20260101T000000Z_abcd.json",
+            )
+
+        self.assertEqual([step for step, _payload in order], ["record", "connect"])
+        [recorded] = [payload for step, payload in order if step == "record"]
+        self.assertEqual(recorded[0].stage, MeasurementStage.CABLE_LOSS.value)
+
+    def test_driver_mapping_factory_requires_an_explicit_path(self):
+        """步骤 17：省略显式线损时不再读取运行目录，也不连接仪器。"""
+        with patch("app.gui_runtime.connect_instruments") as connect, patch(
+            "app.gui_runtime.DriverPowerMappingUseCase"
+        ) as use_case:
+            with self.assertRaisesRegex(StageInputUnavailable, "显式选择线损"):
+                create_driver_mapping_measurement(prepared_run=_prepared_run())
+
+        connect.assert_not_called()
+        use_case.assert_not_called()
+
+    def test_invalid_explicit_cable_loss_fails_before_opening_instruments(self):
+        with patch("app.gui_runtime.connect_instruments") as connect, patch(
+            "app.gui_runtime._load_explicit_stage_result",
+            side_effect=ValueError("阶段结果路径必须直接位于 cable_loss 阶段目录"),
+        ), patch("app.gui_runtime.DriverPowerMappingUseCase") as use_case:
+            with self.assertRaisesRegex(ValueError, "阶段目录"):
+                create_driver_mapping_measurement(
+                    prepared_run=_prepared_run(),
+                    cable_loss_path="elsewhere/cable_loss.json",
+                    input_reader=_RecordingInputReader(cable_loss={}),
+                )
+        connect.assert_not_called()
+        use_case.assert_not_called()
+
+    def test_replaced_explicit_cable_loss_fails_before_opening_instruments(self):
+        digest = StageResultDigest(sha256="a" * 64, size_bytes=10)
+        with patch("app.gui_runtime.connect_instruments") as connect, patch(
+            "app.gui_runtime.load_selected_stage_result",
+            side_effect=StageInputUnavailable("线损结果文件在选择后已被修改或替换"),
+        ), patch("app.gui_runtime.DriverPowerMappingUseCase") as use_case:
+            with self.assertRaisesRegex(StageInputUnavailable, "已被修改或替换"):
+                create_driver_mapping_measurement(
+                    prepared_run=_prepared_run(),
+                    cable_loss_path="test_results/cable_loss/20260101T000000Z_abcd.json",
+                    cable_loss_digest=digest,
+                    input_reader=_RecordingInputReader(cable_loss={}),
+                )
+        connect.assert_not_called()
+        use_case.assert_not_called()
 
     def test_amplifier_preflight_loads_the_explicit_loss_once_and_verifies_the_digest(self):
         explicit = Path("test_results") / "cable_loss" / "20260101T000000Z_abcd.json"
-        sentinel = object()
         reader = _RecordingInputReader(cable_loss=self.LOSS_DOCUMENT)
+        loaded = self._loaded_cable_loss()
         with patch(
-            "app.gui_runtime._stage_recorder",
-            return_value=self._recorder_that_must_not_be_read(),
-        ), patch(
             "app.gui_runtime._load_explicit_stage_result",
-            return_value=SimpleNamespace(result=sentinel),
+            return_value=loaded,
         ) as load:
             inputs = _preflight_amplifier_inputs(
                 _prepared_run(),
@@ -714,7 +772,9 @@ class ExplicitStageInputPreflightTests(unittest.TestCase):
         )
         # 已加载结果是唯一读取来源：不再按路径二次读取。
         self.assertEqual(reader.paths, [])
-        self.assertEqual(reader.results, [("cable_loss", sentinel)])
+        self.assertEqual(reader.results, [("cable_loss", loaded.result)])
+        [(source,)] = self.recorder.calibration_sources
+        self.assertEqual(source.stage, MeasurementStage.CABLE_LOSS.value)
 
     def test_amplifier_preflight_reads_explicit_mapping_only_in_driver_mode(self):
         cable = Path("test_results") / "cable_loss" / "20260101T000000Z_abcd.json"
@@ -726,16 +786,19 @@ class ExplicitStageInputPreflightTests(unittest.TestCase):
         reader = _RecordingInputReader(
             cable_loss=self.LOSS_DOCUMENT, driver_mapping=mapping_input
         )
+        cable_loaded = self._loaded_cable_loss()
+        mapping_loaded = self._loaded_driver_mapping(mapping_digest)
         calls = []
 
         def load(path, stage, paths, *, digest, label):
             calls.append((path, stage, digest, label))
-            return SimpleNamespace(result=object())
+            return (
+                cable_loaded
+                if stage is MeasurementStage.CABLE_LOSS
+                else mapping_loaded
+            )
 
-        with patch(
-            "app.gui_runtime._stage_recorder",
-            return_value=self._recorder_that_must_not_be_read(),
-        ), patch("app.gui_runtime._driver_mode_enabled", return_value=True), patch(
+        with patch("app.gui_runtime._driver_mode_enabled", return_value=True), patch(
             "app.gui_runtime._load_explicit_stage_result", side_effect=load
         ), patch("app.gui_runtime.validate_amplifier_calibration_inputs"):
             inputs = _preflight_amplifier_inputs(
@@ -758,6 +821,12 @@ class ExplicitStageInputPreflightTests(unittest.TestCase):
         )
         self.assertEqual(reader.paths, [])
         self.assertEqual([kind for kind, _ in reader.results], ["cable_loss", "driver_mapping"])
+        # 两种输入都登记为本次消费的来源，来源运行取自阶段事实。
+        [(cable_source, mapping_source)] = self.recorder.calibration_sources
+        self.assertEqual(cable_source.stage, MeasurementStage.CABLE_LOSS.value)
+        self.assertEqual(
+            mapping_source.stage, MeasurementStage.DRIVER_MAPPING.value
+        )
 
     def test_amplifier_preflight_ignores_a_stale_mapping_path_without_driver_mode(self):
         """驱动关闭时，页面上遗留的映射路径与摘要不参与预检，也不读取文件。"""
@@ -767,13 +836,10 @@ class ExplicitStageInputPreflightTests(unittest.TestCase):
         )
         mapping_digest = StageResultDigest(sha256="d" * 64, size_bytes=1024)
         reader = _RecordingInputReader(cable_loss=self.LOSS_DOCUMENT)
-        sentinel = object()
-        with patch(
-            "app.gui_runtime._stage_recorder",
-            return_value=self._recorder_that_must_not_be_read(),
-        ), patch("app.gui_runtime._driver_mode_enabled", return_value=False), patch(
+        loaded = self._loaded_cable_loss()
+        with patch("app.gui_runtime._driver_mode_enabled", return_value=False), patch(
             "app.gui_runtime._load_explicit_stage_result",
-            return_value=SimpleNamespace(result=sentinel),
+            return_value=loaded,
         ) as load, patch(
             "app.gui_runtime.validate_amplifier_calibration_inputs"
         ) as validate:
@@ -795,45 +861,56 @@ class ExplicitStageInputPreflightTests(unittest.TestCase):
             digest=self.DIGEST,
             label="线损",
         )
-        # 无驱放只读取线损：既不加载映射阶段文件，也不把它转成校准输入。
-        self.assertEqual(reader.results, [("cable_loss", sentinel)])
+        # 无驱放只读取线损：既不加载映射阶段文件，也不把它转成校准输入或来源记录。
+        self.assertEqual(reader.results, [("cable_loss", loaded.result)])
         self.assertEqual(reader.paths, [])
         self.assertFalse(validate.call_args.kwargs["driver_enabled"])
+        self.assertEqual(
+            [source.stage for source, in self.recorder.calibration_sources],
+            [MeasurementStage.CABLE_LOSS.value],
+        )
 
-    def test_amplifier_preflight_falls_back_to_run_references_without_paths(self):
-        """省略显式来源的旧调用方仍按当前运行引用读取两类校准输入。"""
-        loss_path = (
-            Path("runs") / "run-assembly-test" / "inputs" / "cable_loss.json"
-        )
-        mapping_path = (
-            Path("runs") / "run-assembly-test" / "inputs" / "driver_mapping.json"
-        )
-        mapping_input = object()
-        reader = _RecordingInputReader(
-            cable_loss=self.LOSS_DOCUMENT, driver_mapping=mapping_input
-        )
-        verified = {STAGE_CABLE_LOSS: loss_path, STAGE_DRIVER_MAPPING: mapping_path}
-        recorder = SimpleNamespace(verified_result_path=verified.__getitem__)
-        with patch("app.gui_runtime._stage_recorder", return_value=recorder), patch(
-            "app.gui_runtime._driver_mode_enabled", return_value=True
-        ), patch("app.gui_runtime._load_explicit_stage_result") as load, patch(
-            "app.gui_runtime.validate_amplifier_calibration_inputs"
-        ):
-            inputs = _preflight_amplifier_inputs(_prepared_run(), reader, None)
+    def test_amplifier_preflight_requires_an_explicit_loss(self):
+        """步骤 17：省略显式线损时直接失败，不读取运行目录的固定输入。"""
+        reader = _RecordingInputReader(cable_loss=self.LOSS_DOCUMENT)
+        with patch("app.gui_runtime.validate_amplifier_calibration_inputs"):
+            with self.assertRaisesRegex(StageInputUnavailable, "显式选择线损"):
+                _preflight_amplifier_inputs(_prepared_run(), reader, None)
 
-        load.assert_not_called()
-        self.assertIs(inputs.loss_data, self.LOSS_DOCUMENT)
-        self.assertIs(inputs.driver_mapping, mapping_input)
-        self.assertEqual(reader.paths, [loss_path, mapping_path])
+        self.assertEqual(self.recorder.calibration_sources, [])
+        self.assertEqual(reader.paths, [])
+        self.assertEqual(reader.results, [])
+
+    def test_amplifier_preflight_requires_driver_mapping_in_driver_mode(self):
+        """驱动模式下省略映射路径时直接失败，不回退到运行目录。"""
+        cable = Path("test_results") / "cable_loss" / "20260101T000000Z_abcd.json"
+        reader = _RecordingInputReader(cable_loss=self.LOSS_DOCUMENT)
+        loaded = self._loaded_cable_loss()
+        with patch("app.gui_runtime._driver_mode_enabled", return_value=True), patch(
+            "app.gui_runtime._load_explicit_stage_result",
+            return_value=loaded,
+        ), patch("app.gui_runtime.validate_amplifier_calibration_inputs") as validate:
+            with self.assertRaisesRegex(StageInputUnavailable, "显式选择驱动映射"):
+                _preflight_amplifier_inputs(
+                    _prepared_run(),
+                    reader,
+                    None,
+                    cable_loss_path=cable,
+                )
+
+        validate.assert_not_called()
+        self.assertEqual(reader.paths, [])
+        # 测量没有成立，不留下“已消费线损”的来源记录。
+        self.assertEqual(self.recorder.calibration_sources, [])
 
     def test_driver_mapping_preflight_uses_the_explicit_loss_without_stage_registration(self):
         explicit = Path("test_results") / "cable_loss" / "20260101T000000Z_abcd.json"
-        sentinel = object()
         loss_data = {"cable_losses": {"2.4": {"cable2": 1.0}}}
         reader = _RecordingInputReader(cable_loss=loss_data)
-        with patch("app.gui_runtime._require_stage_inputs") as require, patch(
+        loaded = self._loaded_cable_loss()
+        with patch(
             "app.gui_runtime._load_explicit_stage_result",
-            return_value=SimpleNamespace(result=sentinel),
+            return_value=loaded,
         ) as load:
             result = _preflight_driver_mapping_inputs(
                 _prepared_run(),
@@ -844,7 +921,6 @@ class ExplicitStageInputPreflightTests(unittest.TestCase):
             )
 
         self.assertIs(result, loss_data)
-        require.assert_not_called()
         load.assert_called_once_with(
             explicit,
             MeasurementStage.CABLE_LOSS,
@@ -853,17 +929,22 @@ class ExplicitStageInputPreflightTests(unittest.TestCase):
             label="线损",
         )
         self.assertEqual(reader.paths, [])
-        self.assertEqual(reader.results, [("cable_loss", sentinel)])
+        self.assertEqual(reader.results, [("cable_loss", loaded.result)])
+        [(source,)] = self.recorder.calibration_sources
+        self.assertEqual(source.measurement_type.value, "driver_power_mapping")
 
-    def test_driver_mapping_preflight_keeps_the_run_reference_without_a_path(self):
-        prepared = _prepared_run()
-        with patch("app.gui_runtime._require_stage_inputs") as require:
-            result = _preflight_driver_mapping_inputs(
-                prepared, _RecordingInputReader(), None, cable_loss_path=None
-            )
+    def test_driver_mapping_preflight_requires_an_explicit_loss(self):
+        """步骤 17：省略显式线损时直接失败，不读取运行目录的固定输入。"""
+        reader = _RecordingInputReader()
+        with patch("app.gui_runtime._stage_recorder") as recorder:
+            with self.assertRaisesRegex(StageInputUnavailable, "显式选择线损"):
+                _preflight_driver_mapping_inputs(
+                    _prepared_run(), reader, None, cable_loss_path=None
+                )
 
-        self.assertIsNone(result)
-        require.assert_called_once_with(prepared, STAGE_CABLE_LOSS, paths=None)
+        recorder.assert_not_called()
+        self.assertEqual(reader.paths, [])
+        self.assertEqual(reader.results, [])
 
 
 class GuiRuntimePreparationTests(unittest.TestCase):

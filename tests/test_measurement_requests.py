@@ -137,7 +137,6 @@ def _contract_run(run_id="run-request"):
 
 ASSEMBLY_CHECKS = (
     "app.gui_runtime._ensure_run_snapshots_are_intact",
-    "app.gui_runtime._require_stage_inputs",
     "app.gui_runtime._preflight_amplifier_inputs",
     "app.gui_runtime.ArchiveArtifactGenerator",
     "app.gui_runtime.ResultArchivalService",

@@ -14,7 +14,9 @@
 
 from __future__ import annotations
 
+from application.dto.calibration_inputs import CalibrationInputSource
 from application.dto.measurement_requests import StageResultDigest
+from application.dto.measurement_results import MeasurementType
 from application.ports.stage_result_repository import (
     LoadedStageResult,
     MeasurementStage,
@@ -23,7 +25,11 @@ from application.ports.stage_result_repository import (
 from application.ports.types import PathLike
 from application.run_stages import StageInputUnavailable
 
-__all__ = ["load_selected_stage_result", "require_selected_result_unchanged"]
+__all__ = [
+    "calibration_input_source",
+    "load_selected_stage_result",
+    "require_selected_result_unchanged",
+]
 
 
 def require_selected_result_unchanged(
@@ -64,4 +70,30 @@ def load_selected_stage_result(
     """
     return require_selected_result_unchanged(
         repository.load(stage, path), digest, label=label
+    )
+
+
+def calibration_input_source(
+    measurement_type: MeasurementType | str,
+    loaded: LoadedStageResult,
+) -> CalibrationInputSource:
+    """把一次已加载的阶段结果收敛为“本次测量消费了哪份校准输入”的来源事实。
+
+    只读取 :class:`LoadedStageResult` 已经给出的事实（阶段、身份、路径、摘要、
+    大小与生成它的运行），不重新读取文件、不按文件名推断来源运行，也不扫描目录。
+    调用方应在输入通过结构校验后再登记来源，避免为未真正消费的输入留下记录。
+    """
+    if not isinstance(loaded, LoadedStageResult):
+        raise TypeError(
+            "校准输入来源必须来自已加载的阶段结果，"
+            f"收到 {type(loaded).__name__}"
+        )
+    return CalibrationInputSource(
+        measurement_type=measurement_type,
+        stage=loaded.reference.stage.value,
+        measurement_id=loaded.measurement_id,
+        path=str(loaded.path),
+        sha256=loaded.sha256,
+        size_bytes=loaded.size_bytes,
+        source_run_id=loaded.result.run_id,
     )

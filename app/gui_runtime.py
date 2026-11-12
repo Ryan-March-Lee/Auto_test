@@ -24,9 +24,11 @@ from infrastructure.persistence.result_repository import FileMeasurementResultRe
 from infrastructure.persistence.stage_result_repository import FileStageResultRepository
 from infrastructure.persistence.artifact_generator import ArchiveArtifactGenerator
 from application.inputs import ResultInputReader
-from application.inputs.explicit_stage_input import load_selected_stage_result
-from application.run_stages import RunStageRecorder
-from domain.run.models import STAGE_CABLE_LOSS, STAGE_DRIVER_MAPPING
+from application.inputs.explicit_stage_input import (
+    calibration_input_source,
+    load_selected_stage_result,
+)
+from application.run_stages import RunStageRecorder, StageInputUnavailable
 from application.measurements import (
     AmplifierMeasurementUseCase,
     CableLossUseCase,
@@ -53,7 +55,9 @@ from application.dto import (
     AmplifierMeasurementRequest,
     CableLossMeasurementRequest,
     DriverPowerMappingRequest,
+    MeasurementType,
 )
+from application.dto.calibration_inputs import CalibrationInputSource
 from application.dto.measurement_requests import (
     StageResultDigest,
     coerce_input_path,
@@ -247,17 +251,21 @@ def _stage_recorder(
     )
 
 
-def _require_stage_inputs(
-    prepared_run: PreparedRun, *stages: str, paths: PathService | None = None
+def _record_calibration_sources(
+    prepared_run: PreparedRun,
+    paths: PathService | None,
+    measurement_type: MeasurementType,
+    *loaded: LoadedStageResult,
 ) -> None:
-    """在连接仪器前校验运行的前置阶段输入已就绪。
+    """在连接仪器前登记本次实际消费的校准输入来源。
 
-    校验失败会抛出 :class:`StageInputUnavailable`，从而在打开仪器或执行任何硬件
-    动作前终止，避免为无效输入付出连接代价或产生硬件副作用。
+    来源事实直接取自刚刚完成的同一次加载（阶段、身份、路径、摘要、大小与来源运行），
+    不重新读取文件。登记失败会在这里抛出，从而在打开仪器或执行 RF 动作前终止启动。
     """
-    recorder = _stage_recorder(prepared_run, paths)
-    for stage in stages:
-        recorder.verified_result_path(stage)
+    sources: tuple[CalibrationInputSource, ...] = tuple(
+        calibration_input_source(measurement_type, item) for item in loaded
+    )
+    _stage_recorder(prepared_run, paths).record_calibration_inputs(sources)
 
 
 def _driver_mode_enabled(prepared_run: PreparedRun) -> bool:
@@ -301,18 +309,25 @@ def _preflight_driver_mapping_inputs(
     ``cable_loss_path`` 是页面显式选择的阶段结果文件：先按阶段结果仓库校验边界与
     正式结果契约，并核对选择时的摘要与大小，再按**同一次读取**的结果转成线损文档，
     因此显式选择不受“当前运行是否登记线损阶段”影响，也不会消费被替换的文件。
-    省略路径时保持旧调用方的运行引用读取（``verified_result_path()`` 会复核 manifest
-    摘要），返回 ``None`` 表示由用例按运行目录自行读取。
+
+    步骤 17 起新正式测量链路不再读取运行目录的固定校准输入：省略路径时直接以
+    :class:`StageInputUnavailable` 在连接仪器前失败，``verified_result_path()`` 只
+    保留给旧数据/迁移，不参与新测量输入。
     """
     if cable_loss_path is None:
-        _require_stage_inputs(prepared_run, STAGE_CABLE_LOSS, paths=paths)
-        return None
+        raise StageInputUnavailable(
+            "驱动映射测量必须显式选择线损结果文件；"
+            "新测量链路不再读取当前运行目录的固定校准输入"
+        )
     loaded = _load_explicit_stage_result(
         cable_loss_path,
         MeasurementStage.CABLE_LOSS,
         paths,
         digest=cable_loss_digest,
         label="线损",
+    )
+    _record_calibration_sources(
+        prepared_run, paths, MeasurementType.DRIVER_POWER_MAPPING, loaded
     )
     return input_reader.read_cable_loss_result(loaded.result)
 
@@ -335,53 +350,60 @@ def _preflight_amplifier_inputs(
 ) -> AmplifierCalibrationInputs:
     """在连接仪器前读取并校验主功放的校准输入。
 
-    显式路径（页面选择）优先：先按阶段结果仓库校验阶段目录边界与正式结果契约，并
-    核对选择时的摘要与大小，再用**同一次读取**的正式结果构造输入，允许线损与驱动
-    映射来自不同运行；省略某个路径时，该输入回退到当前运行目录的已校验引用
-    （``verified_result_path()`` 复核 manifest 摘要）。驱动模式关闭时不读取驱动映射，
-    因此 ``driver_mapping_path`` 在该模式下不参与校验。
+    显式路径（页面选择）是新测量链路的唯一来源：先按阶段结果仓库校验阶段目录边界
+    与正式结果契约，并核对选择时的摘要与大小，再用**同一次读取**的正式结果构造输入，
+    允许线损与驱动映射来自不同运行。省略线损路径（或驱动模式下省略驱动映射路径）
+    时直接以 :class:`StageInputUnavailable` 在连接仪器前失败；``verified_result_path()``
+    只保留给旧数据/迁移，不参与新测量输入。驱动模式关闭时不读取驱动映射，因此
+    ``driver_mapping_path`` 在该模式下不参与校验。
 
     返回本次读取到的校准输入：调用方在构造正式输入后继续用它校验目标表与 DUT
     功率扫描计划是否逐点一致，并把同一个对象交给用例，正式测量因此不会重复读取
     同一份文件，也不会消费与预检不同的对象。
     """
-    recorder = _stage_recorder(prepared_run, paths)
     if cable_loss_path is None:
-        loss_data = input_reader.read_cable_loss(
-            recorder.verified_result_path(STAGE_CABLE_LOSS)
+        raise StageInputUnavailable(
+            "主功放测量必须显式选择线损结果文件；"
+            "新测量链路不再读取当前运行目录的固定校准输入"
         )
-    else:
-        loaded_loss = _load_explicit_stage_result(
-            cable_loss_path,
-            MeasurementStage.CABLE_LOSS,
-            paths,
-            digest=cable_loss_digest,
-            label="线损",
-        )
-        loss_data = input_reader.read_cable_loss_result(loaded_loss.result)
+    loaded_loss = _load_explicit_stage_result(
+        cable_loss_path,
+        MeasurementStage.CABLE_LOSS,
+        paths,
+        digest=cable_loss_digest,
+        label="线损",
+    )
+    loss_data = input_reader.read_cable_loss_result(loaded_loss.result)
     driver_enabled = _driver_mode_enabled(prepared_run)
     driver_mapping = None
+    loaded_inputs: list[LoadedStageResult] = [loaded_loss]
     if driver_enabled:
         if driver_mapping_path is None:
-            driver_mapping = input_reader.read_driver_mapping(
-                recorder.verified_result_path(STAGE_DRIVER_MAPPING)
+            raise StageInputUnavailable(
+                "驱动模式下的主功放测量必须显式选择驱动映射结果文件；"
+                "新测量链路不再读取当前运行目录的固定校准输入"
             )
-        else:
-            loaded_mapping = _load_explicit_stage_result(
-                driver_mapping_path,
-                MeasurementStage.DRIVER_MAPPING,
-                paths,
-                digest=driver_mapping_digest,
-                label="驱动映射",
-            )
-            driver_mapping = input_reader.read_driver_mapping_result(
-                loaded_mapping.result
-            )
+        loaded_mapping = _load_explicit_stage_result(
+            driver_mapping_path,
+            MeasurementStage.DRIVER_MAPPING,
+            paths,
+            digest=driver_mapping_digest,
+            label="驱动映射",
+        )
+        driver_mapping = input_reader.read_driver_mapping_result(
+            loaded_mapping.result
+        )
+        loaded_inputs.append(loaded_mapping)
     validate_amplifier_calibration_inputs(
         loss_data,
         driver_mapping,
         frequencies=_test_frequencies(prepared_run),
         driver_enabled=driver_enabled,
+    )
+    # 只登记通过结构校验、真正会被本次测量消费的输入：驱动模式关闭时遗留的映射
+    # 路径既不会被加载，也不会出现在来源记录里。
+    _record_calibration_sources(
+        prepared_run, paths, MeasurementType.AMPLIFIER, *loaded_inputs
     )
     return AmplifierCalibrationInputs(
         loss_data=loss_data,
@@ -570,8 +592,8 @@ def create_driver_mapping_measurement(
 
     ``cable_loss_path`` 是页面选中的线损阶段结果文件，``cable_loss_digest`` 是选择
     那一刻的 SHA-256 与大小。路径与摘要都在连接仪器前校验：阶段目录边界、正式结果
-    契约、以及“内容仍是用户选择的那一份”；校验通过后按同一次读取的文档构造输入，
-    省略路径时沿用当前运行引用的兼容读取。
+    契约、以及“内容仍是用户选择的那一份”；校验通过后按同一次读取的文档构造输入。
+    步骤 17 起省略路径不再回退到运行目录，而是在连接仪器前明确失败。
     """
     prepared_run = require_run_contract(prepared_run)
     # 显式输入来源先于任何快照校验/仪器连接确定：空路径、非法类型或缺失路径的摘要
@@ -596,7 +618,7 @@ def create_driver_mapping_measurement(
         )
         input_reader = callbacks.get("input_reader") or _input_reader_for(repository)
         # 连接仪器前确定本次实际消费的线损：显式路径按阶段结果仓库校验并核对选择时
-        # 摘要，缺失/损坏/被替换的输入不会付出连接代价；省略路径时沿用运行引用。
+        # 摘要，缺失/损坏/被替换的输入不会付出连接代价；省略路径时直接失败。
         loss_data = _preflight_driver_mapping_inputs(
             prepared_run,
             input_reader,
@@ -646,8 +668,8 @@ def create_amplifier_measurement(
 
     ``cable_loss_path`` / ``driver_mapping_path`` 是页面选中的阶段结果文件，两个
     ``*_digest`` 是选择那一刻的 SHA-256 与大小。路径、阶段契约与摘要都在连接仪器前
-    校验，并用同一次读取的结果完成线损/驱动映射的结构校验；省略时保持当前运行引用
-    的兼容读取。
+    校验，并用同一次读取的结果完成线损/驱动映射的结构校验；省略线损路径（或驱动
+    模式下省略映射路径）时在连接仪器前明确失败，不再读取运行目录的固定校准输入。
     """
     prepared_run = require_run_contract(prepared_run)
     # 显式校准输入来源先于任何快照校验/仪器连接确定：空路径、非法类型或缺失路径的
@@ -680,7 +702,7 @@ def create_amplifier_measurement(
         input_reader = callbacks.get("input_reader") or _input_reader_for(repository)
         # 在连接仪器前校验本次运行实际需要的校准输入：主功放始终需要线损，仅在
         # 驱动模式启用时才需要驱动映射。显式路径按阶段结果仓库校验并核对选择时摘要；
-        # 省略时回退到当前运行引用。结构无效或配置漂移都在打开仪器或执行任何 RF
+        # 省略必需路径时直接失败。结构无效或配置漂移都在打开仪器或执行任何 RF
         # 动作前失败。随后按领域/硬件两套职责分别校验冻结快照。
         calibration_inputs = _preflight_amplifier_inputs(
             prepared_run,

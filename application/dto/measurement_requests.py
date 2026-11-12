@@ -130,11 +130,16 @@ class MeasurementRequest:
 
     ``cable_loss_path`` / ``driver_mapping_path`` 是用户在页面上显式选择的阶段结果
     文件。它们与 ``run_id`` 无关，也不会由运行目录推断；组装层在连接仪器前按该路径
-    加载并校验输入（步骤 14、15），省略时保持 ``None`` 并沿用运行引用兼容路径。
+    加载并校验输入（步骤 14、15）。步骤 17 起新测量链路不再把运行目录作为校准输入
+    来源：驱动映射与主功放缺少必需路径时在连接仪器前失败，而不是回退到运行引用。
+    显式选择允许来自其它运行；组装层在连接仪器前把实际消费的阶段、身份、路径、
+    摘要、大小与来源运行登记到 ``inputs/calibration_inputs.json``，与本运行产出的
+    阶段结果引用分开。
 
     ``cable_loss_digest`` / ``driver_mapping_digest`` 是用户选择那一刻的文件事实
     （SHA-256 与大小）：给出时组装层必须在启动前重新加载并核对，被替换或改动的文件
-    不会被消费。摘要只能与对应路径一起使用；省略摘要表示旧调用方只锁定路径。
+    不会被消费。摘要只能与对应路径一起使用；省略摘要只表示跳过内容比对，阶段目录
+    边界与正式结果契约仍由阶段结果仓库校验。
     """
 
     configuration: RunConfiguration
@@ -290,8 +295,9 @@ class DriverPowerMappingRequest(MeasurementRequest):
     ``cable_loss_path`` 是页面显式选择的线损结果文件；``cable_loss_digest`` 是选择
     那一刻的 SHA-256 与文件大小；``loss_data`` 是组装层在连接仪器前按该路径加载、
     核对摘要并校验过的同一份线损文档。三者同时出现时用例直接复用 ``loss_data``，
-    不再读文件；只有 ``cable_loss_path`` 而无摘要时按旧调用方处理；省略显式来源时
-    仍按当前运行登记的引用读取。
+    不再读文件；只有 ``cable_loss_path`` 而无摘要时仍经阶段结果仓库加载（摘要只跳过
+    内容比对）。步骤 17 起省略显式来源不再读取当前运行登记的引用，而是在构造期失败；
+    用例自行加载时会把消费来源登记到 ``inputs/calibration_inputs.json``。
     """
 
     measurement_type: MeasurementType | str = MeasurementType.DRIVER_POWER_MAPPING
@@ -311,14 +317,16 @@ class DriverPowerMappingRequest(MeasurementRequest):
 class AmplifierCalibrationInputs:
     """本次运行已经读取并结构校验过的主功放校准输入。
 
-    组合入口在连接仪器前必须读取 ``inputs/cable_loss.json``（以及驱动模式下的
-    ``inputs/driver_mapping.json``）来完成预检。步骤 7 起线损的这些运行路径登记的是
-    指向阶段目录权威结果的引用，预检按引用读取并核对阶段文件。把这些对象随请求交给
-    用例，入口预检与实际测量消费的就是同一份对象：既不会重复读取同一个运行文件，
+    组合入口在连接仪器前按页面显式选择的阶段结果路径读取线损（以及驱动模式下的
+    驱动映射），完成阶段目录边界、正式结果契约与选择时摘要校验。把这些对象随请求
+    交给用例，入口预检与实际测量消费的就是同一份对象：既不会重复读取同一个文件，
     也不会出现“入口校验的是 A、测量消费的是 B”的漂移。
 
-    只允许组合入口在完成运行目录校验（``verified_result_path`` 与校验值比对）后填写；
-    独立构造请求的调用方省略本对象，用例按运行目录自行读取。
+    只允许组合入口在完成显式阶段文件校验后填写；独立构造请求的调用方省略本对象，
+    用例改为直接消费请求中的显式路径。步骤 17 起两条路径都不读取运行目录中的固定
+    校准文件。组合入口在连接仪器前把本次消费的阶段事实（身份、路径、摘要、大小与
+    来源运行）登记到当前运行的 ``inputs/calibration_inputs.json``；预检对象只承载
+    数据本身，来源记录始终从同一次加载的事实生成。
     """
 
     loss_data: Mapping[str, Any]
@@ -327,18 +335,18 @@ class AmplifierCalibrationInputs:
 
 @dataclass(frozen=True)
 class AmplifierMeasurementRequest(MeasurementRequest):
-    """Inputs for amplifier measurement; its calibration inputs come from the run.
+    """Inputs for amplifier measurement; its calibration inputs are explicit.
 
     ``inputs`` 是主功放唯一的正式输入表示（技术债步骤 7/8）：频率、功率扫描、压缩
     目标、衰减器、DUT 输入限制、驱动模式与 DUT 供电通道都在这里类型化表达，用例不再
     读取历史配置字典。构造期即拒绝缺失或类型不符的输入。
 
     ``calibration_inputs`` 是组合入口预检时已读取的同一份线损/驱动映射；省略时用例
-    仍按当前运行目录读取，行为与旧调用方一致。
+    直接消费请求中的显式阶段路径，不再回退到当前运行目录。
 
     ``cable_loss_path`` / ``driver_mapping_path`` 是显式校准输入来源，
     ``*_digest`` 是选择那一刻的文件事实；组合入口按它们加载、核对摘要并在连接仪器
-    前完成结构、频率与目标网格校验，省略时保持运行目录兼容。
+    前完成结构、频率与目标网格校验。步骤 17 起省略必需路径时明确失败。
     """
 
     measurement_type: MeasurementType | str = MeasurementType.AMPLIFIER

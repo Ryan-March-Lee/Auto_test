@@ -3,7 +3,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from application.dto import AmplifierMeasurementRequest
+from application.dto import (
+    AmplifierCalibrationInputs,
+    AmplifierMeasurementRequest,
+)
 from application.measurements import AmplifierMeasurementUseCase
 from tests.contract_doubles import (
     MappingInputReader,
@@ -76,6 +79,15 @@ def _amplifier_request(measurement_port):
         result_repository=_Repository(),
         input_reader=MappingInputReader(
             cable_loss={
+                "cable_losses": {
+                    "1.0": {"cable1": 0.0, "cable2": 0.0, "cable4": 0.0}
+                }
+            }
+        ),
+        # 步骤 17：主功放只消费显式选择的阶段结果或组合入口预检对象；本用例只验证
+        # 休眠函数注入，因此直接给出预检对象，不触碰文件系统。
+        calibration_inputs=AmplifierCalibrationInputs(
+            loss_data={
                 "cable_losses": {
                     "1.0": {"cable1": 0.0, "cable2": 0.0, "cable4": 0.0}
                 }

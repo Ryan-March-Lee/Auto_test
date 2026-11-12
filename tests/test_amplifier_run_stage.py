@@ -28,16 +28,26 @@ from app.gui_runtime import (
     prepare_configuration,
 )
 from application.dto import (
+    AmplifierCalibrationInputs,
     AmplifierInputError,
     AmplifierMeasurementRequest,
+    CableLossMeasurementResult,
+    CableLossRow,
+    DriverMappingInput,
     DriverMappingRawPoint,
     DriverMappingTargetPoint,
     DriverPowerMappingMeasurementResult,
+    generate_measurement_id,
 )
 from application.inputs import ResultInputReader
 from application.measurements import AmplifierCalibrationError, AmplifierMeasurementUseCase
 from application.measurements.amplifier_test import AMPLIFIER_SPLIT_SCHEMA_VERSION
-from application.run_stages import RunStageRecorder, StageInputUnavailable
+from application.run_stages import (
+    CALIBRATION_INPUTS_INPUT_PATH,
+    RunStageRecorder,
+    StageInputUnavailable,
+)
+from application.ports.stage_result_repository import MeasurementStage
 from domain.measurement.values import Frequency
 from domain.run.models import (
     AMPLIFIER_RESULT_PATH,
@@ -51,10 +61,11 @@ from domain.run.models import (
     StageStatus,
 )
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
+from infrastructure.persistence.stage_result_repository import FileStageResultRepository
 from infrastructure.persistence.run_repository import RunRepository
 from infrastructure.filesystem.paths import PathService
 from application.configuration_authoring import author_official_configuration
-from tests.contract_doubles import amplifier_inputs
+from tests.contract_doubles import MappingInputReader, amplifier_inputs
 from tests.fakes import safety_cleanup_for
 
 
@@ -66,6 +77,10 @@ CABLE_LOSSES = {"1.0": {"cable1": 0.0, "cable2": 0.0, "cable3": 0.0, "cable4": 0
 # 目标 DUT 输入 -20 dBm 与默认 amplifier_inputs 的单点扫描计划一致；驱动映射
 # 目标表必须与配置生成的目标点逐点相同（4.4）。
 POWER_MAPPING = {"1.0": {"-20.0": -20.0}}
+
+# 步骤 17：新测量链路只消费显式选择的阶段结果或组合入口预检对象。用例测试用
+# 预检对象代替真实文件读取，阶段目录边界另由显式输入用例覆盖。
+_UNSET = object()
 
 
 def _fully_valid_gui_config(*, driver_enabled=False) -> dict:
@@ -253,6 +268,7 @@ class AmplifierRunStageTests(unittest.TestCase):
         self.result_repository = FileMeasurementResultRepository(
             results_directory=self.base / "test_results"
         )
+        self.stage_repository = FileStageResultRepository(paths=self.paths)
 
     def _create_run(self, run_id=RUN_ID):
         layout, _manifest = self.repository.create_run(
@@ -268,12 +284,14 @@ class AmplifierRunStageTests(unittest.TestCase):
             {"run_id": run_id, "cable_losses": cable_losses},
             now=CREATED_AT,
         )
+        if run_id == RUN_ID:
+            self._seeded_cable_losses = cable_losses
         return recorder
 
-    def _complete_driver_mapping(self, run_id=RUN_ID, *, mapping=POWER_MAPPING):
-        recorder = RunStageRecorder(self.repository, run_id)
-        result = DriverPowerMappingMeasurementResult(
+    def _driver_mapping_result(self, run_id=RUN_ID, *, mapping=POWER_MAPPING):
+        return DriverPowerMappingMeasurementResult(
             run_id=run_id,
+            measurement_id=generate_measurement_id(),
             raw_points=tuple(
                 DriverMappingRawPoint(
                     frequency_ghz=frequency,
@@ -295,12 +313,37 @@ class AmplifierRunStageTests(unittest.TestCase):
                 for source, output in bucket.items()
             ),
         )
+
+    def _save_stage_cable_loss(self, *, cable_losses=CABLE_LOSSES, run_id=RUN_ID):
+        """把一份正式线损结果写入阶段目录，返回其引用（不登记运行引用）。"""
+        result = CableLossMeasurementResult(
+            run_id=run_id,
+            measurement_id=generate_measurement_id(),
+            points=tuple(
+                CableLossRow(frequency_ghz=frequency, cable_losses=values)
+                for frequency, values in cable_losses.items()
+            ),
+        )
+        return self.stage_repository.save(MeasurementStage.CABLE_LOSS, result)
+
+    def _save_stage_driver_mapping(self, *, mapping=POWER_MAPPING):
+        """把一份正式驱动映射结果写入阶段目录，返回其引用。"""
+        return self.stage_repository.save(
+            MeasurementStage.DRIVER_MAPPING,
+            self._driver_mapping_result(mapping=mapping),
+        )
+
+    def _complete_driver_mapping(self, run_id=RUN_ID, *, mapping=POWER_MAPPING):
+        recorder = RunStageRecorder(self.repository, run_id)
+        result = self._driver_mapping_result(run_id, mapping=mapping)
         recorder.start(STAGE_DRIVER_MAPPING, now=CREATED_AT)
         recorder.complete(
             STAGE_DRIVER_MAPPING,
             result.to_dict(),
             now=CREATED_AT,
         )
+        if run_id == RUN_ID:
+            self._seeded_driver_mapping = DriverMappingInput.from_result(result)
         return recorder
 
     def _request(
@@ -312,9 +355,28 @@ class AmplifierRunStageTests(unittest.TestCase):
         repository=None,
         driver_enabled=False,
         inputs=None,
+        reader=None,
+        recorder=None,
+        loss_data=_UNSET,
+        cable_loss_path=None,
+        cable_loss_digest=None,
+        driver_mapping_path=None,
+        driver_mapping_digest=None,
     ):
         layout = self.repository.layout(run_id)
         instrument = instrument or _Instrument()
+        calibration_inputs = None
+        if loss_data is not _UNSET and loss_data is not None:
+            calibration_inputs = AmplifierCalibrationInputs(loss_data=loss_data)
+        elif cable_loss_path is None:
+            seeded_losses = getattr(self, "_seeded_cable_losses", None)
+            if seeded_losses is not None:
+                calibration_inputs = AmplifierCalibrationInputs(
+                    loss_data={"cable_losses": seeded_losses},
+                    driver_mapping=getattr(
+                        self, "_seeded_driver_mapping", None
+                    ),
+                )
         return AmplifierMeasurementRequest(
             configuration=_amplifier_config(driver_enabled=driver_enabled),
             context=_Context(run_id),
@@ -323,9 +385,18 @@ class AmplifierRunStageTests(unittest.TestCase):
             inputs=inputs or amplifier_inputs(driver_enabled=driver_enabled),
             safety_cleanup=safety_cleanup_for(instrument),
             result_repository=repository or self.result_repository,
-            input_reader=ResultInputReader(self.result_repository),
-            stage_recorder=RunStageRecorder(self.repository, run_id),
+            input_reader=reader or ResultInputReader(self.result_repository),
+            stage_result_repository=self.stage_repository,
+            stage_recorder=recorder
+            or RunStageRecorder(
+                self.repository, run_id, stage_results=self.stage_repository
+            ),
             cancellation_token=token,
+            calibration_inputs=calibration_inputs,
+            cable_loss_path=cable_loss_path,
+            cable_loss_digest=cable_loss_digest,
+            driver_mapping_path=driver_mapping_path,
+            driver_mapping_digest=driver_mapping_digest,
             safety_options={"owns_measurement_port": True},
         )
 
@@ -706,13 +777,14 @@ class AmplifierRunStageTests(unittest.TestCase):
 
     # -- 输入隔离与前置失败 ------------------------------------------------
 
-    def test_missing_current_run_cable_loss_fails_before_hardware(self):
+    def test_missing_explicit_cable_loss_fails_before_hardware(self):
         self._create_run()
         instrument = _Instrument()
 
-        with self.assertRaisesRegex(StageInputUnavailable, "cable_loss"):
+        with self.assertRaisesRegex(StageInputUnavailable, "显式选择线损"):
             AmplifierMeasurementUseCase(
-                self._request(instrument=instrument), sleep_fn=lambda _: None
+                self._request(instrument=instrument, loss_data=None),
+                sleep_fn=lambda _: None,
             )
 
         self.assertEqual(instrument.measured, 0)
@@ -725,7 +797,7 @@ class AmplifierRunStageTests(unittest.TestCase):
         self._complete_cable_loss()
         instrument = _Instrument()
 
-        with self.assertRaisesRegex(StageInputUnavailable, "driver_mapping"):
+        with self.assertRaisesRegex(StageInputUnavailable, "驱动映射"):
             AmplifierMeasurementUseCase(
                 self._request(instrument=instrument, driver_enabled=True),
                 sleep_fn=lambda _: None,
@@ -737,47 +809,52 @@ class AmplifierRunStageTests(unittest.TestCase):
             StageStatus.PENDING,
         )
 
-    def test_structurally_invalid_current_run_cable_loss_is_rejected(self):
+    def test_structurally_invalid_selected_cable_loss_is_rejected(self):
         layout = self._create_run()
-        recorder = RunStageRecorder(self.repository, RUN_ID)
-        recorder.start(STAGE_CABLE_LOSS, now=CREATED_AT)
-        # 缺少 cable1/cable4：哈希校验通过，但结构无法支撑计算。
-        recorder.complete(
-            STAGE_CABLE_LOSS,
-            {"run_id": RUN_ID, "cable_losses": {"1.0": {"cable2": 0.0}}},
-            now=CREATED_AT,
-        )
         instrument = _Instrument()
+        reference = self._save_stage_cable_loss()
+        # 阶段文件本身是正式结果，但读取出的线损结构缺少 cable1/cable4，
+        # 无法支撑计算：结构校验仍在任何硬件动作前失败。
+        reader = MappingInputReader(
+            cable_loss={"cable_losses": {"1.0": {"cable2": 0.0}}}
+        )
 
         with self.assertRaises(AmplifierCalibrationError):
             AmplifierMeasurementUseCase(
-                self._request(instrument=instrument), sleep_fn=lambda _: None
+                self._request(
+                    instrument=instrument,
+                    reader=reader,
+                    loss_data=None,
+                    cable_loss_path=reference.path,
+                ),
+                sleep_fn=lambda _: None,
             )
 
         self.assertEqual(instrument.measured, 0)
         self.assertFalse((layout.run_directory / AMPLIFIER_RESULT_PATH).exists())
 
-    def test_explicit_inputs_do_not_bypass_current_run_inputs(self):
+    def test_formal_measurement_requires_an_explicit_input(self):
         self._create_run()
         instrument = _Instrument()
 
         with self.assertRaises(StageInputUnavailable):
             AmplifierMeasurementUseCase(
-                self._request(instrument=instrument),
+                self._request(instrument=instrument, loss_data=None),
                 sleep_fn=lambda _: None,
             )
 
         self.assertEqual(instrument.measured, 0)
 
-    def test_other_run_cable_loss_is_not_used(self):
+    def test_other_run_cable_loss_is_not_auto_selected(self):
         self._create_run(RUN_ID)
         self._create_run(OTHER_RUN_ID)
         self._complete_cable_loss(OTHER_RUN_ID)
         instrument = _Instrument()
 
-        with self.assertRaisesRegex(StageInputUnavailable, "cable_loss"):
+        with self.assertRaisesRegex(StageInputUnavailable, "显式选择线损"):
             AmplifierMeasurementUseCase(
-                self._request(instrument=instrument), sleep_fn=lambda _: None
+                self._request(instrument=instrument, loss_data=None),
+                sleep_fn=lambda _: None,
             )
 
         self.assertEqual(instrument.measured, 0)
@@ -798,7 +875,8 @@ class AmplifierRunStageTests(unittest.TestCase):
         with self.assertRaises(StageInputUnavailable):
             AmplifierMeasurementUseCase(self._request(), sleep_fn=lambda _: None)
 
-    def test_tampered_cable_loss_file_is_rejected(self):
+    def test_tampered_run_directory_copy_no_longer_feeds_the_measurement(self):
+        """步骤 17：运行目录的固定校准文件不再参与新测量输入。"""
         layout = self._create_run()
         self._complete_cable_loss()
         (layout.run_directory / CABLE_LOSS_INPUT_PATH).write_text(
@@ -806,8 +884,66 @@ class AmplifierRunStageTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-        with self.assertRaises(StageInputUnavailable):
-            AmplifierMeasurementUseCase(self._request(), sleep_fn=lambda _: None)
+        result = AmplifierMeasurementUseCase(
+            self._request(), sleep_fn=lambda _: None
+        ).measure_all_frequencies()
+
+        self.assertTrue(result.frequencies)
+
+    def test_selected_cross_run_input_is_recorded_with_its_source_run(self):
+        """显式选择其它运行的阶段结果时，本次运行记录消费来源而不伪装成自身产出。"""
+        self._create_run()
+        self._create_run(OTHER_RUN_ID)
+        # 本运行的线损阶段照常完成（只是不作为本次测量输入），否则运行无法收敛。
+        self._complete_cable_loss()
+        source = self._save_stage_cable_loss(run_id=OTHER_RUN_ID)
+
+        result = AmplifierMeasurementUseCase(
+            self._request(loss_data=None, cable_loss_path=source.path),
+            sleep_fn=lambda _: None,
+        ).measure_all_frequencies()
+
+        self.assertTrue(result.frequencies)
+        document = self.repository.read_run_json(
+            RUN_ID, CALIBRATION_INPUTS_INPUT_PATH
+        )
+        [entry] = document["inputs"]
+        self.assertEqual(entry["measurement_type"], "amplifier")
+        self.assertEqual(entry["stage"], MeasurementStage.CABLE_LOSS.value)
+        self.assertEqual(entry["measurement_id"], source.measurement_id)
+        self.assertEqual(Path(entry["path"]), source.path)
+        self.assertEqual(entry["sha256"], source.sha256)
+        self.assertEqual(entry["size_bytes"], source.size_bytes)
+        # 来源运行是产生这份阶段的运行，而不是消费它的当前运行。
+        self.assertEqual(entry["source_run_id"], OTHER_RUN_ID)
+        # 本运行自己的输出引用仍按原契约登记到 manifest。
+        manifest = self.repository.load_manifest(RUN_ID)
+        self.assertEqual(manifest.stage(STAGE_AMPLIFIER).status, StageStatus.COMPLETED)
+
+    def test_source_registration_failure_stops_before_any_measurement(self):
+        """来源登记失败必须中止启动，不能带着无法追溯的输入开始硬件动作。"""
+        layout = self._create_run()
+        instrument = _Instrument()
+
+        class _FailingSourceRecorder(RunStageRecorder):
+            def record_calibration_inputs(self, sources, *, now=None):
+                raise OSError("source registration failed")
+
+        with self.assertRaisesRegex(OSError, "source registration failed"):
+            AmplifierMeasurementUseCase(
+                self._request(
+                    instrument=instrument,
+                    loss_data=None,
+                    recorder=_FailingSourceRecorder(
+                        self.repository, RUN_ID, stage_results=self.stage_repository
+                    ),
+                    cable_loss_path=self._save_stage_cable_loss().path,
+                ),
+                sleep_fn=lambda _: None,
+            )
+
+        self.assertEqual(instrument.measured, 0)
+        self.assertFalse((layout.run_directory / AMPLIFIER_RESULT_PATH).exists())
 
     # -- 失败与取消 --------------------------------------------------------
 
@@ -929,11 +1065,17 @@ class AmplifierRunStageTests(unittest.TestCase):
         cable_case.measure_all_frequencies()
         cable_case.continue_to_step2()
 
+        pointer = json.loads(
+            (Path(prepared.run_directory) / CABLE_LOSS_INPUT_PATH).read_text(
+                encoding="utf-8"
+            )
+        )
         amplifier_case = create_amplifier_measurement(
             prepared_run=prepared,
             measurement_port=_Instrument(),
             result_repository=self.result_repository,
             paths=self.paths,
+            cable_loss_path=Path(pointer["path"]),
             sleep_fn=lambda _: None,
         )
         amplifier_case.measure_all_frequencies()
@@ -960,12 +1102,15 @@ class AmplifierRunStageTests(unittest.TestCase):
 
     def test_composition_rejects_invalid_calibration_before_connecting(self):
         layout = self._create_run()
-        recorder = RunStageRecorder(self.repository, RUN_ID)
-        recorder.start(STAGE_CABLE_LOSS, now=CREATED_AT)
-        recorder.complete(
-            STAGE_CABLE_LOSS,
-            {"run_id": RUN_ID, "cable_losses": {"1.0": {"cable2": 0.0}}},
-            now=CREATED_AT,
+        result = CableLossMeasurementResult(
+            run_id=RUN_ID,
+            measurement_id=generate_measurement_id(),
+            points=(
+                CableLossRow(frequency_ghz="1.0", cable_losses=CABLE_LOSSES["1.0"]),
+            ),
+        )
+        reference = self.stage_repository.save(
+            MeasurementStage.CABLE_LOSS, result
         )
         prepared = self._contract_prepared(
             layout,
@@ -973,10 +1118,19 @@ class AmplifierRunStageTests(unittest.TestCase):
                 test_plan=SimpleNamespace(driver_enabled=False, frequencies=[1.0])
             ),
         )
+        # 文件本身是合法阶段结果，但读取出的线损结构无法支撑计算。
+        reader = MappingInputReader(
+            cable_loss={"cable_losses": {"1.0": {"cable2": 0.0}}}
+        )
 
         with patch("app.gui_runtime.connect_instruments") as connect:
             with self.assertRaises(AmplifierCalibrationError):
-                create_amplifier_measurement(prepared_run=prepared)
+                create_amplifier_measurement(
+                    prepared_run=prepared,
+                    paths=self.paths,
+                    cable_loss_path=reference.path,
+                    input_reader=reader,
+                )
 
         connect.assert_not_called()
 
@@ -1003,10 +1157,19 @@ class AmplifierRunStageTests(unittest.TestCase):
         modified["test_frequencies"] = [2.0]
         config_path.write_text(json.dumps(modified), encoding="utf-8")
 
+        pointer = json.loads(
+            (Path(prepared.run_directory) / CABLE_LOSS_INPUT_PATH).read_text(
+                encoding="utf-8"
+            )
+        )
         with patch("app.gui_runtime.connect_instruments", return_value=_Instrument()) as connect, patch(
             "app.gui_runtime.AmplifierMeasurementUseCase", return_value=object()
         ):
-            create_amplifier_measurement(prepared_run=prepared, paths=self.paths)
+            create_amplifier_measurement(
+                prepared_run=prepared,
+                paths=self.paths,
+                cable_loss_path=Path(pointer["path"]),
+            )
 
         connect.assert_called_once()
         # 连接绑定的是本次运行对象本身；全局配置的修改不会改变它解析出的硬件快照。
@@ -1018,7 +1181,7 @@ class AmplifierRunStageTests(unittest.TestCase):
 
     def test_composition_requires_mapping_before_hardware_when_driver_enabled(self):
         layout = self._create_run()
-        self._complete_cable_loss()
+        cable_reference = self._save_stage_cable_loss()
         prepared = self._contract_prepared(
             layout,
             configuration=SimpleNamespace(
@@ -1027,8 +1190,12 @@ class AmplifierRunStageTests(unittest.TestCase):
         )
 
         with patch("app.gui_runtime.connect_instruments") as connect:
-            with self.assertRaises(StageInputUnavailable):
-                create_amplifier_measurement(prepared_run=prepared)
+            with self.assertRaisesRegex(StageInputUnavailable, "驱动映射"):
+                create_amplifier_measurement(
+                    prepared_run=prepared,
+                    paths=self.paths,
+                    cable_loss_path=cable_reference.path,
+                )
 
         connect.assert_not_called()
 
@@ -1044,13 +1211,16 @@ class AmplifierRunStageTests(unittest.TestCase):
             run_id=RUN_ID,
             run_repository=self.repository,
         )
-        self._complete_cable_loss()
-        self._complete_driver_mapping()
+        cable_reference = self._save_stage_cable_loss()
+        mapping_reference = self._save_stage_driver_mapping()
 
         with patch("app.gui_runtime.connect_instruments", return_value=_Instrument()):
             use_case = create_amplifier_measurement(
                 prepared_run=prepared,
                 result_repository=self.result_repository,
+                paths=self.paths,
+                cable_loss_path=cable_reference.path,
+                driver_mapping_path=mapping_reference.path,
                 sleep_fn=lambda _: None,
             )
 
@@ -1072,15 +1242,20 @@ class AmplifierRunStageTests(unittest.TestCase):
             run_id=RUN_ID,
             run_repository=self.repository,
         )
-        self._complete_cable_loss()
+        cable_reference = self._save_stage_cable_loss()
         # 目标 -10 dBm 与配置的 -20 dBm 单点扫描不一致：旧目标表不得进入硬件。
-        self._complete_driver_mapping(mapping={"1.0": {"-20.0": -10.0}})
+        mapping_reference = self._save_stage_driver_mapping(
+            mapping={"1.0": {"-20.0": -10.0}}
+        )
 
         with patch("app.gui_runtime.connect_instruments") as connect:
             with self.assertRaises(AmplifierInputError):
                 create_amplifier_measurement(
                     prepared_run=prepared,
                     result_repository=self.result_repository,
+                    paths=self.paths,
+                    cable_loss_path=cable_reference.path,
+                    driver_mapping_path=mapping_reference.path,
                 )
 
         connect.assert_not_called()

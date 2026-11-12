@@ -31,7 +31,6 @@ from presentation.qt.connection_dialog import ConnectionDialog
 from presentation.qt.instrument_setup_page import InstrumentSetupPage
 from presentation.qt.power_configuration_page import PowerConfigurationPage
 from presentation.qt.rack_overview_page import RackOverviewPage
-from presentation.qt.run_history_page import build_run_history_page
 from presentation.qt.history_view_model import HistoryViewModel
 from presentation.qt.pages import PageContext, build_pages
 from presentation.qt.realtime_plot import RealTimePlotWidget
@@ -82,7 +81,6 @@ class MainWindow(QMainWindow):
         self.measurement_controller.signals.thread_finished.connect(
             self._on_measurement_controller_thread_finished
         )
-        self.measurement_controller.signals.finished.connect(self.refresh_history)
         self.measurement_controller.signals.message.connect(self.add_log_message)
         self.measurement_controller.signals.rejected.connect(self.add_log_message)
         self.coordinator.load_configuration()
@@ -316,7 +314,6 @@ class MainWindow(QMainWindow):
             clear_realtime_callback=self.clear_real_time_data,
             build_configuration=self.create_test_config_tab,
             build_visualization=self.create_visualization_tab,
-            build_run_history=self.create_run_history_tab,
         )
         self.pages = {}
         for definition, page in build_pages(context):
@@ -367,9 +364,8 @@ class MainWindow(QMainWindow):
         """把唯一的进度与日志面板挂到当前测量页左栏。
 
         只有三个测量页有 ``status_slot``：面板挂进去后占满“测量控制”以下的剩余高度。
-        测试配置、数据可视化和历史运行页没有这块位置，面板在那里收起；它仍是全部
-        日志的接收方，日志照常入队，切回任一测量页时原样出现（历史、进度与清除操作
-        都只有一份）。
+        测试配置和数据可视化页没有这块位置，面板在那里收起；它仍是全部日志的接收方，
+        日志照常入队，切回任一测量页时原样出现（历史、进度与清除操作都只有一份）。
         """
         panel = getattr(self, "status_panel", None)
         if panel is None:
@@ -448,15 +444,6 @@ class MainWindow(QMainWindow):
         self.freq_next_btn = self.visualization_page.freq_next_btn
         self.data_plot_widget = self.visualization_page.data_plot_widget
         return self.visualization_page
-
-    def create_run_history_tab(self):
-        """创建历史运行/结果管理选项卡；页面内部状态由页面自己持有。"""
-        self.run_history_page = build_run_history_page(
-            self.gui_data_service,
-            log_callback=self.add_log_message,
-            parent=self,
-        )
-        return self.run_history_page
 
     def create_status_panel(self):
         """创建唯一的进度与日志面板，并暴露进度条与日志控件。
@@ -581,11 +568,6 @@ class MainWindow(QMainWindow):
     def _load_amplifier_driver_mapping(self):
         """显式选择主功放使用的驱动映射结果；与线损选择互不覆盖。"""
         load_amplifier_driver_mapping(self)
-
-    def refresh_history(self):
-        """测量结束后刷新历史运行列表：页面自己容忍读取失败。"""
-        page = getattr(self, "run_history_page", None)
-        return None if page is None else page.refresh()
 
     def clear_real_time_data(self):
         """清除实时测量的历史数据（两个实时测量页面都提供同名缓存入口）。"""

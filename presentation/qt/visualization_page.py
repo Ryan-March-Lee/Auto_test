@@ -244,7 +244,7 @@ class VisualizationPage(QWidget):
         layout.addWidget(self.data_plot_widget, 1)
 
     def on_activated(self):
-        """页面可见时重新校验报告可用性：报告可能在历史运行页重新生成。"""
+        """页面可见时重新校验报告可用性：报告可能在后台补生成或由外部工具更新。"""
         self._refresh_report_button()
 
     def _log(self, message: str):

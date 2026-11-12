@@ -167,7 +167,6 @@ class PageContext:
     clear_realtime_callback: Callable[[], Any]
     build_configuration: Callable[[], Any]
     build_visualization: Callable[[], Any]
-    build_run_history: Callable[[], Any]
 
 
 @dataclass(frozen=True)
@@ -254,9 +253,6 @@ PAGE_DEFINITIONS = (
     PageDefinition("driver_mapping", "驱动映射", _build_driver_mapping_page),
     PageDefinition("amplifier", "功放测试", _build_amplifier_page),
     PageDefinition("visualization", "数据可视化", lambda context: context.build_visualization()),
-    PageDefinition(
-        "run_history", "历史运行", lambda context: context.build_run_history()
-    ),
 )
 
 

@@ -15,6 +15,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from application.dto import (
+    AmplifierFrequencyResult,
+    AmplifierMeasurementResult,
+)
+from application.dto.run_history import ResultReportLocation, ResultReportState
+from application.ports.gui_data_service import LoadedResultDto
 from domain.run.models import RunStatus
 from infrastructure.filesystem.paths import PathService
 from infrastructure.persistence.run_repository import RunRepository
@@ -24,6 +30,40 @@ from tests.ui.test_gui_import import gui_dependencies_available
 
 
 _APPLICATION = None
+RUN_ID = "20261028T010203Z_abcdef12"
+RESULT_ID = f"run::{RUN_ID}::results/amplifier_measurement.json"
+REPORT_LOCATION = f"/runs/{RUN_ID}/artifacts/amplifier_report.html"
+
+
+class _StaticReportLocation:
+    """报告定位端口替身：按需返回固定状态，并记录被查询的结果标识。"""
+
+    def __init__(self, report):
+        self.report = report
+        self.result_ids = []
+
+    def report_for_result(self, result_id):
+        self.result_ids.append(result_id)
+        return self.report
+
+
+def _loaded_amplifier_result() -> LoadedResultDto:
+    return LoadedResultDto(
+        RESULT_ID,
+        "amplifier_measurement.json",
+        AmplifierMeasurementResult(
+            run_id=RUN_ID,
+            frequencies=(
+                AmplifierFrequencyResult(
+                    frequency_ghz="4.8",
+                    sweep_data={
+                        "input_power_dut": [-20.0],
+                        "output_power_dut": [-9.0],
+                    },
+                ),
+            ),
+        ),
+    )
 
 
 class _RecordingConnectionWorker:
@@ -582,6 +622,85 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         pages = [window.tab_widget.widget(index) for index in range(window.tab_widget.count())]
         self.assertNotIn(window.connection_page, pages)
         self.assertTrue(window.status_panel.isHidden())
+
+    def test_workspace_registers_exactly_the_five_remaining_pages(self):
+        """步骤 18：标签栏只剩五个注册页，历史运行页不再出现。"""
+        self._silence_dialogs()
+        window = self._window()
+
+        window._enter_test_mode(False)
+
+        definitions = (
+            ("test_configuration", "测试配置"),
+            ("cable_loss", "线损测量"),
+            ("driver_mapping", "驱动映射"),
+            ("amplifier", "功放测试"),
+            ("visualization", "数据可视化"),
+        )
+        self.assertEqual(window.tab_widget.count(), len(definitions))
+        self.assertEqual(
+            tuple(window.pages),
+            tuple(key for key, _ in definitions),
+            "注册表键与标签顺序一致",
+        )
+        for index, (key, title) in enumerate(definitions):
+            with self.subTest(page=key):
+                self.assertEqual(window.tab_widget.tabText(index), title)
+                self.assertIs(window.tab_widget.widget(index), window.pages[key])
+        titles = [
+            window.tab_widget.tabText(index)
+            for index in range(window.tab_widget.count())
+        ]
+        self.assertNotIn("历史运行", titles)
+        self.assertNotIn(
+            "run_history",
+            window.pages,
+            "历史运行页不再登记为工作区页面",
+        )
+        self.assertFalse(
+            hasattr(window, "run_history_page"),
+            "窗口不再持有历史运行页实例",
+        )
+        # 无驱放测试只隐藏驱动映射页，页面本身仍在注册表里。
+        driver_index = window.tab_widget.indexOf(window.driver_mapping_page)
+        self.assertFalse(window.tab_widget.isTabVisible(driver_index))
+        window._enter_test_mode(True)
+        self.assertTrue(window.tab_widget.isTabVisible(driver_index))
+        self.assertEqual(window.tab_widget.count(), len(definitions))
+
+    def test_visualization_activation_refreshes_report_availability(self):
+        """移除历史页后，切回数据可视化仍按最新报告状态刷新按钮。"""
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+        page = window.visualization_page
+        service = _StaticReportLocation(
+            ResultReportLocation(
+                RESULT_ID,
+                ResultReportState.MISSING,
+                reason="报告缺失",
+            )
+        )
+        page.run_history_service = service
+        page.chooser = _loaded_amplifier_result
+
+        self.assertTrue(page.load_test_data())
+        self.assertFalse(page.open_report_button.isEnabled())
+        self.assertEqual(service.result_ids, [RESULT_ID])
+
+        # 切离可视化页后报告在别处补生成；切回时激活钩子必须重新定位。
+        window.tab_widget.setCurrentWidget(window.cable_loss_page)
+        self.assertIs(window.tab_widget.currentWidget(), window.cable_loss_page)
+        service.report = ResultReportLocation(
+            RESULT_ID,
+            ResultReportState.AVAILABLE,
+            location=REPORT_LOCATION,
+        )
+        window.tab_widget.setCurrentWidget(page)
+
+        self.assertIs(window.tab_widget.currentWidget(), page)
+        self.assertTrue(page.open_report_button.isEnabled())
+        self.assertEqual(service.result_ids, [RESULT_ID, RESULT_ID])
 
     def test_previous_step_returns_to_the_connection_page(self):
         """测试配置页的“上一步”回到仪器连接配置页，“下一步”再回来。"""

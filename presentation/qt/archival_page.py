@@ -44,8 +44,8 @@ class ArchivalPageMixin:
     页面负责按钮、表格和接线确认；本类只负责归档状态与日志文案。页面必须在
     ``build_ui`` 之前调用 :meth:`_setup_archival`，并在左栏用
     :meth:`_build_archival_banner` 放一条失败提示条：归档结果仍写运行日志，提示条只
-    在“正式结果已保存、交付产物失败”时出现；补生成由历史运行页自动执行，这里不提供
-    第二个手动入口。
+    在“正式结果已保存、交付产物失败”时出现；补生成能力保留在应用层，但历史运行页面
+    已从界面移除，这里不提供第二个手动入口，也不承诺页面会自动补生成。
     """
 
     def _setup_archival(
@@ -82,8 +82,8 @@ class ArchivalPageMixin:
     def _build_archival_banner(self):
         """创建失败提示条；页面必须把它加入左栏布局（默认隐藏）。
 
-        提示条只展示归档失败事实，不调用应用层；交付产物补生成由历史运行页在激活时
-        自动执行，避免测量页与历史页各有一个重复入口。
+        提示条只展示归档失败事实，不调用应用层；补生成能力保留在应用层，但历史运行
+        页面已从界面移除，这里不再引用一个已不存在的页面入口。
         """
         from .archival_banner import ArchivalBanner
 
@@ -255,8 +255,8 @@ class ArchivalPageMixin:
         """把归档提示写进运行日志，并刷新失败提示条。
 
         保存位置仍只在日志里说明；提示条只在摘要声明“可补生成”时出现，成功后由
-        :meth:`_clear_archival_summary` 收起。提示条没有操作按钮，补生成由历史运行页
-        自动执行。
+        :meth:`_clear_archival_summary` 收起。提示条没有操作按钮；历史运行页面已从
+        界面移除，因此它只负责提示失败事实与运行 ID，不再暗示页面会自动补生成。
         """
         self._archival_summary = summary
         message = f"{summary.headline}：{summary.detail}"

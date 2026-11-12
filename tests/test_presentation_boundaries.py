@@ -142,7 +142,6 @@ PAGE_CONTEXT_FIELDS = (
     "clear_realtime_callback",
     "build_configuration",
     "build_visualization",
-    "build_run_history",
 )
 
 # 阶段五：运行流程入口的长期基线。

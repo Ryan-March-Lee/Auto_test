@@ -397,20 +397,20 @@ class ProductionDependencyTests(unittest.TestCase):
         self.assertNotIn("on_measurement_finished", source)
         self.assertIn("build_configuration=self.create_test_config_tab", source)
         self.assertIn("build_visualization=self.create_visualization_tab", source)
-        self.assertIn("build_run_history=self.create_run_history_tab", source)
         self.assertIn("self.tab_widget.addTab(page, definition.title)", source)
+        # 步骤 18：历史运行页已从标签栏移除，窗口不再构造它或为它准备上下文。
+        self.assertNotIn("build_run_history", source)
+        self.assertNotIn("create_run_history_tab", source)
+        self.assertNotIn("run_history_page", source)
 
-    def test_main_window_keeps_measurement_completion_refresh(self):
+    def test_main_window_has_no_history_page_refresh_wiring(self):
+        """步骤 18：测量完成信号不再刷新已移除的历史运行页。"""
         source = MAIN_WINDOW_SOURCE.read_text(encoding="utf-8-sig")
+        self.assertNotIn("refresh_history", source)
         self.assertIn(
-            "self.measurement_controller.signals.finished.connect(self.refresh_history)",
+            "self.measurement_controller.signals.thread_finished.connect(",
             source,
-            "MeasurementController finished 必须刷新历史运行与历史结果列表",
-        )
-        self.assertIn(
-            "else page.refresh()",
-            source,
-            "完成信号必须刷新页面两份列表，而不是只刷新结果表",
+            "线程结束的端口释放连接不能被历史页移除连带删掉",
         )
 
     def test_main_window_separates_instrument_worker_callbacks(self):

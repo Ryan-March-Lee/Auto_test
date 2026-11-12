@@ -40,6 +40,10 @@ PLACEHOLDER_VALUES = {"", "无", "待填写", "<channel_name>", "<gate_or_drain_
 INPUT_POWER_REFERENCE = "dut_input"
 SIGNAL_SOURCE_REFERENCE_FIELD = "power_reference"
 DRIVER_GAIN_FIELD = "estimated_gain_db"
+# 驱放最大输入功率（dBm）：有驱放链路中信号源输出设定值的硬上限。它是测试配置
+# 参数，不是 DUT 输入目标；无驱放链路不读取。缺失表示旧配置尚未配置，读取保持
+# 可打开，但保存/进入驱动测量前必须补齐。
+DRIVER_MAX_INPUT_POWER_FIELD = "max_input_power"
 # 功率扫描端点比较的相对容差。单段点位、合并点位与相邻计划连续性校验必须共用
 # 同一个规则：浮点表述误差（1e-12 量级）既不能造出“空档/重叠”，也不能让终点消失。
 POWER_SCAN_RELATIVE_TOLERANCE = 1e-12
@@ -194,6 +198,9 @@ class TestPlan:
     :data:`INPUT_POWER_REFERENCE`；缺少该标记的旧配置仍可读取，但校验只给出兼容
     提示，不按历史数值猜测或换算。``driver_gain_estimate_db`` 是驱动功放的全局预估
     增益（dB），用于驱动映射的起点推算；驱动关闭时允许为空。
+    ``driver_max_input_power`` 是驱放最大输入功率（dBm），有驱放链路的信号源输出
+    设定值不得超过它；旧配置缺失时保持 ``None``，读取不失败，但新的保存与驱动测量
+    前必须补齐。
     """
 
     schema_version: str = SUPPORTED_SCHEMA_VERSION
@@ -229,6 +236,9 @@ class TestPlan:
     driver_enabled: bool = False
     # 驱动功放全局预估增益（dB）。驱动关闭时允许为空；是否必填由运行前置校验决定。
     driver_gain_estimate_db: Optional[float] = None
+    # 驱放最大输入功率（dBm）。驱动开启时是信号源输出设定值的硬上限；旧配置缺失
+    # 保持 None，读取不因此失败，但新的保存/驱动测量前必须补齐。
+    driver_max_input_power: Optional[float] = None
     # 1.0 只读兼容：角色键 -> 参数。1.1 用 driver_channel_settings。
     driver_power_channels: Dict[str, PowerChannelPlan] = field(default_factory=dict)
     driver_channel_settings: List[Any] = field(default_factory=list)
@@ -280,6 +290,11 @@ class TestPlan:
             driver_enabled=driver.get("enabled", False) if isinstance(driver, Mapping) else False,
             driver_gain_estimate_db=(
                 driver.get(DRIVER_GAIN_FIELD) if isinstance(driver, Mapping) else None
+            ),
+            driver_max_input_power=(
+                driver.get(DRIVER_MAX_INPUT_POWER_FIELD)
+                if isinstance(driver, Mapping)
+                else None
             ),
             driver_power_channels=_channel_plans(
                 _first_mapping(driver, "power_roles", "power_channels") if isinstance(driver, Mapping) else {}
@@ -394,6 +409,9 @@ class TestPlan:
             }
             if self.driver_gain_estimate_db is not None:
                 driver_mode[DRIVER_GAIN_FIELD] = self.driver_gain_estimate_db
+            # 驱放最大输入是当前版本参数；只在确实配置后写出，旧配置不会凭空多一个值。
+            if self.driver_max_input_power is not None:
+                driver_mode[DRIVER_MAX_INPUT_POWER_FIELD] = self.driver_max_input_power
         if self.schema_version == SUPPORTED_SCHEMA_VERSION:
             signal_source: Dict[str, Any] = {
                 "power_scan_plans": [plan.to_dict() for plan in self.power_scan_plans],
@@ -726,6 +744,12 @@ def validate_test_plan(plan: Union[TestPlan, Mapping[str, Any]]) -> ConfigValida
         _number(
             plan.driver_gain_estimate_db,
             f"driver_mode.{DRIVER_GAIN_FIELD}",
+            error,
+        )
+    if plan.driver_max_input_power is not None:
+        _number(
+            plan.driver_max_input_power,
+            f"driver_mode.{DRIVER_MAX_INPUT_POWER_FIELD}",
             error,
         )
     _finite_list(plan.frequencies, "frequencies.values", error, positive=True)
@@ -1549,7 +1573,7 @@ def _settings_routes(
 def _validate_current_power_configuration(
     configuration: RunConfiguration,
 ) -> List[ConfigIssue]:
-    """v1.1 完整运行的电源/漏极规则（§6.12 规则 8–13）。"""
+    """当前版本完整运行的电源/漏极与驱放安全规则。"""
     errors: List[ConfigIssue] = []
 
     def error(path: str, message: str) -> None:

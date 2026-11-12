@@ -263,7 +263,11 @@ class ConfigurationTestParametersTests(unittest.TestCase):
                 "compression_point": {"type": "3dB"},
                 "attenuator": {"type": "40dB"},
                 "dut_config": {"max_input_power": 20},
-                "driver_mode": {"enabled": True, "estimated_gain_db": 20.5},
+                "driver_mode": {
+                    "enabled": True,
+                    "estimated_gain_db": 20.5,
+                    "max_input_power": 10.0,
+                },
             }
         )
 
@@ -276,6 +280,7 @@ class ConfigurationTestParametersTests(unittest.TestCase):
         self.assertEqual(parameters.max_dut_input_power, PowerDbm(20.0))
         self.assertTrue(parameters.driver_enabled)
         self.assertEqual(parameters.driver_gain_estimate, Decibels(20.5))
+        self.assertEqual(parameters.driver_max_input_power, PowerDbm(10.0))
 
     def test_from_document_keeps_invalid_values_missing(self):
         parameters, issues = ConfigurationTestParameters.from_document(
@@ -587,7 +592,11 @@ class ConfigurationViewModelValidationTests(unittest.TestCase):
 
     def test_driver_gain_estimate_survives_form_parameter_updates(self):
         document = _config()
-        document["driver_mode"] = {"enabled": True, "estimated_gain_db": 20.5}
+        document["driver_mode"] = {
+            "enabled": True,
+            "estimated_gain_db": 20.5,
+            "max_input_power": 10.0,
+        }
         view = _loaded(document)
 
         # 表单读数还没有专门的增益控件：更新测试参数不能顺手清掉已保存的增益。

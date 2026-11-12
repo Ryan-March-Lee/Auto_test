@@ -532,7 +532,7 @@ class DriverPowerMappingService(_Service):
     起点与推进规则（重构步骤 6）：
 
     - 每个频点从 ``最低目标输入 - 预估增益 - 10 dB`` 起步（源功率始终限制在
-      -50～20 dBm）；
+      -50 dBm 与“驱放最大输入功率/信号源硬件上限”的较小值之间）；
     - 依据当前实测输出与目标的误差调整源功率，接近目标时步长自然收缩；
     - 已形成目标两侧区间后改用区间二分，不再按固定步长扫完整范围；
     - 每个目标要求一次独立实测输出落在 ±0.2 dB 内，已命中读数不会再次分配给
@@ -559,6 +559,21 @@ class DriverPowerMappingService(_Service):
         self.attenuator_value = Decibels.parse(config["attenuator"]["type"])
         self.gain_estimate = Decibels(
             _config_number(config, "driver_gain_estimate_db", "驱动功放预估增益")
+        )
+        # 驱放最大输入是信号源输出设定值的硬上限：搜索起点、推进候选与初始占位
+        # 功率都必须落在它以下。配置值高于信号源硬件上限时取硬件上限；低于最小
+        # 可设功率时没有任何合法源功率，构造阶段直接失败。
+        self.driver_max_input_power = PowerDbm(
+            _config_number(config, "driver_max_input_power", "驱放最大输入功率")
+        )
+        if self.driver_max_input_power.dbm < DRIVER_MAPPING_SOURCE_MIN_DBM:
+            raise ValueError(
+                "驱放最大输入功率不能低于信号源最小可设功率："
+                f"{self.driver_max_input_power.dbm:g} dBm < "
+                f"{DRIVER_MAPPING_SOURCE_MIN_DBM:g} dBm"
+            )
+        self.source_power_max_dbm = min(
+            DRIVER_MAPPING_SOURCE_MAX_DBM, self.driver_max_input_power.dbm
         )
         # 目标网格与主功放正式测试共用同一个纯计算入口（步骤 1）：扫描结束与 DUT
         # 最大输入取较小值，非整步上限补入最后一点。
@@ -657,7 +672,8 @@ class DriverPowerMappingService(_Service):
         """
         probes: list[_DriverMappingProbe] = []
         target_rows: list[dict[str, float]] = []
-        self.inst_ctrl.set_power(-40)
+        # 初始占位功率同样不能越过驱放上限；RF 尚未打开，但保持所有下发值一致。
+        self.inst_ctrl.set_power(min(-40.0, self.source_power_max_dbm))
         self.inst_ctrl.set_frequency(frequency.ghz)
         self.inst_ctrl.set_center_frequency(frequency.ghz)
         self.inst_ctrl.set_span(10)
@@ -722,7 +738,7 @@ class DriverPowerMappingService(_Service):
         )
         return min(
             max(value, DRIVER_MAPPING_SOURCE_MIN_DBM),
-            DRIVER_MAPPING_SOURCE_MAX_DBM,
+            self.source_power_max_dbm,
         )
 
     def _measure_probe(
@@ -863,7 +879,7 @@ class DriverPowerMappingService(_Service):
         for candidate in candidates:
             bounded = min(
                 max(candidate, DRIVER_MAPPING_SOURCE_MIN_DBM),
-                DRIVER_MAPPING_SOURCE_MAX_DBM,
+                self.source_power_max_dbm,
             )
             if not self._is_measured(probes, bounded):
                 return bounded
@@ -871,9 +887,8 @@ class DriverPowerMappingService(_Service):
             self._no_progress_reason(frequency, target_dbm, candidates)
         )
 
-    @staticmethod
     def _no_progress_reason(
-        frequency: Frequency, target_dbm: float, candidates: list[float]
+        self, frequency: Frequency, target_dbm: float, candidates: list[float]
     ) -> str:
         """区分“源功率到界”和一般无进展，两种失败都必须可诊断。"""
         boundary: str | None = None
@@ -884,9 +899,11 @@ class DriverPowerMappingService(_Service):
                 boundary = f"下界 {DRIVER_MAPPING_SOURCE_MIN_DBM:g} dBm"
                 break
             if candidate >= (
-                DRIVER_MAPPING_SOURCE_MAX_DBM - _DRIVER_MAPPING_SOURCE_EPSILON_DB
+                self.source_power_max_dbm - _DRIVER_MAPPING_SOURCE_EPSILON_DB
             ):
-                boundary = f"上界 {DRIVER_MAPPING_SOURCE_MAX_DBM:g} dBm"
+                boundary = f"上界 {self.source_power_max_dbm:g} dBm"
+                if self.source_power_max_dbm < DRIVER_MAPPING_SOURCE_MAX_DBM:
+                    boundary += "（受驱放最大输入功率限制）"
                 break
         if boundary is not None:
             return (
@@ -896,7 +913,7 @@ class DriverPowerMappingService(_Service):
             )
         return (
             f"驱动映射 {frequency.key} GHz 无法在源功率 "
-            f"[{DRIVER_MAPPING_SOURCE_MIN_DBM}, {DRIVER_MAPPING_SOURCE_MAX_DBM}] dBm "
+            f"[{DRIVER_MAPPING_SOURCE_MIN_DBM}, {self.source_power_max_dbm}] dBm "
             f"内为 {target_dbm} dBm 目标找到新的可测点（无有效进展）"
         )
 
@@ -1086,7 +1103,15 @@ class AmplifierMeasurementService(_Service):
         # 先解析/预检整组点，再执行任何仪器动作：目标表缺频点、线损缺失或源功率
         # 越界都必须在 set_power/set_frequency/rf_output_on 之前暴露。
         scan_points = self._plan_scan_points(frequency_value)
-        self.inst_ctrl.set_power(-40)
+        # 驱动链路的初始化设定也受驱放输入上限约束；无驱动模式保持原来的 -40 dBm。
+        initial_source_power = -40.0
+        if self.inputs.driver_enabled:
+            limit = self.inputs.driver_max_input_power
+            # DTO 已保证驱动模式必填，保留防御式检查，避免未来绕开 DTO 时无界下发。
+            if limit is None:
+                raise AmplifierInputError("驱动模式缺少驱放最大输入功率")
+            initial_source_power = min(initial_source_power, limit.dbm)
+        self.inst_ctrl.set_power(initial_source_power)
         self.inst_ctrl.set_frequency(frequency)
         self.inst_ctrl.set_center_frequency(frequency)
         self.inst_ctrl.set_span(10)

@@ -71,6 +71,8 @@ DEFAULT_ATTENUATOR_TYPE = "40dB"
 DEFAULT_DRIVER_MODE_ENABLED = True
 # 驱动功放预估增益的空配置基线：空文本表示“尚未填写”，不是 0 dB。
 DEFAULT_DRIVER_GAIN_ESTIMATE = ""
+# 驱放最大输入功率的空配置基线：空文本表示“尚未填写”，不猜一个 0 dBm。
+DEFAULT_DRIVER_MAX_INPUT_POWER = ""
 DEFAULT_MAX_INPUT_POWER = 33.5
 # 电源通道的空配置基线：重置时把工作值/保护值填成它，卡片输入框也把非法或缺失的字段
 # 显示成它（见 :func:`presentation.qt.power_card.PowerSupplyCard.set_data`），因此“没写
@@ -98,6 +100,14 @@ def number_or_none(value: Any) -> float | None:
     return float(value)
 
 
+def _numeric_text(value: Any, default: str) -> str:
+    """把配置里的有限数值渲染成控件文本；缺失/非法回到给定空基线。"""
+    number = number_or_none(value)
+    if number is None or not math.isfinite(number):
+        return default
+    return repr(number)
+
+
 def driver_gain_text(value: Any) -> str:
     """把配置里的驱动功放预估增益渲染成控件文本。
 
@@ -106,10 +116,12 @@ def driver_gain_text(value: Any) -> str:
     控件文本怎么解析回数字由 :func:`presentation.qt.config_form_state.driver_gain_value`
     负责，两处不各写一套格式。
     """
-    gain = number_or_none(value)
-    if gain is None or not math.isfinite(gain):
-        return DEFAULT_DRIVER_GAIN_ESTIMATE
-    return repr(gain)
+    return _numeric_text(value, DEFAULT_DRIVER_GAIN_ESTIMATE)
+
+
+def driver_max_input_power_text(value: Any) -> str:
+    """把配置里的驱放最大输入功率渲染成控件文本；缺失表示尚未填写。"""
+    return _numeric_text(value, DEFAULT_DRIVER_MAX_INPUT_POWER)
 
 
 def set_combo(combo, value) -> None:
@@ -265,6 +277,7 @@ def reset_control_widgets(widgets: Any) -> None:
     set_combo(widgets.attenuator_combo, DEFAULT_ATTENUATOR_TYPE)
     widgets.test_mode_enabled = DEFAULT_DRIVER_MODE_ENABLED
     widgets.driver_gain.setText(DEFAULT_DRIVER_GAIN_ESTIMATE)
+    widgets.driver_max_input_power.setText(DEFAULT_DRIVER_MAX_INPUT_POWER)
     widgets.max_input_power.setValue(DEFAULT_MAX_INPUT_POWER)
     # 计划重置放在上限之后：页面重建行时会按 DUT 上限刷新预览，先用新上限才能得到
     # 与回填后一致的灰色点位文本。
@@ -372,6 +385,10 @@ def _apply_test_parameter_widgets(widgets: Any, config: Mapping[str, Any]) -> No
     widgets.test_mode_enabled = bool_or_default(mode.get("enabled"), DEFAULT_DRIVER_MODE_ENABLED)
     # 预估增益缺失或类型不对时回到空基线（“尚未填写”），不替用户猜一个 0 dB。
     widgets.driver_gain.setText(driver_gain_text(mode.get("estimated_gain_db")))
+    # 驱放最大输入同理：缺失表示尚未填写，不补默认功率。
+    widgets.driver_max_input_power.setText(
+        driver_max_input_power_text(mode.get("max_input_power"))
+    )
     dut = config.get("dut_config")
     dut = dut if isinstance(dut, dict) else {}
     value = number_or_none(dut.get("max_input_power"))
@@ -424,6 +441,7 @@ __all__ = [
     "DEFAULT_ATTENUATOR_TYPE",
     "DEFAULT_COMPRESSION_TYPE",
     "DEFAULT_DRIVER_GAIN_ESTIMATE",
+    "DEFAULT_DRIVER_MAX_INPUT_POWER",
     "DEFAULT_DRIVER_MODE_ENABLED",
     "DEFAULT_FREQUENCY_EXTRA_TEXT",
     "DEFAULT_FREQUENCY_START",
@@ -437,6 +455,7 @@ __all__ = [
     "apply_frequency_fields",
     "bool_or_default",
     "driver_gain_text",
+    "driver_max_input_power_text",
     "number_or_none",
     "project_authoring_config",
     "project_power_config",

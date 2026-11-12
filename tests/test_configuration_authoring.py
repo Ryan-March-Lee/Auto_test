@@ -276,7 +276,7 @@ class ConfigurationAuthoringTests(unittest.TestCase):
     def test_externally_powered_driver_mode_keeps_the_driver_mapping(self):
         """驱放自带供电：驱动计划为空，不占本机电源通道，但驱动映射照常生成并执行。"""
         flat = _flat_config()
-        flat["driver_mode"] = {"enabled": True}
+        flat["driver_mode"] = {"enabled": True, "max_input_power": 20.0}
         flat["power_supply_assignment"]["driver_amplifier"] = {
             "power_supply_count": 0,
             "supplies": {},
@@ -297,7 +297,11 @@ class ConfigurationAuthoringTests(unittest.TestCase):
     def test_driver_mode_does_not_write_a_power_source(self):
         """旧 1.1 文档残留的 ``power_source`` 读取时忽略，写出时删除。"""
         flat = _flat_config()
-        flat["driver_mode"] = {"enabled": True, "power_source": "dc_supply"}
+        flat["driver_mode"] = {
+            "enabled": True,
+            "power_source": "dc_supply",
+            "max_input_power": 20.0,
+        }
         flat["power_supply_assignment"]["driver_amplifier"] = {
             "power_supply_count": 1,
             "supplies": {
@@ -339,10 +343,17 @@ class ConfigurationAuthoringTests(unittest.TestCase):
         self.assertIn(
             "estimated_gain_db", document["test_plan"]["driver_mode"]
         )
+        self.assertIn("max_input_power", document["driver_mode"])
+        self.assertIsNone(document["driver_mode"]["max_input_power"])
+        self.assertIn("max_input_power", document["test_plan"]["driver_mode"])
 
     def test_driver_gain_estimate_is_frozen_into_the_test_plan(self):
         flat = _flat_config()
-        flat["driver_mode"] = {"enabled": True, "estimated_gain_db": 20.5}
+        flat["driver_mode"] = {
+            "enabled": True,
+            "estimated_gain_db": 20.5,
+            "max_input_power": 10.0,
+        }
 
         document = author_official_configuration(flat)
 
@@ -350,7 +361,28 @@ class ConfigurationAuthoringTests(unittest.TestCase):
             document["test_plan"]["driver_mode"]["estimated_gain_db"], 20.5
         )
         self.assertEqual(document["driver_mode"]["estimated_gain_db"], 20.5)
+        self.assertEqual(
+            document["test_plan"]["driver_mode"]["max_input_power"], 10.0
+        )
+        self.assertEqual(document["driver_mode"]["max_input_power"], 10.0)
         self.assertTrue(validate_run_configuration(self._configuration(document)).valid)
+
+    def test_driver_max_input_power_is_required_by_the_save_boundary(self):
+        flat = _flat_config()
+        flat["driver_mode"] = {"enabled": True, "estimated_gain_db": 20.5}
+
+        result = ConfigurationAuthoringService().validate_document(
+            ConfigurationEditingDocument.from_mapping(flat)
+        )
+
+        self.assertFalse(result.valid)
+        self.assertIn(
+            "test_plan.driver_mode.max_input_power",
+            {issue.path for issue in result.errors},
+        )
+        self.assertTrue(
+            any("驱放最大输入功率" in issue.message for issue in result.errors)
+        )
 
     def test_old_formal_sections_without_the_new_fields_are_not_stale(self):
         document = author_official_configuration(_flat_config())
@@ -361,6 +393,7 @@ class ConfigurationAuthoringTests(unittest.TestCase):
         ):
             section.get("signal_source", {}).pop("power_reference", None)
             section.get("driver_mode", {}).pop("estimated_gain_db", None)
+            section.get("driver_mode", {}).pop("max_input_power", None)
 
         stale = ConfigurationAuthoringService().stale_formal_sections(
             ConfigurationEditingDocument.from_mapping(document)
@@ -443,7 +476,7 @@ class ConfigurationAuthoringTests(unittest.TestCase):
     def test_one_supply_may_power_driver_and_dut_on_different_channels(self):
         """同一台电源 CH1→驱放、CH2→DUT：计划路由唯一来源，不再需要固定分配。"""
         flat = _flat_config()
-        flat["driver_mode"] = {"enabled": True}
+        flat["driver_mode"] = {"enabled": True, "max_input_power": 20.0}
         flat["power_supply_assignment"]["driver_amplifier"]["power_plan"] = {
             "power_sequence": [{"supply_id": "DP8B1519", "channel": "CH1"}],
             "inter_channel_delay_s": 0.0,
@@ -494,7 +527,7 @@ class ConfigurationAuthoringTests(unittest.TestCase):
     def test_two_supplies_assigned_to_two_groups_are_both_registered(self):
         """步骤 10：多电源指派不再被拒绝，DUT 与驱动功放各登记一台独立电源。"""
         flat = _flat_config()
-        flat["driver_mode"] = {"enabled": True}
+        flat["driver_mode"] = {"enabled": True, "max_input_power": 20.0}
         flat["instruments"]["power_supplies"]["DP8B0885"] = _second_supply()
         flat["power_supply_assignment"]["driver_amplifier"] = {
             "power_supply_count": 1,

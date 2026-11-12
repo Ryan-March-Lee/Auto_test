@@ -536,7 +536,11 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
         self.assertEqual(document["attenuator"], {"type": "40dB"})
         self.assertEqual(
             document["driver_mode"],
-            {"enabled": True, "estimated_gain_db": None},
+            {
+                "enabled": True,
+                "estimated_gain_db": None,
+                "max_input_power": None,
+            },
         )
         self.assertEqual(
             document["dut_config"],
@@ -927,15 +931,18 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
         document = _document()
         document["signal_source"]["power_reference"] = "dut_input"
         document["driver_mode"]["estimated_gain_db"] = 20.5
+        document["driver_mode"]["max_input_power"] = 10.0
 
         result = ConfigurationDraft.from_document(document)
 
         self.assertTrue(result.valid, result.messages())
         self.assertEqual(result.draft.power_reference, "dut_input")
         self.assertEqual(result.draft.driver_gain_estimate, Decibels(20.5))
+        self.assertEqual(result.draft.driver_max_input_power, PowerDbm(10.0))
         written = result.draft.to_document()
         self.assertEqual(written["signal_source"]["power_reference"], "dut_input")
         self.assertEqual(written["driver_mode"]["estimated_gain_db"], 20.5)
+        self.assertEqual(written["driver_mode"]["max_input_power"], 10.0)
 
     def test_unknown_power_reference_is_reported_and_not_reinterpreted(self):
         document = _document()
@@ -964,6 +971,20 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
                     {issue.path for issue in result.errors},
                 )
                 self.assertIsNone(result.draft.driver_gain_estimate)
+
+    def test_invalid_driver_max_input_power_is_reported_and_dropped(self):
+        for value in ("10dBm", float("nan"), True):
+            with self.subTest(value=value):
+                document = _document()
+                document["driver_mode"]["max_input_power"] = value
+                result = ConfigurationDraft.from_document(document)
+
+                self.assertFalse(result.valid, value)
+                self.assertIn(
+                    "driver_mode.max_input_power",
+                    {issue.path for issue in result.issues},
+                )
+                self.assertIsNone(result.draft.driver_max_input_power)
 
     def test_caller_can_supply_already_normalized_bindings(self):
         bindings = {

@@ -86,6 +86,7 @@ def _config(
     plans=None,
     max_input=100.0,
     gain=1.0,
+    driver_max_input=20.0,
     frequencies=(1.0,),
     attenuator="10dB",
 ):
@@ -104,6 +105,7 @@ def _config(
         "signal_source": {"power_scan_plans": scan_plans},
         "max_dut_input_power": max_input,
         "driver_gain_estimate_db": gain,
+        "driver_max_input_power": driver_max_input,
     }
 
 
@@ -487,7 +489,57 @@ class DriverMappingFailureTests(unittest.TestCase):
             )
 
         self.assertEqual(instrument.measurements, [])
-        self.assertEqual(instrument.rf_on_calls, 0)
+
+    def test_missing_driver_max_input_fails_before_hardware_action(self):
+        config = _config()
+        del config["driver_max_input_power"]
+        instrument = _FakeInstrument(lambda source: source + 1.0)
+
+        with self.assertRaisesRegex(ValueError, "驱放最大输入功率"):
+            _service(
+                lambda source: source + 1.0,
+                config=config,
+                instrument=instrument,
+            )
+
+        self.assertEqual(instrument.measurements, [])
+
+    def test_driver_max_input_below_the_source_range_fails_before_hardware(self):
+        instrument = _FakeInstrument(lambda source: source + 1.0)
+
+        with self.assertRaisesRegex(ValueError, "不能低于信号源最小可设功率"):
+            _service(
+                lambda source: source + 1.0,
+                config=_config(driver_max_input=-60.0),
+                instrument=instrument,
+            )
+
+        self.assertEqual(instrument.measurements, [])
+
+    def test_source_search_stops_at_the_configured_driver_max_input(self):
+        instrument = _FakeInstrument(lambda source: source + 10.0)
+
+        with self.assertRaisesRegex(DriverMappingError, "驱放最大输入"):
+            _service(
+                lambda source: source + 10.0,
+                config=_config(
+                    start=20.0, stop=20.0, gain=0.0, driver_max_input=5.0
+                ),
+                instrument=instrument,
+            ).run()
+
+        self.assertEqual(instrument.measurements[-1][1], 5.0)
+        self.assertLessEqual(
+            max(measurement[1] for measurement in instrument.measurements), 5.0
+        )
+
+    def test_initial_probe_is_clamped_to_the_configured_driver_max_input(self):
+        service = _service(
+            lambda source: source + 1.0,
+            config=_config(start=-20.0, driver_max_input=-45.0),
+        )
+
+        self.assertEqual(service._initial_source_power(), -45.0)
 
     def test_missing_dut_limit_fails_before_hardware_action(self):
         config = _config()

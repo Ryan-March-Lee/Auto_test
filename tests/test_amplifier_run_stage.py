@@ -92,7 +92,11 @@ def _fully_valid_gui_config(*, driver_enabled=False) -> dict:
         "test_frequencies": [1.0],
         "signal_source": {"start_power": -20.0, "stop_power": -20.0, "step": 1.0},
         "compression_point": {"type": "1dB"},
-        "driver_mode": {"enabled": driver_enabled},
+        "driver_mode": (
+            {"enabled": True, "max_input_power": 20.0}
+            if driver_enabled
+            else {"enabled": False}
+        ),
         "attenuator": {"type": "30dB"},
         "dut_config": {
             "max_input_power": 30.0,
@@ -151,7 +155,11 @@ def _amplifier_config(*, driver_enabled=False) -> dict:
         "attenuator": {"type": "10dB"},
         "signal_source": {"start_power": -20, "stop_power": -20, "step": 1},
         "compression_point": {"type": "1dB"},
-        "driver_mode": {"enabled": driver_enabled},
+        "driver_mode": (
+            {"enabled": True, "max_input_power": 20.0}
+            if driver_enabled
+            else {"enabled": False}
+        ),
         "power_supply_assignment": {
             "dut_amplifier": {"supplies": {"PS1": {"name": "PS1", "channel": ["CH2"]}}}
         },
@@ -519,6 +527,30 @@ class AmplifierRunStageTests(unittest.TestCase):
         self.assertEqual(manifest.stage(STAGE_DRIVER_MAPPING).status, StageStatus.COMPLETED)
         self.assertEqual(manifest.stage(STAGE_AMPLIFIER).status, StageStatus.COMPLETED)
         self.assertEqual(manifest.status, RunStatus.COMPLETED)
+
+    def test_driver_mode_initial_source_setting_respects_max_input_power(self):
+        self._create_run()
+        self._complete_cable_loss()
+        self._complete_driver_mapping(mapping={"1.0": {"-49.0": -20.0}})
+        instrument = _Instrument()
+        inputs = amplifier_inputs(
+            driver_enabled=True,
+            driver_max_input_power_dbm=-45.0,
+        )
+
+        use_case = AmplifierMeasurementUseCase(
+            self._request(
+                instrument=instrument,
+                driver_enabled=True,
+                inputs=inputs,
+            ),
+            sleep_fn=lambda _: None,
+        )
+
+        # 初始化设定与正式映射点都不能超过新上限。
+        use_case.measure_all_frequencies()
+        self.assertEqual(instrument.powers[0], -45.0)
+        self.assertLessEqual(max(instrument.powers), -45.0)
 
     def test_driver_mode_rejects_mapping_with_wrong_target_power_before_hardware(self):
         """步骤 4.4：目标表功率与配置生成的 DUT 目标点不同时不得开始扫描。"""

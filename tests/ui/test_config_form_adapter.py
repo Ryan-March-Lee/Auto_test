@@ -158,6 +158,7 @@ def _page(
             _ScanRow(start, step, stop) for start, step, stop in power_scan_plans
         ]
     page.driver_gain = _Text("")
+    page.driver_max_input_power = _Text("")
     page.max_input_power = _Value(30.0)
     page.compression_combo = _Combo(("1dB", "3dB", "5dB"))
     page.attenuator_combo = _Combo(("30dB", "40dB"))

@@ -218,6 +218,7 @@ def amplifier_inputs(
     attenuator_db: float = 10.0,
     max_input_power_dbm: float = 100.0,
     driver_enabled: bool = False,
+    driver_max_input_power_dbm: float | None = 20.0,
     supplies: tuple[tuple[str, str], ...] = (("PS1", "CH2"),),
     drain: tuple[str, str] | None = None,
     voltage_v: float = 28.0,
@@ -282,6 +283,11 @@ def amplifier_inputs(
         attenuator=Decibels(attenuator_db),
         max_dut_input_power=PowerDbm(max_input_power_dbm),
         driver_enabled=driver_enabled,
+        driver_max_input_power=(
+            PowerDbm(driver_max_input_power_dbm)
+            if driver_max_input_power_dbm is not None
+            else None
+        ),
         dut_power_plan=PowerPlan(power_sequence=routes),
         channel_settings=settings,
         drain_channel=DrainChannel(

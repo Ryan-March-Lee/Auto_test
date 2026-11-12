@@ -88,7 +88,11 @@ def _fully_valid_gui_config(*, power_scan_plans=None) -> dict:
         "test_frequencies": [2.4],
         "signal_source": signal_source,
         "compression_point": {"type": "5dB"},
-        "driver_mode": {"enabled": True, "estimated_gain_db": 1.0},
+        "driver_mode": {
+            "enabled": True,
+            "estimated_gain_db": 1.0,
+            "max_input_power": 20.0,
+        },
         "attenuator": {"type": "30dB"},
         "dut_config": {
             "max_input_power": 30.0,
@@ -304,6 +308,7 @@ class DriverMappingRunStageTests(unittest.TestCase):
                 },
                 "max_dut_input_power": 100.0,
                 "driver_gain_estimate_db": 1.0,
+                "driver_max_input_power": 20.0,
             },
             context=_Context(run_id),
             run_directory=layout.run_directory,
@@ -1076,7 +1081,11 @@ class DriverMappingRunStageTests(unittest.TestCase):
                 "compression_point": {"type": "1dB"},
                 "attenuator": {"value": 10.0, "unit": "dB"},
                 "dut": {"max_input_power": 30.0},
-                "driver_mode": {"enabled": True, "estimated_gain_db": 1.0},
+                "driver_mode": {
+                    "enabled": True,
+                    "estimated_gain_db": 1.0,
+                    "max_input_power": 20.0,
+                },
             }
         )
 
@@ -1094,6 +1103,7 @@ class DriverMappingRunStageTests(unittest.TestCase):
         self.assertNotIn("step", config["signal_source"])
         self.assertEqual(config["max_dut_input_power"], 30.0)
         self.assertEqual(config["driver_gain_estimate_db"], 1.0)
+        self.assertEqual(config["driver_max_input_power"], 20.0)
 
     def test_composition_checks_input_before_connecting_instruments(self):
         layout = self._create_run()

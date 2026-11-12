@@ -18,7 +18,7 @@ from application.measurements.driver_target_grid import (
     _duplicate_power,
     require_driver_target_grid,
 )
-from domain.measurement.values import Frequency
+from domain.measurement.values import Frequency, PowerDbm
 from tests.contract_doubles import amplifier_inputs
 
 
@@ -139,6 +139,15 @@ class DriverTargetGridTests(unittest.TestCase):
         mapping = _mapping({"1.0": [-10.0, -9.0, -8.0]})
 
         with self.assertRaisesRegex(AmplifierInputError, "缺少测试频率"):
+            require_driver_target_grid(inputs, mapping)
+
+    def test_target_source_power_above_driver_max_input_is_rejected(self):
+        inputs = replace(
+            _inputs(1.0), driver_max_input_power=PowerDbm(-25.0)
+        )
+        mapping = _mapping({"1.0": [-10.0, -9.0, -8.0]})
+
+        with self.assertRaisesRegex(AmplifierInputError, "驱放最大输入功率"):
             require_driver_target_grid(inputs, mapping)
 
     def test_duplicate_target_powers_are_detected(self):

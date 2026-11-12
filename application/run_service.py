@@ -294,6 +294,15 @@ def create_run_snapshot(
         raise ValueError(
             "完整运行配置校验失败，不能创建运行快照: " + semantics_issue
         )
+    # 旧配置允许加载与文件级检查，但有驱放的新运行必须显式冻结源功率硬上限。
+    # 该兼容门禁放在创建运行边界，而不是通用 schema 校验中，避免历史配置失去可读性。
+    plan = loaded.configuration.test_plan
+    if plan.driver_enabled and plan.driver_max_input_power is None:
+        raise ValueError(
+            "完整运行配置校验失败，不能创建运行快照: "
+            "test_plan.driver_mode.max_input_power：驱动模式启用时必须配置"
+            "驱放最大输入功率，以限制信号源输出设定值"
+        )
     created_at = utc_now_iso(now)
     payload = configuration_snapshot(
         loaded.configuration,

@@ -52,13 +52,8 @@ def _dict_copy(value: Any) -> dict:
     return copy.deepcopy(value) if isinstance(value, dict) else {}
 
 
-def driver_gain_value(text: Any) -> float | str | None:
-    """把“驱动功放预估增益”控件的文本转成编辑文档里的值。
-
-    空文本表示尚未填写（``None``），不折叠成 0；能解析成数字时写数字，否则把原文
-    交给配置 DTO 校验并报出“必须是有限数值”。页面不判断范围或有限性，也不承担任何
-    增益推算——控件只负责把用户输入原样交给正式校验。
-    """
+def _numeric_text_value(text: Any) -> float | str | None:
+    """把数值控件文本转成编辑文档里的值；空文本表示尚未填写。"""
     if not isinstance(text, str):
         text = "" if text is None else str(text)
     text = text.strip()
@@ -68,6 +63,24 @@ def driver_gain_value(text: Any) -> float | str | None:
         return float(text)
     except ValueError:
         return text
+
+
+def driver_gain_value(text: Any) -> float | str | None:
+    """把“驱动功放预估增益”控件的文本转成编辑文档里的值。
+
+    空文本表示尚未填写（``None``），不折叠成 0；能解析成数字时写数字，否则把原文
+    交给配置 DTO 校验并报出“必须是有限数值”。页面不判断范围或有限性，也不承担任何
+    增益推算——控件只负责把用户输入原样交给正式校验。
+    """
+    return _numeric_text_value(text)
+
+
+def driver_max_input_power_value(text: Any) -> float | str | None:
+    """把“驱放最大输入功率”控件文本转成编辑文档里的值。
+
+    空文本与预估增益一样表示尚未填写，不折叠成 0；非法文本原样交给配置 DTO 报错。
+    """
+    return _numeric_text_value(text)
 
 
 def _formal_validation_errors(
@@ -352,19 +365,29 @@ class ConfigFormState:
     def _read_driver_mode(self, w: Any) -> dict:
         """读取驱放测试模式；供电方式由驱动功放上电计划是否有路由表达。
 
-        ``estimated_gain_db`` 是测试配置里的全局驱动增益预估，读自页面的
-        ``driver_gain`` 控件：空文本写 ``None``（尚未填写），非法文本原样交给配置
-        DTO 报错。控件不存在时（旧替身或尚未接入的表单）保留基线值，不擅自改写；
-        驱动关闭时增益不是运行必填项，页面仍保留用户已填写的内容。
+        ``estimated_gain_db`` 与 ``max_input_power`` 分别读自页面的 ``driver_gain``
+        与 ``driver_max_input_power`` 控件：空文本写 ``None``（尚未填写），非法文本
+        原样交给配置 DTO 报错。控件不存在时（旧替身或尚未接入的表单）保留基线值，
+        不擅自改写；驱动关闭时它们不是运行必填项，页面仍保留用户已填写的内容。
         """
         mode: dict = {"enabled": bool(getattr(w, "test_mode_enabled", False))}
+        existing = _dict_copy(self.config.get("driver_mode"))
+        # 两个驱放参数控件各自独立读取：旧替身可能只有其中一个，缺失的控件保留
+        # 基线值，不能因为页面上没有该控件就顺手删掉正式配置里的字段。
         gain_widget = getattr(w, "driver_gain", None)
         if gain_widget is None:
-            existing = _dict_copy(self.config.get("driver_mode"))
             if "estimated_gain_db" in existing:
                 mode["estimated_gain_db"] = existing.get("estimated_gain_db")
-            return mode
-        mode["estimated_gain_db"] = driver_gain_value(self._text(gain_widget))
+        else:
+            mode["estimated_gain_db"] = driver_gain_value(self._text(gain_widget))
+        max_power_widget = getattr(w, "driver_max_input_power", None)
+        if max_power_widget is None:
+            if "max_input_power" in existing:
+                mode["max_input_power"] = existing.get("max_input_power")
+        else:
+            mode["max_input_power"] = driver_max_input_power_value(
+                self._text(max_power_widget)
+            )
         return mode
 
     def read_power_supply_config(self) -> dict:

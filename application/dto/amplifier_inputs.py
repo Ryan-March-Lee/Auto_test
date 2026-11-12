@@ -55,6 +55,7 @@
 | `max_dut_input_power` | `PowerDbm`（dBm） | 测试方案的 DUT 输入功率限制 | 是 | 非值对象 → `AmplifierInputError`（不再默认“不限制”） |
 | `driver_enabled` | `bool` | 测试方案的驱动模式开关 | 是 | 非布尔值（含 `1`/`"yes"`）→ `AmplifierInputError` |
 | `driver_gain_estimate` | `Decibels | None`（dB） | 测试方案的驱动功放全局预估增益 | 否 | 非 `Decibels` 值 → `AmplifierInputError` |
+| `driver_max_input_power` | `PowerDbm | None`（dBm） | 测试方案的驱放最大输入功率 | 驱动开启时必填 | 非 `PowerDbm` 值、驱动开启却缺失 → `AmplifierInputError` |
 | `dut_power_plan` | `PowerPlan` | 运行映射里冻结的 DUT 上电顺序与组间隔 | 是，非空 | 空序列、重复路由、非法路由、越界间隔 → `AmplifierInputError` |
 | `channel_settings` | `Mapping[SupplyChannel, ChannelSetting]` | 测试方案里每条 DUT 路由的工作值/保护值 | 是，且与序列集合完全相等 | 缺设置、多设置、非路由键、缺工作值 → `AmplifierInputError` |
 | `drain_channel` | `DrainChannel` | 测试方案的漏极测量路由集合（可选，可多条） | 可选，但主功放测量服务构造时要求至少一条 | 已配置但不在上电序列里、重复路由 → `AmplifierInputError` |
@@ -960,6 +961,8 @@ class AmplifierMeasurementInputs:
     :func:`target_input_power_grid` 生成 :attr:`target_input_powers`，最终目标点在
     打开设备前就已确定：空档、重叠、DUT 上限越界与首点高于上限都在这里失败。
     ``driver_gain_estimate`` 是驱动功放的全局预估增益（dB），驱动关闭时允许为空。
+    ``driver_max_input_power`` 是驱放最大输入功率（dBm），驱动开启时必填；主功放
+    驱动模式复用的映射目标表中，信号源设定值不得超过它。
 
     DUT 供电由三项组成，职责互不重叠：
 
@@ -985,6 +988,9 @@ class AmplifierMeasurementInputs:
     drain_channel: DrainChannel
     # 驱动功放全局预估增益（dB）；驱动关闭时可以为空。是否必填由运行前置校验决定。
     driver_gain_estimate: Decibels | None = None
+    # 驱放最大输入功率（dBm）：驱动模式下信号源输出设定值的硬上限。驱动关闭时
+    # 可以为空；驱动开启时缺失会在构造阶段失败，不能把“未配置”当成“不限制”。
+    driver_max_input_power: PowerDbm | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "frequencies", self._frequencies(self.frequencies))
@@ -1018,6 +1024,19 @@ class AmplifierMeasurementInputs:
         if self.driver_gain_estimate is not None:
             _require_value(
                 self.driver_gain_estimate, Decibels, "驱动功放预估增益"
+            )
+        if self.driver_enabled:
+            if self.driver_max_input_power is None:
+                raise AmplifierInputError(
+                    "驱动模式启用时必须配置驱放最大输入功率："
+                    "信号源输出设定值需要受它限制"
+                )
+            _require_value(
+                self.driver_max_input_power, PowerDbm, "驱放最大输入功率"
+            )
+        elif self.driver_max_input_power is not None:
+            _require_value(
+                self.driver_max_input_power, PowerDbm, "驱放最大输入功率"
             )
         plan = _require_value(self.dut_power_plan, PowerPlan, "DUT 上电计划")
         if plan.is_empty:
@@ -1107,6 +1126,11 @@ class AmplifierMeasurementInputs:
                 driver_gain_estimate=(
                     Decibels(plan.driver_gain_estimate_db)
                     if plan.driver_gain_estimate_db is not None
+                    else None
+                ),
+                driver_max_input_power=(
+                    PowerDbm(plan.driver_max_input_power)
+                    if plan.driver_max_input_power is not None
                     else None
                 ),
                 dut_power_plan=PowerPlan.from_document(

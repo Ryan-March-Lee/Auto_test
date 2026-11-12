@@ -18,7 +18,9 @@ DUT 功率扫描计划**逐点一致**：数量、顺序、测试频率和功率
 - 同一频点的目标输入功率重复：拒绝，同一个目标不能映射两次；
 - 目标点顺序或功率与配置生成的目标 DUT 点不同：拒绝，不静默排序修复，避免正式
   测量按另一份点列执行。顺序按**扁平点列**比较，因此频点之间的先后也属于契约：
-  把整个频点组调到别处同样会被拒绝，不会因为“重新按频率分组”而被掩盖。
+  把整个频点组调到别处同样会被拒绝，不会因为“重新按频率分组”而被掩盖；
+- 任一目标点的源功率超过本次配置的驱放最大输入功率：拒绝。复用其他运行或旧配置
+  生成的映射时，不能让正式扫描把信号源开到新上限之上。
 
 校验失败统一抛 :class:`AmplifierInputError`（配置类失败），调用方应在打开 RF 或
 执行任何测量动作之前完成校验。
@@ -42,6 +44,8 @@ __all__ = ["require_driver_target_grid"]
 # 后应完全相同；该容差只吸收 JSON 往返或不同格式化带来的极小数值噪声，不会放过
 # 用户真实填写的错点、差点或重复点。
 _TARGET_POWER_TOLERANCE_DB = 1e-9
+# 源功率与驱放最大输入的比较容差（dB），只吸收 JSON 往返的浮点噪声。
+_SOURCE_POWER_TOLERANCE_DB = 1e-9
 
 
 def _same_power(left: float, right: float) -> bool:
@@ -180,6 +184,16 @@ def require_driver_target_grid(
         for power in expected_powers
     )
     _require_same_sequence(expected_sequence, tuple(actual_sequence))
+    limit = inputs.driver_max_input_power
+    if limit is not None:
+        for point in driver_input.target_points:
+            if point.source_power_dbm > limit.dbm + _SOURCE_POWER_TOLERANCE_DB:
+                raise AmplifierInputError(
+                    f"驱动映射目标表 {point.frequency_ghz} GHz 的目标输入 "
+                    f"{point.target_input_power_dbm:g} dBm 需要信号源 "
+                    f"{point.source_power_dbm:g} dBm，超过驱放最大输入功率 "
+                    f"{limit.dbm:g} dBm。请降低目标输入或按当前上限重新执行驱动映射"
+                )
     return MappingProxyType(
         {frequency: tuple(grouped[frequency]) for frequency in configured}
     )

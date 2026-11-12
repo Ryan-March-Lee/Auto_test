@@ -864,15 +864,36 @@ class PowerSemanticsTests(unittest.TestCase):
                     {issue.path for issue in result.errors},
                 )
 
+    def test_driver_max_input_power_accepts_finite_dbm_and_rejects_other_values(self):
+        valid = complete_current_plan()
+        valid["signal_source"]["power_reference"] = "dut_input"
+        valid["driver_mode"]["max_input_power"] = 10.0
+        self.assertTrue(validate_test_plan(valid).valid)
+
+        for value in (float("nan"), float("inf"), float("-inf"), "10dBm", True):
+            with self.subTest(value=value):
+                plan = complete_current_plan()
+                plan["signal_source"]["power_reference"] = "dut_input"
+                plan["driver_mode"]["max_input_power"] = value
+                result = validate_test_plan(plan)
+
+                self.assertFalse(result.valid)
+                self.assertIn(
+                    "driver_mode.max_input_power",
+                    {issue.path for issue in result.errors},
+                )
+
     def test_plan_round_trip_keeps_the_new_fields(self):
         plan = complete_current_plan()
         plan["signal_source"]["power_reference"] = "dut_input"
         plan["driver_mode"]["estimated_gain_db"] = 20.5
+        plan["driver_mode"]["max_input_power"] = 10.0
 
         again = TestPlan.from_dict(TestPlan.from_dict(plan).to_dict())
 
         self.assertEqual(again.power_reference, "dut_input")
         self.assertEqual(again.driver_gain_estimate_db, 20.5)
+        self.assertEqual(again.driver_max_input_power, 10.0)
 
 
 if __name__ == "__main__":

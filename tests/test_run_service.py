@@ -212,6 +212,28 @@ class CreateRunSnapshotTests(unittest.TestCase):
         # 现场接线不再是配置字段：快照里只冻结参数与仪器映射。
         self.assertNotIn("wiring", payload["run_mapping"])
 
+    def test_create_run_snapshot_rejects_driver_mode_without_input_limit(self):
+        configuration = _valid_configuration()
+        configuration = RunConfiguration(
+            test_plan=replace(configuration.test_plan, driver_enabled=True),
+            run_mapping=replace(configuration.run_mapping, driver_enabled=True),
+        )
+        loaded = _loaded(configuration)
+
+        with self.assertRaisesRegex(ValueError, "max_input_power"):
+            create_run_snapshot(
+                loaded,
+                run_repository=self.repository,
+                run_id=RUN_ID,
+                software_version="test-runner",
+                notes="现场调试",
+                product_name="PA-100",
+                hardware_config=_gui_config(),
+                now=CREATED_AT,
+            )
+
+        self.assertFalse((self.repository.root / RUN_ID).exists())
+
     def test_snapshot_serializes_route_and_plan_value_objects(self):
         """正式模型直接持有路由/计划值对象时，快照仍必须是 JSON 原生形状。
 

@@ -338,4 +338,5 @@ def _service_config(configuration: Any) -> Mapping[str, Any]:
         # 不会带着猜测值开始硬件动作。
         "max_dut_input_power": plan.max_input_power,
         "driver_gain_estimate_db": plan.driver_gain_estimate_db,
+        "driver_max_input_power": plan.driver_max_input_power,
     }

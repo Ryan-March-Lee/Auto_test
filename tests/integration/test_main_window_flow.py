@@ -771,7 +771,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         """
         self._silence_dialogs()
         saved = _fully_valid_gui_config()
-        saved["driver_mode"] = {"enabled": True}
+        saved["driver_mode"] = {"enabled": True, "max_input_power": 10.0}
         saved["instruments"]["power_supplies"]["DP8B0885"] = {
             "label": "DP8B0885",
             "model": "DP832A",
@@ -823,7 +823,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
     def test_no_driver_mode_drops_a_saved_driver_plan_and_still_creates_a_run(self):
         self._silence_dialogs()
         saved = _fully_valid_gui_config()
-        saved["driver_mode"] = {"enabled": True}
+        saved["driver_mode"] = {"enabled": True, "max_input_power": 10.0}
         saved["power_supply_assignment"]["driver_amplifier"] = {
             "power_plan": {
                 "power_sequence": [{"supply_id": "DP8B1519", "channel": "CH1"}],

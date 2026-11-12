@@ -10,7 +10,8 @@
   （``Frequency`` / ``PowerSweep`` / ``Decibels`` / ``PowerDbm``），单位由类型表达；
 - 起止功率表示**主功放输入功率**：``power_reference`` 只接受 ``None``（旧配置）或
   ``"dut_input"``，写出时统一写新语义；``driver_gain_estimate`` 是驱动功放全局预估
-  增益（``Decibels | None``），缺失不折叠成 0；
+  增益（``Decibels | None``），``driver_max_input_power`` 是驱放最大输入功率
+  （``PowerDbm | None``），缺失都不折叠成 0；
 - 集合字段使用 ``tuple``，设备绑定按“角色 + 名称到记录的键值对”保存受控副本，
   外部不能通过属性随意改写内部状态；
 - 缺失值用 ``None`` / 空元组明确表示，非法类型与无法解析的文本由
@@ -45,7 +46,10 @@ from application.dto.amplifier_inputs import (
     PowerSweep,
     SupplyChannel,
 )
-from domain.configuration.models import LEGACY_POWER_SCAN_FIELDS
+from domain.configuration.models import (
+    DRIVER_MAX_INPUT_POWER_FIELD,
+    LEGACY_POWER_SCAN_FIELDS,
+)
 from domain.instruments.models import INSTRUMENT_ROLES
 from domain.measurement.values import Decibels, Frequency, PowerDbm
 
@@ -402,6 +406,8 @@ class ConfigurationDraft:
     driver_enabled: bool | None = None
     # 驱动功放全局预估增益（dB）；None 表示尚未填写，不折叠成 0。
     driver_gain_estimate: Decibels | None = None
+    # 驱放最大输入功率（dBm）；None 表示尚未填写。有驱放链路时它约束信号源输出。
+    driver_max_input_power: PowerDbm | None = None
     # 漏极只供效率计算读取，不参与排序/间隔/启停；空元组表示未配置。
     # 可以有多条：运行阶段把每条漏极的直流功率相加。
     drain_channels: tuple[SupplyChannel, ...] = ()
@@ -444,6 +450,9 @@ class ConfigurationDraft:
         )
         _require_optional(
             self.driver_gain_estimate, Decibels, "驱动功放预估增益"
+        )
+        _require_optional(
+            self.driver_max_input_power, PowerDbm, "驱放最大输入功率"
         )
         drain_channels = _tuple_of(self.drain_channels, SupplyChannel, "漏极通道")
         object.__setattr__(self, "drain_channels", drain_channels)
@@ -531,6 +540,9 @@ class ConfigurationDraft:
         driver_gain_estimate = _read_driver_gain(
             document.get("driver_mode"), issues
         )
+        driver_max_input_power = _read_driver_max_input_power(
+            document.get("driver_mode"), issues
+        )
         power_supplies = _read_power_supplies(document.get("instruments"), issues)
         assignments = document.get("power_supply_assignment")
         dut_power_plan = _read_power_plan(assignments, "dut_amplifier", issues)
@@ -547,6 +559,7 @@ class ConfigurationDraft:
             max_dut_input_power=max_dut_input_power,
             driver_enabled=driver_enabled,
             driver_gain_estimate=driver_gain_estimate,
+            driver_max_input_power=driver_max_input_power,
             drain_channels=drain_channels,
             dut_power_plan=dut_power_plan,
             driver_power_plan=driver_power_plan,
@@ -949,6 +962,35 @@ def _read_driver_gain(
         issues.append(
             _issue(
                 "driver_mode.estimated_gain_db",
+                _CODE_INVALID_NUMBER,
+                str(error),
+            )
+        )
+        return None
+
+
+def _read_driver_max_input_power(
+    value: Any, issues: list[ValidationIssue]
+) -> PowerDbm | None:
+    """读取 ``driver_mode.max_input_power``；缺失保持 None，非法值报问题。"""
+    if value is None:
+        return None
+    section = _mapping(value, "driver_mode", issues)
+    if DRIVER_MAX_INPUT_POWER_FIELD not in section:
+        return None
+    number = _finite_number(
+        section.get(DRIVER_MAX_INPUT_POWER_FIELD),
+        f"driver_mode.{DRIVER_MAX_INPUT_POWER_FIELD}",
+        issues,
+    )
+    if number is None:
+        return None
+    try:
+        return PowerDbm(number)
+    except (TypeError, ValueError) as error:
+        issues.append(
+            _issue(
+                f"driver_mode.{DRIVER_MAX_INPUT_POWER_FIELD}",
                 _CODE_INVALID_NUMBER,
                 str(error),
             )
@@ -1359,6 +1401,11 @@ def _driver_mode_document(draft: ConfigurationDraft) -> dict[str, Any]:
         "estimated_gain_db": (
             draft.driver_gain_estimate.db
             if draft.driver_gain_estimate is not None
+            else None
+        ),
+        DRIVER_MAX_INPUT_POWER_FIELD: (
+            draft.driver_max_input_power.dbm
+            if draft.driver_max_input_power is not None
             else None
         ),
     }

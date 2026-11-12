@@ -13,6 +13,7 @@ from presentation.qt.config_projection import (
     DEFAULT_ATTENUATOR_TYPE,
     DEFAULT_COMPRESSION_TYPE,
     DEFAULT_DRIVER_GAIN_ESTIMATE,
+    DEFAULT_DRIVER_MAX_INPUT_POWER,
     DEFAULT_FREQUENCY_EXTRA_TEXT,
     DEFAULT_FREQUENCY_START,
     DEFAULT_FREQUENCY_STEP,
@@ -177,6 +178,7 @@ class FakeForm:
         self.stop_power = _Value()
         self.power_step = _Value()
         self.driver_gain = _Text()
+        self.driver_max_input_power = _Text()
         self.max_input_power = _Value()
         self.compression_combo = _Combo(("1dB", "3dB", "5dB"))
         self.attenuator_combo = _Combo(("30dB", "40dB"))
@@ -305,6 +307,41 @@ class ConfigProjectionTests(unittest.TestCase):
 
         project_authoring_config(form, {"driver_mode": {"enabled": True}})
         self.assertEqual(form.driver_gain.text(), DEFAULT_DRIVER_GAIN_ESTIMATE)
+
+    def test_projection_applies_and_clears_the_driver_max_input_power(self):
+        """最大输入回填为文本；缺失时回到“尚未填写”，不伪造 0 dBm。"""
+        form = FakeForm()
+
+        project_authoring_config(
+            form,
+            {"driver_mode": {"enabled": True, "max_input_power": 10.5}},
+        )
+        self.assertEqual(form.driver_max_input_power.text(), "10.5")
+
+        project_authoring_config(form, {"driver_mode": {"enabled": True}})
+        self.assertEqual(
+            form.driver_max_input_power.text(), DEFAULT_DRIVER_MAX_INPUT_POWER
+        )
+
+    def test_driver_max_input_rendering_keeps_precision_and_rejects_non_numbers(self):
+        form = FakeForm()
+
+        project_authoring_config(
+            form,
+            {"driver_mode": {"enabled": True, "max_input_power": 10.1234567}},
+        )
+        self.assertEqual(form.driver_max_input_power.text(), "10.1234567")
+
+        for value in (None, True, False, "10.5", float("nan"), float("inf")):
+            with self.subTest(value=value):
+                project_authoring_config(
+                    form,
+                    {"driver_mode": {"enabled": True, "max_input_power": value}},
+                )
+                self.assertEqual(
+                    form.driver_max_input_power.text(),
+                    DEFAULT_DRIVER_MAX_INPUT_POWER,
+                )
 
     def test_non_boolean_driver_mode_values_fall_back_to_the_default(self):
         """``"false"``/``0``/``None`` 都不是布尔值：按缺失处理，回填默认启用。"""

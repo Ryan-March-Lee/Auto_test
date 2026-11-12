@@ -190,6 +190,7 @@ def _request(
         },
         "max_dut_input_power": 100.0,
         "driver_gain_estimate_db": 1.0,
+        "driver_max_input_power": 20.0,
     }
     return DriverPowerMappingRequest(
         configuration=configuration,

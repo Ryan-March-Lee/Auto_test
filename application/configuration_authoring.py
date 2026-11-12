@@ -69,6 +69,7 @@ from application.configuration_editing import ValidationIssue, ValidationResult
 from application.errors import ConfigurationError
 from domain.configuration.models import (
     DRIVER_GAIN_FIELD,
+    DRIVER_MAX_INPUT_POWER_FIELD,
     INPUT_POWER_REFERENCE,
     LEGACY_POWER_SCAN_FIELDS,
     LEGACY_SCHEMA_VERSION,
@@ -330,6 +331,25 @@ class ConfigurationAuthoringService:
         # 注意：stale 检查不属于“当前编辑是否合法”。页面在保存前本来就持有上一版
         # 派生段，编辑段一旦变化它就必然过期；把 stale 当成本次校验错误会让正常编辑
         # 无法保存。需要 stale 的读取/创建运行边界显式调用 :meth:`stale_formal_sections`。
+        # 驱放最大输入是运行安全参数，不是历史读取判据：旧配置仍可打开，但新的
+        # 保存/创建运行必须在驱动开启时显式填写，不能把“缺失”当成“不限制”。
+        driver_mode = _mapping(_mapping(authored.get("test_plan")).get("driver_mode"))
+        required_issues: tuple[ValidationIssue, ...] = ()
+        if (
+            driver_mode.get("enabled") is True
+            and driver_mode.get(DRIVER_MAX_INPUT_POWER_FIELD) is None
+        ):
+            required_issues = (
+                ValidationIssue(
+                    path=f"test_plan.driver_mode.{DRIVER_MAX_INPUT_POWER_FIELD}",
+                    code=_CODE_RUN_VALIDATION,
+                    message=(
+                        "驱放测试模式开启时必须填写驱放最大输入功率"
+                        f"（driver_mode.{DRIVER_MAX_INPUT_POWER_FIELD}）"
+                    ),
+                    severity="error",
+                ),
+            )
         source_issues = (
             (
                 validate_power_plan(authored),
@@ -343,16 +363,21 @@ class ConfigurationAuthoringService:
             )
         )
         connection_issues = validate_hardware_connections(authored)
-        issues = tuple(
-            _validation_issue(issue, code)
-            for result, code in source_issues
-            for issue in (*result.errors, *result.warnings)
-        ) + tuple(
-            _validation_issue(issue, _CODE_RUN_VALIDATION)
-            for issue in (*run_issues.errors, *run_issues.warnings)
-        ) + tuple(
-            _validation_issue(issue, _CODE_HARDWARE_CONNECTIONS)
-            for issue in (*connection_issues.errors, *connection_issues.warnings)
+        issues = (
+            required_issues
+            + tuple(
+                _validation_issue(issue, code)
+                for result, code in source_issues
+                for issue in (*result.errors, *result.warnings)
+            )
+            + tuple(
+                _validation_issue(issue, _CODE_RUN_VALIDATION)
+                for issue in (*run_issues.errors, *run_issues.warnings)
+            )
+            + tuple(
+                _validation_issue(issue, _CODE_HARDWARE_CONNECTIONS)
+                for issue in (*connection_issues.errors, *connection_issues.warnings)
+            )
         )
         return ValidationResult(issues=issues)
 
@@ -515,13 +540,14 @@ def _legacy_power_field_path(document: Mapping[str, Any]) -> str | None:
 
 
 def _stamp_power_semantics(document: dict[str, Any]) -> None:
-    """给新保存的编辑段写上新功率语义标记与全局驱动增益占位键。
+    """给新保存的编辑段写上新功率语义标记与驱放参数占位键。
 
     - ``signal_source.power_reference`` 固定写成 :data:`INPUT_POWER_REFERENCE`：从这一
       次保存起，起止功率表示主功放输入功率；旧配置不会被读取时自动换算，保存是用户
       确认新语义的动作。
-    - ``driver_mode.estimated_gain_db`` 缺失时补 ``None``。驱动关闭时该值不是必填项，
-      但显式写键让“这份配置已按新语义保存”有稳定形状；用户填写的数值原样保留。
+    - ``driver_mode.estimated_gain_db`` 与 ``driver_mode.max_input_power`` 缺失时补
+      ``None``。驱动关闭时它们不是必填项，但显式写键让“这份配置已按新语义保存”有
+      稳定形状；用户填写的数值原样保留。
     """
     signal_source = document.get("signal_source")
     if not isinstance(signal_source, dict):
@@ -533,6 +559,7 @@ def _stamp_power_semantics(document: dict[str, Any]) -> None:
         driver_mode = {}
         document["driver_mode"] = driver_mode
     driver_mode.setdefault(DRIVER_GAIN_FIELD, None)
+    driver_mode.setdefault(DRIVER_MAX_INPUT_POWER_FIELD, None)
 
 
 def _strip_legacy_editing_fields(document: dict[str, Any]) -> None:
@@ -579,14 +606,16 @@ def _normalized_section(value: Any, section: str) -> Any:
             data.pop(key, None)
         return data
     if section == "test_plan":
-        # 新功率语义标记与驱动增益是“保存时写入的派生元数据”：旧 1.1 文档没有它们，
-        # 重新编写时会被补上，不能因此把一份完好旧配置判成“正式段被手改”。
+        # 新功率语义标记、驱动增益与驱放最大输入是“保存时写入的派生元数据”：
+        # 旧 1.1 文档没有它们，重新编写时会被补上，不能因此把一份完好旧配置判成
+        # “正式段被手改”。
         source = data.get("signal_source")
         if isinstance(source, dict):
             source.pop(SIGNAL_SOURCE_REFERENCE_FIELD, None)
         driver = data.get("driver_mode")
         if isinstance(driver, dict):
             driver.pop(DRIVER_GAIN_FIELD, None)
+            driver.pop(DRIVER_MAX_INPUT_POWER_FIELD, None)
         for block, key in (
             (data.get("dut"), "channel_settings"),
             (data.get("driver_mode"), "channel_settings"),
@@ -695,6 +724,7 @@ def _author_test_plan(document: Mapping[str, Any]) -> dict[str, Any]:
         "driver_mode": {
             "enabled": bool(driver_mode.get("enabled")),
             "estimated_gain_db": driver_mode.get(DRIVER_GAIN_FIELD),
+            "max_input_power": driver_mode.get(DRIVER_MAX_INPUT_POWER_FIELD),
             "channel_settings": _author_channel_settings(document, "driver_amplifier"),
         },
         "other_parameters": {},

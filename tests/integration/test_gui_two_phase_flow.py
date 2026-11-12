@@ -61,7 +61,10 @@ RUN_ID = "20261022T153000Z_a1b2c3d4"
 
 
 def _fully_valid_gui_config(
-    *, driver_enabled: bool = False, estimated_gain_db: float = 1.0
+    *,
+    driver_enabled: bool = False,
+    estimated_gain_db: float = 1.0,
+    driver_max_input_power: float = 10.0,
 ) -> dict:
     """完整有效的 GUI 组合配置（默认驱动模式关闭，DUT 通道已确认接线）。"""
     return author_official_configuration({
@@ -70,7 +73,11 @@ def _fully_valid_gui_config(
         "signal_source": {"start_power": -10.0, "stop_power": 0.0, "step": 1.0},
         "compression_point": {"type": "5dB"},
         "driver_mode": (
-            {"enabled": True, "estimated_gain_db": estimated_gain_db}
+            {
+                "enabled": True,
+                "estimated_gain_db": estimated_gain_db,
+                "max_input_power": driver_max_input_power,
+            }
             if driver_enabled
             else {"enabled": False}
         ),

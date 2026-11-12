@@ -23,7 +23,8 @@
     },
     "driver_mode": {
         "enabled": true,
-        "estimated_gain_db": null
+        "estimated_gain_db": null,
+        "max_input_power": null
     },
     "attenuator": {
         "type": "40dB"
@@ -169,7 +170,8 @@
         "driver_mode": {
             "enabled": true,
             "channel_settings": [],
-            "estimated_gain_db": null
+            "estimated_gain_db": null,
+            "max_input_power": null
         },
         "other_parameters": {}
     },

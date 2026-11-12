@@ -23,7 +23,8 @@
         "type": "5dB"
     },
     "driver_mode": {
-        "enabled": true
+        "enabled": true,
+        "max_input_power": 20.0
     },
     "attenuator": {
         "type": "30dB"
@@ -226,7 +227,8 @@
         },
         "driver_mode": {
             "enabled": true,
-            "channel_settings": []
+            "channel_settings": [],
+            "max_input_power": 20.0
         },
         "other_parameters": {}
     },

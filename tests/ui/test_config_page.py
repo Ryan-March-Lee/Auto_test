@@ -643,18 +643,31 @@ class ConfigurationPageTests(unittest.TestCase):
     def test_driver_gain_control_follows_the_driver_mode(self):
         page = self.make_page()
         page.driver_gain.setText("20.5")
+        page.driver_max_input_power.setText("10")
 
         page.set_test_mode(False)
 
-        self.assertFalse(page.driver_gain.isEnabled())
-        self.assertFalse(page.driver_gain_label.isEnabled())
+        for widget in (
+            page.driver_gain,
+            page.driver_gain_label,
+            page.driver_max_input_power,
+            page.driver_max_input_power_label,
+        ):
+            self.assertFalse(widget.isEnabled())
         self.assertEqual(page.driver_gain.text(), "20.5", "禁用时保留已填写的值")
+        self.assertEqual(page.driver_max_input_power.text(), "10")
 
         page.set_test_mode(True)
 
-        self.assertTrue(page.driver_gain.isEnabled())
-        self.assertTrue(page.driver_gain_label.isEnabled())
+        for widget in (
+            page.driver_gain,
+            page.driver_gain_label,
+            page.driver_max_input_power,
+            page.driver_max_input_power_label,
+        ):
+            self.assertTrue(widget.isEnabled())
         self.assertEqual(page.driver_gain.text(), "20.5")
+        self.assertEqual(page.driver_max_input_power.text(), "10")
 
     def test_parameter_area_splits_dut_and_driver_into_two_cards(self):
         """参数区按被测对象分组：DUT 与驱放各一张同级卡片，衰减器归 DUT。"""
@@ -683,11 +696,22 @@ class ConfigurationPageTests(unittest.TestCase):
             self.assertTrue(page.dut_parameters_group.isAncestorOf(widget))
         self.assertTrue(page.driver_parameters_group.isAncestorOf(page.driver_gain))
         self.assertFalse(page.dut_parameters_group.isAncestorOf(page.driver_gain))
+        self.assertTrue(
+            page.driver_parameters_group.isAncestorOf(page.driver_max_input_power)
+        )
+        self.assertFalse(
+            page.dut_parameters_group.isAncestorOf(page.driver_max_input_power)
+        )
         dut_labels = {
             label.text() for label in page.dut_parameters_group.findChildren(QLabel)
         }
         for text in ("压缩点", "衰减器", "DUT最大输入功率 (dBm)"):
             self.assertIn(text, dut_labels)
+        driver_labels = {
+            label.text()
+            for label in page.driver_parameters_group.findChildren(QLabel)
+        }
+        self.assertIn("驱放最大输入功率 (dBm)", driver_labels)
 
     def test_driver_group_explains_the_current_test_mode(self):
         """驱放组用一行状态说明模式；无驱放时只灰显控件，分组自身保留。"""
@@ -698,12 +722,14 @@ class ConfigurationPageTests(unittest.TestCase):
         self.assertIn("有驱放测试", page.driver_mode_status.text())
         self.assertEqual(page.driver_mode_status.property("tone"), "info")
         self.assertTrue(page.driver_gain.isEnabled())
+        self.assertTrue(page.driver_max_input_power.isEnabled())
 
         page.set_test_mode(False)
 
         self.assertIn("无驱放测试", page.driver_mode_status.text())
         self.assertEqual(page.driver_mode_status.property("tone"), "muted")
         self.assertFalse(page.driver_gain.isEnabled())
+        self.assertFalse(page.driver_max_input_power.isEnabled())
         self.assertTrue(page.driver_parameters_group.isEnabled())
         self.assertTrue(page.driver_mode_status.isVisibleTo(page))
 
@@ -731,6 +757,52 @@ class ConfigurationPageTests(unittest.TestCase):
 
         self.assertEqual(page.driver_gain.text(), "31.5")
         self.assertTrue(page.driver_gain.isEnabled())
+
+    def test_driver_max_input_power_round_trips_through_save_and_backfill(self):
+        page = self.make_page(driver_mode={"enabled": True})
+        self.assertEqual(
+            page.driver_max_input_power.text(), "", "缺失的上限不伪造默认值"
+        )
+
+        page.driver_max_input_power.setText("10.5")
+        self.assertEqual(
+            page.build_config()["driver_mode"]["max_input_power"], 10.5
+        )
+
+        page.driver_max_input_power.setText("")
+        self.assertIsNone(
+            page.build_config()["driver_mode"]["max_input_power"]
+        )
+
+        page.apply_config(
+            {
+                "test_frequencies": [1.0],
+                "driver_mode": {
+                    "enabled": True,
+                    "estimated_gain_db": 20.5,
+                    "max_input_power": 8.25,
+                },
+                "instruments": {"power_supplies": {}},
+            }
+        )
+
+        self.assertEqual(page.driver_max_input_power.text(), "8.25")
+        self.assertTrue(page.driver_max_input_power.isEnabled())
+
+    def test_driver_max_input_power_is_required_when_driver_is_enabled(self):
+        page = self.make_page(driver_mode={"enabled": True})
+        page.driver_gain.setText("20.5")
+
+        errors = page.form_adapter.validation_errors()
+        self.assertTrue(
+            any("驱放最大输入功率" in error for error in errors), errors
+        )
+
+        page.driver_max_input_power.setText("10")
+        errors = page.form_adapter.validation_errors()
+        self.assertFalse(
+            any("驱放最大输入功率" in error for error in errors), errors
+        )
 
     def test_driver_mode_value_is_parsed_the_same_way_by_construction_and_backfill(self):
         """构造与 ``apply_config`` 共用解析：非布尔值按缺失处理，不会一边启用一边禁用。"""

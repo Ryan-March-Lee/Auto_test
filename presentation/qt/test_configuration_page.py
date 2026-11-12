@@ -35,8 +35,8 @@
 
 参数区按被测对象分成两张卡片：**“DUT 参数”**承载 DUT 频率扫描计划、DUT 功率扫描
 计划、压缩点、衰减器与 DUT 最大输入功率；**“驱放参数”**只承载驱放模式下才生效的
-驱动功放预估增益，无驱放测试时保留该组、灰显控件并说明不参与运行。运行入口和底部
-操作栏不属于参数分组，仍独立成块。
+驱动功放预估增益与驱放最大输入功率，无驱放测试时保留该组、灰显控件并说明不参与
+运行。运行入口和底部操作栏不属于参数分组，仍独立成块。
 
 测试频率不再逐点输入：页面提供“起始/步长/终止/增补”四个控件，由
 :mod:`presentation.qt.frequency_sweep` 生成配置文档仍使用的 ``test_frequencies``
@@ -83,6 +83,7 @@ from .config_projection import (
     DEFAULT_ATTENUATOR_TYPE,
     DEFAULT_COMPRESSION_TYPE,
     DEFAULT_DRIVER_GAIN_ESTIMATE,
+    DEFAULT_DRIVER_MAX_INPUT_POWER,
     DEFAULT_DRIVER_MODE_ENABLED,
     DEFAULT_FREQUENCY_EXTRA_TEXT,
     DEFAULT_FREQUENCY_START,
@@ -94,6 +95,7 @@ from .config_projection import (
     apply_frequency_fields,
     bool_or_default,
     driver_gain_text,
+    driver_max_input_power_text,
     number_or_none,
 )
 from .config_page_widgets import (
@@ -344,25 +346,36 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
 
     # -- 驱放参数组 ---------------------------------------------------------
     def _build_driver_parameters(self, layout) -> None:
-        """建立驱放参数组：只有驱放模式下才生效的全局预估增益。
+        """建立驱放参数组：驱放模式下才生效的预估增益与最大输入功率。
 
-        本页与驱放直接相关的配置只有 ``driver_mode.estimated_gain_db``：驱放上电计划
-        归电源配置页，有/无驱放由欢迎页选择。组内第一行说明当前模式与该参数是否参与
-        运行，第二行才是唯一输入项；这样“驱放组为什么只有一项”不需要靠猜。
+        本页与驱放直接相关的配置是 ``driver_mode.estimated_gain_db`` 与
+        ``driver_mode.max_input_power``：驱放上电计划归电源配置页，有/无驱放由欢迎页
+        选择。组内第一行说明当前模式，随后两行分别是预估增益与最大输入功率；后者是
+        有驱放链路中信号源输出设定值的硬上限。
         """
         # 驱动功放预估增益是测试配置里的单一全局值（dB）。空文本表示尚未填写；
         # 增益的业务校验（有限数值、驱动模式下必填）由配置 DTO 承担，页面不推算。
         self.driver_gain = QLineEdit(DEFAULT_DRIVER_GAIN_ESTIMATE)
         self.driver_gain.setPlaceholderText("例如 30.0（启用驱动时填写）")
         self.driver_gain.setMaximumWidth(140)
+        # 驱放最大输入功率是信号源输出设定的硬上限；空文本表示尚未填写，不猜 0 dBm。
+        self.driver_max_input_power = QLineEdit(DEFAULT_DRIVER_MAX_INPUT_POWER)
+        self.driver_max_input_power.setPlaceholderText(
+            "例如 0.0（启用驱动时必填）"
+        )
+        self.driver_max_input_power.setMaximumWidth(140)
         mode = self.config.get("driver_mode", {})
         mode = mode if isinstance(mode, dict) else {}
         # 与配置回填使用同一套解析：只接受真正的布尔值（``"false"``/``0``/``None``
-        # 都按缺失处理），增益渲染也复用投影规则，构造与 ``apply_config`` 不会各判一次。
+        # 都按缺失处理），增益与最大输入渲染也复用投影规则，构造与 ``apply_config``
+        # 不会各判一次。
         self.test_mode_enabled = bool_or_default(
             mode.get("enabled"), DEFAULT_DRIVER_MODE_ENABLED
         )
         self.driver_gain.setText(driver_gain_text(mode.get("estimated_gain_db")))
+        self.driver_max_input_power.setText(
+            driver_max_input_power_text(mode.get("max_input_power"))
+        )
 
         group = QGroupBox("驱放参数")
         self.driver_parameters_group = group
@@ -385,14 +398,22 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         form.addWidget(self.driver_gain_label, 1, 0)
         form.addWidget(self.driver_gain, 1, 1, Qt.AlignLeft)
 
+        self.driver_max_input_power_label = QLabel("驱放最大输入功率 (dBm)")
+        self.driver_max_input_power_label.setAlignment(
+            Qt.AlignLeft | Qt.AlignVCenter
+        )
+        form.addWidget(self.driver_max_input_power_label, 2, 0)
+        form.addWidget(self.driver_max_input_power, 2, 1, Qt.AlignLeft)
+
         self.driver_gain_hint = QLabel(
             "驱放上电计划在“电源配置”页设置；有/无驱放由欢迎页的测试模式决定。"
+            "最大输入限制有驱放链路中的信号源输出。"
         )
         self.driver_gain_hint.setProperty("role", "note")
         self.driver_gain_hint.setWordWrap(True)
         self.driver_gain_hint.setTextInteractionFlags(Qt.TextSelectableByMouse)
         set_tone(self.driver_gain_hint, "muted")
-        form.addWidget(self.driver_gain_hint, 2, 0, 1, 2)
+        form.addWidget(self.driver_gain_hint, 3, 0, 1, 2)
         layout.addWidget(group)
 
     # -- DUT 功率扫描计划编辑器 ---------------------------------------------
@@ -983,19 +1004,25 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         return config
 
     def _apply_driver_gain_state(self) -> None:
-        """按驱动模式启用/禁用“驱动功放预估增益”控件。
+        """按驱动模式启用/禁用驱放参数控件。
 
-        只在启用驱动模式时可用；禁用时保留已填写的值（不清空、不折叠成 0），
-        驱动关闭时它也不是运行必填项。是否必填与数值合法性都由配置 DTO 判定，
-        页面只呈现可用状态。
+        预估增益与最大输入功率都只在启用驱动模式时可用；禁用时保留已填写的值
+        （不清空、不折叠成 0）。是否必填与数值合法性都由配置 DTO 判定，页面只呈现
+        可用状态。
         """
         enabled = bool(self.test_mode_enabled)
-        for widget in (self.driver_gain_label, self.driver_gain):
+        for widget in (
+            self.driver_gain_label,
+            self.driver_gain,
+            self.driver_max_input_power_label,
+            self.driver_max_input_power,
+        ):
             widget.setEnabled(enabled)
         status = getattr(self, "driver_mode_status", None)
         if status is not None:
             status.setText(
-                "当前为有驱放测试：预估增益用于驱动映射与输入功率换算。"
+                "当前为有驱放测试：预估增益用于驱动映射起点；"
+                "最大输入限制信号源输出功率。"
                 if enabled
                 else "当前为无驱放测试：本组参数不参与运行，控件保持禁用。"
             )
@@ -1004,6 +1031,12 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
             "驱动功放预估增益（dB），用于推算驱动映射的起点；仅启用驱动模式时填写"
             if enabled
             else "当前为无驱动测试；启用驱动模式后才能填写驱动功放预估增益"
+        )
+        self.driver_max_input_power.setToolTip(
+            "驱放最大输入功率（dBm）：有驱放链路中信号源输出设定值不得超过它；"
+            "驱动开启时必填"
+            if enabled
+            else "当前为无驱动测试；启用驱动模式后才能填写驱放最大输入功率"
         )
 
     def set_test_mode(self, enabled: bool) -> None:

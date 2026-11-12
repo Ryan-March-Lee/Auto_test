@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from domain.configuration.types import ConfigIssue, ConfigValidationResult
 from domain.configuration.models import (
     DRIVER_GAIN_FIELD,
+    DRIVER_MAX_INPUT_POWER_FIELD,
     INPUT_POWER_REFERENCE,
     LEGACY_POWER_SCAN_FIELDS,
     MAX_INTER_CHANNEL_DELAY_S,
@@ -216,6 +217,13 @@ def validate_config(config: Dict[str, Any]) -> ConfigValidationResult:
         if gain is not None:
             _validate_finite_number(
                 gain, f"driver_mode.{DRIVER_GAIN_FIELD}", error
+            )
+        max_input_power = driver_mode.get(DRIVER_MAX_INPUT_POWER_FIELD)
+        if max_input_power is not None:
+            _validate_finite_number(
+                max_input_power,
+                f"driver_mode.{DRIVER_MAX_INPUT_POWER_FIELD}",
+                error,
             )
 
     if "dut_config" in present_sections:

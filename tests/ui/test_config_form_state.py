@@ -39,6 +39,7 @@ def _form_widgets(**attributes):
     widgets.stop_power = type("V", (), {"value": lambda self: 0.0})()
     widgets.power_step = type("V", (), {"value": lambda self: 1.0})()
     widgets.driver_gain = _Text("")
+    widgets.driver_max_input_power = _Text("")
     widgets.max_input_power = type("V", (), {"value": lambda self: 30.0})()
     widgets.compression_combo = type("C", (), {"currentText": lambda self: "5dB"})()
     widgets.attenuator_combo = type("C", (), {"currentText": lambda self: "30dB"})()
@@ -157,6 +158,43 @@ class ConfigFormStateTests(unittest.TestCase):
             [error for error in errors if "增益" in error or "estimated_gain_db" in error],
             errors,
         )
+
+    def test_driver_max_input_power_control_is_read_into_the_driver_mode(self):
+        widgets = _form_widgets()
+        widgets.test_mode_enabled = True
+        widgets.driver_max_input_power = _Text("10.5")
+
+        mode = ConfigFormState({}, widgets).read_test_parameters()["driver_mode"]
+
+        self.assertTrue(mode["enabled"])
+        self.assertEqual(mode["max_input_power"], 10.5)
+
+    def test_empty_or_invalid_driver_max_input_power_is_passed_through(self):
+        widgets = _form_widgets()
+        widgets.driver_max_input_power = _Text("  ")
+        mode = ConfigFormState({}, widgets).read_test_parameters()["driver_mode"]
+        self.assertIsNone(mode["max_input_power"])
+
+        widgets.driver_max_input_power = _Text("not-a-power")
+        state = ConfigFormState({}, widgets)
+        mode = state.read_test_parameters()["driver_mode"]
+        errors = state.validation_errors()
+
+        self.assertEqual(mode["max_input_power"], "not-a-power")
+        self.assertTrue(any("有限数值" in error for error in errors), errors)
+
+    def test_forms_without_a_driver_max_input_power_control_keep_the_baseline(self):
+        widgets = _form_widgets()
+        widgets.test_mode_enabled = True
+        del widgets.driver_max_input_power
+        state = ConfigFormState(
+            {"driver_mode": {"enabled": True, "max_input_power": 7.5}},
+            widgets,
+        )
+
+        mode = state.read_test_parameters()["driver_mode"]
+
+        self.assertEqual(mode["max_input_power"], 7.5)
 
     def test_forms_without_a_driver_gain_control_keep_the_baseline_value(self):
         """旧替身还没有增益控件时沿用基线，避免读取路径悄悄改写配置。"""

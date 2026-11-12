@@ -67,6 +67,7 @@ def _inputs(**overrides):
         "attenuator": Decibels(10.0),
         "max_dut_input_power": PowerDbm(30.0),
         "driver_enabled": False,
+        "driver_max_input_power": PowerDbm(20.0),
         "dut_power_plan": PowerPlan(power_sequence=routes),
         "channel_settings": _settings(*routes),
         "drain_channel": DrainChannel(routes=(routes[-1],)),
@@ -448,6 +449,22 @@ class AmplifierMeasurementInputsTests(unittest.TestCase):
 
         self.assertTrue(_inputs(driver_enabled=True).driver_enabled)
 
+    def test_driver_max_input_power_is_required_when_driver_is_enabled(self):
+        with self.assertRaises(AmplifierInputError) as raised:
+            _inputs(driver_enabled=True, driver_max_input_power=None)
+        self.assertIn("驱放最大输入功率", str(raised.exception))
+
+        with self.assertRaises(AmplifierInputError):
+            _inputs(driver_enabled=True, driver_max_input_power=10.0)
+
+        self.assertEqual(
+            _inputs(
+                driver_enabled=True,
+                driver_max_input_power=PowerDbm(10.0),
+            ).driver_max_input_power,
+            PowerDbm(10.0),
+        )
+
     def test_plan_must_be_non_empty_and_unique(self):
         with self.assertRaises(AmplifierInputError) as empty:
             _inputs(
@@ -676,6 +693,7 @@ class RunConfigurationInputTests(unittest.TestCase):
                 max_input_power=30.0,
                 driver_enabled=True,
                 driver_gain_estimate_db=20.5,
+                driver_max_input_power=10.0,
                 drain_channel={"supply_id": "PS1", "channel": "CH2"},
                 channel_settings=[
                     {
@@ -730,6 +748,7 @@ class RunConfigurationInputTests(unittest.TestCase):
         self.assertEqual(inputs.max_dut_input_power, PowerDbm(30.0))
         self.assertTrue(inputs.driver_enabled)
         self.assertEqual(inputs.driver_gain_estimate, Decibels(20.5))
+        self.assertEqual(inputs.driver_max_input_power, PowerDbm(10.0))
         self.assertEqual(
             inputs.dut_power_plan.power_sequence,
             (_route("PS1", "CH2"), _route("PS1", "CH1")),
@@ -871,6 +890,22 @@ class RunConfigurationInputTests(unittest.TestCase):
 
         with self.assertRaises(AmplifierInputError):
             _inputs(driver_gain_estimate=20.5)
+
+    def test_driver_mode_without_max_input_fails_before_any_device_action(self):
+        from dataclasses import replace
+
+        configuration = self._configuration()
+        configuration = replace(
+            configuration,
+            test_plan=replace(
+                configuration.test_plan, driver_max_input_power=None
+            ),
+        )
+
+        with self.assertRaises(AmplifierInputError) as raised:
+            AmplifierMeasurementInputs.from_run_configuration(configuration)
+
+        self.assertIn("驱放最大输入功率", str(raised.exception))
 
     def test_missing_run_configuration_fails_before_any_device_action(self):
         for value in (object(), None):

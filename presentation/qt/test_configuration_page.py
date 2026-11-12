@@ -405,15 +405,6 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         form.addWidget(self.driver_max_input_power_label, 2, 0)
         form.addWidget(self.driver_max_input_power, 2, 1, Qt.AlignLeft)
 
-        self.driver_gain_hint = QLabel(
-            "驱放上电计划在“电源配置”页设置；有/无驱放由欢迎页的测试模式决定。"
-            "最大输入限制有驱放链路中的信号源输出。"
-        )
-        self.driver_gain_hint.setProperty("role", "note")
-        self.driver_gain_hint.setWordWrap(True)
-        self.driver_gain_hint.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        set_tone(self.driver_gain_hint, "muted")
-        form.addWidget(self.driver_gain_hint, 3, 0, 1, 2)
         layout.addWidget(group)
 
     # -- DUT 功率扫描计划编辑器 ---------------------------------------------

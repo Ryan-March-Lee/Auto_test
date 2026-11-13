@@ -8,8 +8,6 @@ from typing import Any, Callable
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QDialog,
-    QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -29,6 +27,7 @@ from .measurement_controls import (
     MeasurementControlPresenter,
 )
 from .measurement_state import CableLossPageResultState, MeasurementKind, MeasurementStatus
+from .measurement_surface import CONTROL_SURFACE, RESULT_SURFACE, build_surface
 from .pages import PageControllerBindingMixin
 from .status_panel import StatusSlot
 from .theme import (
@@ -78,7 +77,7 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         layout.setContentsMargins(0, 4, 0, 0)
         layout.setSpacing(12)
 
-        # 左侧窄栏自上而下放测量控制与状态面板（进度 + 实时日志）；右侧整块留给结果表。
+        # 左侧窄栏自上而下放控制面与状态面板（进度 + 实时日志）；右侧整块留给结果面。
         # 接线说明只由连接图承担。宽度与另两个测量页共用 theme 里的同一组常量。
         left_panel = QWidget()
         left_panel.setMinimumWidth(MEASUREMENT_LEFT_PANEL_MIN_WIDTH)
@@ -87,10 +86,8 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(12)
 
-        control_group = QGroupBox("测量控制")
-        control_layout = QGridLayout(control_group)
-        control_layout.setHorizontalSpacing(10)
-        control_layout.setVerticalSpacing(8)
+        control_surface = build_surface(CONTROL_SURFACE, title="测量控制")
+        control_layout = control_surface.layout()
         self.start_measurement_btn = QPushButton("开始测量")
         self.load_cable_results_btn = QPushButton("加载测量结果")
         self.stop_cable_loss_btn = QPushButton("停止测量")
@@ -114,23 +111,33 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
             },
         )
         self.controls.show_idle()
-        control_layout.addWidget(self.start_measurement_btn, 0, 0)
-        control_layout.addWidget(self.stop_cable_loss_btn, 0, 1)
-        control_layout.addWidget(self.load_cable_results_btn, 1, 0)
-        control_layout.addWidget(self.show_cable_loss_diagram_btn, 1, 1)
-        control_layout.setColumnStretch(0, 1)
-        control_layout.setColumnStretch(1, 1)
-        left_layout.addWidget(control_group)
+        # 开始是控制面唯一的主操作，独占整行；停止、加载与连接图收成一行紧凑次操作。
+        control_layout.addWidget(self.start_measurement_btn)
+        secondary_actions = QHBoxLayout()
+        secondary_actions.setSpacing(8)
+        for button in (
+            self.stop_cable_loss_btn,
+            self.load_cable_results_btn,
+            self.show_cable_loss_diagram_btn,
+        ):
+            secondary_actions.addWidget(button, 1)
+        control_layout.addLayout(secondary_actions)
+        left_layout.addWidget(control_surface)
         self.archival_banner = self._build_archival_banner()
         left_layout.addWidget(self.archival_banner)
-        # 进度与实时日志由窗口挂进这块容器，占满控制框以下的剩余高度。
+        # 进度与实时日志由窗口挂进这块容器，占满控制面以下的剩余高度。
         self.status_slot = StatusSlot()
         left_layout.addWidget(self.status_slot, 1)
         self.control_panel = left_panel
         layout.addWidget(left_panel)
 
-        result_group = QGroupBox("测量结果")
-        result_layout = QVBoxLayout(result_group)
+        # 结果面只放“测量结果”这一块内容：来源行与空态提示在上，表格占满剩余高度。
+        result_surface = build_surface(RESULT_SURFACE, title="测量结果")
+        result_layout = result_surface.layout()
+        # 用户通过文件选择器加载结果时，在这里显示来源文件名；新测量或清空后隐藏。
+        self.cable_loss_source_label = QLabel("")
+        self.cable_loss_source_label.setObjectName("emptyHint")
+        self.cable_loss_source_label.hide()
         self.cable_loss_table = QTableWidget()
         self.cable_loss_table.setColumnCount(5)
         self.cable_loss_table.setHorizontalHeaderLabels(
@@ -145,14 +152,10 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
             header.setSectionResizeMode(column, QHeaderView.Stretch)
         self.cable_loss_empty_hint = QLabel("尚无测量结果：完成测量后每个频点会在此列出线缆损耗。")
         self.cable_loss_empty_hint.setObjectName("emptyHint")
-        # 用户通过文件选择器加载结果时，在这里显示来源文件名；新测量或清空后隐藏。
-        self.cable_loss_source_label = QLabel("")
-        self.cable_loss_source_label.setObjectName("emptyHint")
-        self.cable_loss_source_label.hide()
         result_layout.addWidget(self.cable_loss_source_label)
-        result_layout.addWidget(self.cable_loss_table, 1)
         result_layout.addWidget(self.cable_loss_empty_hint)
-        layout.addWidget(result_group, 1)
+        result_layout.addWidget(self.cable_loss_table, 1)
+        layout.addWidget(result_surface, 1)
         return self
 
     def _connect_controller_signals(self, controller: Any) -> None:
@@ -296,7 +299,6 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         for column, value in enumerate(values, start=1):
             if value is not None:
                 self.cable_loss_table.setItem(row, column, _read_only_item(f"{value:.3f}"))
-        self.cable_loss_table.resizeColumnsToContents()
         self._sync_empty_hint()
 
     def show_result(self, reference: Any) -> bool:

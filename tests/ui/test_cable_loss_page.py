@@ -8,7 +8,6 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QDialog,
-    QGroupBox,
 )
 
 from application.dto import CableLossMeasurementResult, CableLossRow
@@ -329,45 +328,104 @@ class CableLossPageTests(unittest.TestCase):
 
     def test_connection_diagram_button_lives_in_measurement_controls(self):
         """接线说明只剩一个连接图入口：页面上不再有线路文字。"""
-        from PySide6.QtWidgets import QGroupBox, QTextEdit
+        from PySide6.QtWidgets import QFrame, QGroupBox, QTextEdit
 
-        titles = [box.title() for box in self.page.findChildren(QGroupBox)]
-        self.assertEqual(titles, ["测量控制", "测量结果"])
-        self.assertEqual(
-            self.page.show_cable_loss_diagram_btn.parent().title(), "测量控制"
+        self.assertEqual(self.page.findChildren(QGroupBox), [])
+        control = self.page.findChild(QFrame, "measurementSurface")
+        self.assertIsNotNone(control)
+        self.assertIs(
+            self.page.show_cable_loss_diagram_btn.parentWidget(), control
         )
         self.assertFalse(hasattr(self.page, "show_path1_btn"))
         self.assertFalse(hasattr(self.page, "show_path2_btn"))
         self.assertEqual(self.page.findChildren(QTextEdit), [])
 
-    def test_connection_diagram_button_is_on_the_load_results_row(self):
-        button = self.page.show_cable_loss_diagram_btn
-        layout = button.parentWidget().layout()
-        load_row, load_column, load_row_span, load_column_span = (
-            layout.getItemPosition(layout.indexOf(self.page.load_cable_results_btn))
+    def test_page_is_split_into_control_and_result_surfaces(self):
+        from PySide6.QtWidgets import QFrame
+
+        control = self.page.findChild(QFrame, "measurementSurface")
+        result = self.page.findChild(QFrame, "measurementResultSurface")
+        self.assertIsNotNone(control)
+        self.assertIsNotNone(result)
+        self.assertIsNot(control, result)
+        self.assertIs(control.parentWidget(), self.page.control_panel)
+
+    def test_start_is_the_only_primary_action(self):
+        primary = [
+            button
+            for button in (
+                self.page.start_measurement_btn,
+                self.page.stop_cable_loss_btn,
+                self.page.load_cable_results_btn,
+                self.page.show_cable_loss_diagram_btn,
+            )
+            if button.property("variant") == "primary"
+        ]
+        self.assertEqual(primary, [self.page.start_measurement_btn])
+
+    def test_start_measurement_takes_its_own_row_in_the_control_surface(self):
+        from PySide6.QtWidgets import QFrame
+
+        control_layout = self.page.findChild(QFrame, "measurementSurface").layout()
+        start_items = [
+            index
+            for index in range(control_layout.count())
+            if control_layout.itemAt(index).widget() is self.page.start_measurement_btn
+        ]
+        self.assertEqual(len(start_items), 1)
+        row_index = next(
+            index
+            for index in range(control_layout.count())
+            if control_layout.itemAt(index).layout() is not None
         )
-        diagram_row, diagram_column, diagram_row_span, diagram_column_span = (
-            layout.getItemPosition(layout.indexOf(button))
+        self.assertLess(start_items[0], row_index)
+
+    def test_secondary_actions_share_one_compact_row(self):
+        from PySide6.QtWidgets import QFrame
+
+        control_layout = self.page.findChild(QFrame, "measurementSurface").layout()
+        row_layout = None
+        for index in range(control_layout.count()):
+            item = control_layout.itemAt(index)
+            if item.layout() is not None:
+                row_layout = item.layout()
+                break
+        self.assertIsNotNone(row_layout)
+        self.assertEqual(
+            [row_layout.itemAt(index).widget() for index in range(row_layout.count())],
+            [
+                self.page.stop_cable_loss_btn,
+                self.page.load_cable_results_btn,
+                self.page.show_cable_loss_diagram_btn,
+            ],
         )
-        self.assertEqual((diagram_row, diagram_column), (load_row, 1))
-        self.assertEqual((diagram_row_span, diagram_column_span), (1, 1))
-        self.assertEqual((load_row_span, load_column_span), (1, 1))
+
+    def test_result_surface_holds_the_table_source_and_empty_state(self):
+        from PySide6.QtWidgets import QFrame
+
+        result = self.page.findChild(QFrame, "measurementResultSurface")
+        self.assertIs(self.page.cable_loss_table.parentWidget(), result)
+        self.assertIs(self.page.cable_loss_empty_hint.parentWidget(), result)
+        self.assertIs(self.page.cable_loss_source_label.parentWidget(), result)
+        # 空表也要显示表头：不能让用户以为表格没有加载。
+        self.assertFalse(self.page.cable_loss_table.isHidden())
+        self.assertFalse(self.page.cable_loss_empty_hint.isHidden())
 
     def test_view_diagram_button_opens_the_combined_diagram(self):
         self.page.show_cable_loss_diagram_btn.click()
         self.assertEqual(self.dialog_types, ["cable_loss_paths"])
 
     def test_status_slot_sits_below_the_measurement_controls(self):
-        """左栏在“测量控制”下面留出状态区：进度与日志由窗口挂进来。"""
+        """左栏在控制面下面留出状态区：进度与日志由窗口挂进来。"""
+        from PySide6.QtWidgets import QFrame
+
         page = self.page
         page.resize(1200, 900)
         page.show()
         self.app.processEvents()
-        group = next(
-            box for box in page.findChildren(QGroupBox) if box.title() == "测量控制"
-        )
-        self.assertIs(page.status_slot.parentWidget(), group.parentWidget())
-        self.assertGreaterEqual(page.status_slot.y(), group.y() + group.height())
+        control = page.findChild(QFrame, "measurementSurface")
+        self.assertIs(page.status_slot.parentWidget(), control.parentWidget())
+        self.assertGreaterEqual(page.status_slot.y(), control.y() + control.height())
         page.close()
 
 

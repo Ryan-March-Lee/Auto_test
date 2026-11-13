@@ -1158,6 +1158,13 @@ QFrame#measurementHairline {
     max-height: 1px;
     min-height: 1px;
 }
+/* 结果面里的表格不再自带外框：面本身已经给出白底、细边与圆角，表格再画一层边框
+   就成了“卡片里套卡片”。表头底色、网格线、选中底色与行高仍全部保留。 */
+QFrame#measurementResultSurface QTableWidget,
+QFrame#measurementResultSurface QTableView {
+    border: none;
+    border-radius: 0;
+}
 
 /* ===== 状态区 ===== */
 /* 状态面板嵌在测量页左栏里：不画自己的外框，由“测量控制”分组框与日志凹槽给出边界。 */

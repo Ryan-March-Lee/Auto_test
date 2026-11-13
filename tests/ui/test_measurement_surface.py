@@ -150,6 +150,7 @@ class MeasurementSurfaceThemeTests(unittest.TestCase):
         for selector in (
             "QFrame#measurementSurface",
             "QFrame#measurementResultSurface",
+            "QFrame#measurementResultSurface QTableWidget",
             'QLabel[role="sectionCaption"]',
             "QLabel#measurementMetric",
             "QFrame#measurementHairline",

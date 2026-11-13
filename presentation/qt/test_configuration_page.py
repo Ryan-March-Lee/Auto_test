@@ -121,7 +121,8 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
     save_requested = Signal()
     finalize_run_requested = Signal()
     load_run_requested = Signal(str)
-    connection_step_requested = Signal()
+    #: 底部“上一步”：回上一级电源配置页；切页由主窗口完成，参数原地保留。
+    power_step_requested = Signal()
     validation_failed = Signal(str)
     driver_mode_changed = Signal(bool)
     discovery_message = Signal(str)
@@ -798,7 +799,7 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         self.save_config_btn.clicked.connect(self.request_save)
         self.finalize_run_btn.clicked.connect(self.request_finalize_run)
         self.load_run_btn.clicked.connect(self.request_load_run)
-        self.previous_step_btn.clicked.connect(self.connection_step_requested.emit)
+        self.previous_step_btn.clicked.connect(self.power_step_requested.emit)
         self.add_power_scan_plan_btn.clicked.connect(self.add_power_scan_plan)
         self.rebuild_power_scan_plan_btn.clicked.connect(self.rebuild_power_scan_plans)
         self.max_input_power.valueChanged.connect(self._refresh_power_scan_previews)

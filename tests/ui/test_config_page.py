@@ -1179,11 +1179,16 @@ class ConfigurationPageTests(unittest.TestCase):
         self.assertFalse(hasattr(page, "discovery_panel"))
         self.assertFalse(hasattr(page, "attach_discovery_panel"))
         steps = []
-        page.connection_step_requested.connect(lambda: steps.append(True))
+        page.power_step_requested.connect(lambda: steps.append(True))
 
         page.previous_step_btn.click()
 
         self.assertEqual(steps, [True])
+        self.assertEqual(
+            page.previous_step_btn.text(),
+            "上一步",
+            "配置页的“上一步”只回上一级电源配置页",
+        )
         self.assertFalse(hasattr(page, "sg_address"))
         # 配置流程内不提供返回欢迎页：按钮与页面信号都已删除，返回入口只在仪表配置页。
         self.assertFalse(hasattr(page, "return_welcome_btn"))

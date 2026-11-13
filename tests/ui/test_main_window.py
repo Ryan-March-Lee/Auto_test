@@ -471,9 +471,9 @@ class MainWindowAssemblyBoundaryTests(unittest.TestCase):
         # 步骤 13 起窗口装配两个配置页（测试配置页 + 独立电源页）；仪器排布与电源配置
         # 是第三个、第四个整屏步骤，窗口只多出创建、接线与切换几行。测量工作台步骤 7
         # 只增加“连接后交接 01 线损测量”一个入口，方法保持 9 行：业务读数/校验/保存
-        # 仍在页面与协调器。
+        # 仍在页面与协调器。配置页“上一步”改为回上一级电源配置页，另加一个切页入口。
         self.assertLessEqual(
-            line_count, 750, f"main_window.py 有 {line_count} 行，超出窗口装配上限"
+            line_count, 760, f"main_window.py 有 {line_count} 行，超出窗口装配上限"
         )
 
     def test_main_window_uses_the_coordinator_for_gui_state(self):

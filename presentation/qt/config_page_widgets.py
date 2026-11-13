@@ -59,8 +59,8 @@ def build_action_bar(page) -> QWidget:
     dirty_hint.setProperty("role", "hint")
     row.addWidget(dirty_hint, 1)
 
-    page.previous_step_btn = QPushButton("上一步：仪表配置")
-    page.previous_step_btn.setToolTip("回到“仪表配置”页，重新扫描并应用本次测试使用的设备")
+    page.previous_step_btn = QPushButton("上一步")
+    page.previous_step_btn.setToolTip("回到上一级“电源配置”页，保留已经填好的电源参数")
     set_button_variant(page.previous_step_btn, "secondary")
     page.save_config_btn = QPushButton("保存配置")
     set_button_variant(page.save_config_btn, "primary")

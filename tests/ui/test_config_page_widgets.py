@@ -30,6 +30,7 @@ class BuildActionBarTests(unittest.TestCase):
 
         for name in ("previous_step_btn", "save_config_btn"):
             self.assertTrue(hasattr(page, name), f"操作栏应把 {name} 登记到页面上")
+        self.assertEqual(page.previous_step_btn.text(), "上一步")
         self.assertEqual(page.save_config_btn.text(), "保存配置")
 
     def test_action_bar_does_not_offer_a_return_to_welcome_entry(self):

@@ -1686,8 +1686,8 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertTrue(page.open_report_button.isEnabled())
         self.assertEqual(service.result_ids, [RESULT_ID, RESULT_ID])
 
-    def test_previous_step_returns_to_the_connection_page(self):
-        """测试配置页的“上一步”回到仪器连接配置页，“下一步”再回来。"""
+    def test_previous_step_returns_to_the_power_configuration_page(self):
+        """测试配置页的“上一步”回上一级电源配置页，“下一步”再回到同一标签页。"""
         self._silence_dialogs()
         window = self._window()
 
@@ -1700,24 +1700,33 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         window.rack_page.finish_transition()
         self.assertIs(window.view_stack.currentWidget(), window.power_page)
         window.power_page.finish_card_morph()
+        power_before_step_away = copy.deepcopy(window.power_page.build_config())
         window.power_page.next_btn.click()
         self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
+        window.test_config_page.freq_start.setValue(12.5)
 
         window.test_config_page.previous_step_btn.click()
-        self.assertIs(window.view_stack.currentWidget(), window.connection_page)
 
-        # 回到仪表配置页会清空上一次结果：必须重新查找并选择，不能沿用旧绑定直接推进。
-        self._scan_and_select(window)
-        window.connection_page.next_btn.click()
-        self.assertIs(window.view_stack.currentWidget(), window.rack_page)
-        window.rack_page.finish_transition()
-        window.rack_page.next_btn.click()
-        window.rack_page.finish_transition()
-        self.assertIs(window.view_stack.currentWidget(), window.power_page)
-        window.power_page.finish_card_morph()
+        self.assertIs(
+            window.view_stack.currentWidget(),
+            window.power_page,
+            "“上一步”只退一级，不能越过电源配置页回到仪表配置页",
+        )
+        self.assertEqual(
+            window.power_page.build_config(),
+            power_before_step_away,
+            "返回电源配置页不能重置已经填好的电源参数",
+        )
+
         window.power_page.next_btn.click()
+
         self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
         self.assertIs(window.tab_widget.currentWidget(), window.test_config_page)
+        self.assertEqual(
+            window.test_config_page.freq_start.value(),
+            12.5,
+            "往返电源配置页不能丢掉测试配置页已经填好的参数",
+        )
 
     def test_rack_previous_step_returns_to_the_same_selection_result(self):
         """仪器排布页的“上一步”回到本次选择结果，卡片与勾选都还在。"""
@@ -1873,7 +1882,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         port = _ConnectedPort()
         self.assertTrue(window.coordinator.commit_finalization(port))
         window.on_instrument_connected()
-        # 真实路径：从工作区切回测试配置页后点“上一步：仪表配置”；这里直接调同一入口。
+        # 真实路径：仪器排布页的“上一步”；这里直接调同一入口。
         window._return_to_connection_page(keep_results=True)
         self.assertIs(window.view_stack.currentWidget(), window.connection_page)
 

@@ -278,6 +278,15 @@ class MainWindow(QMainWindow):
         self._sync_status_panel_visibility()
         self._sync_finalize_entry()
 
+    def _return_to_power_configuration(self) -> None:
+        """测试配置页“上一步”：回上一级电源配置页，两页参数原地保留。
+
+        不调用 ``power_page.enter()``：电源页只在首次进入重置一次，往返不丢参数。
+        """
+        self.view_stack.setCurrentWidget(self.power_page)
+        self._sync_status_panel_visibility()
+        self._sync_finalize_entry()
+
     def _return_to_rack_page(self) -> None:
         """电源配置页“上一步”：回仪器排布页，保留已摆放的格位与卡片。"""
         self.power_page.finish_card_morph()
@@ -287,7 +296,7 @@ class MainWindow(QMainWindow):
         self._sync_finalize_entry()
 
     def _return_to_connection_page(self, *, keep_results: bool = False) -> None:
-        """回上一步：测试配置页重新查找；排布页保留本次选择结果（``keep_results``）。"""
+        """排布页“上一步”：回仪表配置页；``keep_results`` 为假时重新查找，否则保留结果。"""
         enter = self.connection_page.resume if keep_results else self.connection_page.enter
         enter()
         self.view_stack.setCurrentWidget(self.connection_page)
@@ -423,7 +432,7 @@ class MainWindow(QMainWindow):
         tab.finalize_run_requested.connect(self._finalize_run)
         tab.load_run_requested.connect(self.coordinator.load_prepared_run)
         tab.load_run_requested.connect(self._on_run_loaded)
-        tab.connection_step_requested.connect(self._return_to_connection_page)
+        tab.power_step_requested.connect(self._return_to_power_configuration)
         tab.validation_failed.connect(
             lambda message: self.add_log_message(f"配置校验失败: {message}")
         )

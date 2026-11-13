@@ -312,14 +312,14 @@ class MeasurementWorkspace(QWidget):
         self.subtitle_label.setText(subtitle.strip())
 
     def set_run_identity(
-        self, run_id: str | None, mode_text: str | None
+        self, run_id: str | None, mode_label: str | None
     ) -> None:
         """写入页头展示的 run 标识与模式文本；只展示，不判断连接状态。
 
         ``run_id`` 为空时显示“未连接”；模式文本为空时只显示 run 部分。
         """
         self._run_id = _clean_text(run_id)
-        self._mode_text = _clean_text(mode_text)
+        self._mode_text = _clean_text(mode_label)
         self.run_identity_label.setText(self._format_run_identity())
 
     def _format_run_identity(self) -> str:

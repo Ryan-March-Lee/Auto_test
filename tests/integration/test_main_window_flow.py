@@ -792,8 +792,57 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         )
         self.assertEqual(window.mode_badge.text(), "未选择测试模式")
 
+    def test_returning_to_welcome_resets_the_driver_mode_state(self):
+        """回到欢迎页不只是清文案：驱动页、阶段条和徽标一起复位。"""
+        self._silence_dialogs()
+        self.config_path.write_text(
+            json.dumps(_fully_valid_gui_config(driver_enabled=True)),
+            encoding="utf-8",
+        )
+        window = self._window()
+        window._enter_test_mode(True)
+        prepared = self._prepare_and_commit(window)
+        window.on_instrument_connected()
+
+        rail = window.measurement_workspace.stage_rail()
+        index = window._driver_mapping_tab_index
+        self.assertIsNotNone(prepared)
+        self.assertTrue(window.tab_widget.isTabVisible(index))
+        self.assertTrue(rail.is_stage_enabled("driver_mapping"))
+
+        window._return_to_welcome()
+
+        self.assertIs(window.view_stack.currentWidget(), window.welcome_page)
+        self.assertFalse(window.tab_widget.isTabVisible(index))
+        self.assertFalse(rail.is_stage_enabled("driver_mapping"))
+        self.assertEqual(window.mode_badge.text(), "未选择测试模式")
+        self.assertEqual(window.measurement_workspace.run_identity(), (None, None))
+
+    def test_new_mode_selection_is_not_overridden_by_the_previous_run(self):
+        """返回欢迎页后选择新模式，旧运行的驱动模式不能把界面改回去。"""
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+        self._prepare_and_commit(window)
+        window.on_instrument_connected()
+        window._return_to_welcome()
+        window._enter_test_mode(True)
+
+        rail = window.measurement_workspace.stage_rail()
+        index = window._driver_mapping_tab_index
+        self.assertTrue(window.tab_widget.isTabVisible(index))
+        self.assertTrue(rail.is_stage_enabled("driver_mapping"))
+        self.assertEqual(window.mode_badge.text(), "有驱放测试")
+
+        window._sync_finalize_entry()
+
+        self.assertTrue(window.tab_widget.isTabVisible(index))
+        self.assertTrue(rail.is_stage_enabled("driver_mapping"))
+        self.assertEqual(window.mode_badge.text(), "有驱放测试")
+        self.assertEqual(window.measurement_workspace.run_identity(), (None, None))
+
     def test_loading_a_frozen_run_refreshes_identity_and_driver_mode_together(self):
-        """加载已冻结运行会改变驱动模式：页头、徽标、标签页与阶段条一起跟新。"""
+        """加载已冻结运行会改变驱动模式：页头、徽标、标签页与阶段条一起更新。"""
         from app.gui_runtime import prepare_configuration
 
         self._silence_dialogs()

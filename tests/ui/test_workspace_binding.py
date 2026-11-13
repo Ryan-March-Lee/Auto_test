@@ -20,7 +20,7 @@ import unittest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QCoreApplication, QEvent  # noqa: E402
-from PySide6.QtWidgets import QApplication, QTabWidget, QWidget  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLabel, QTabWidget, QWidget  # noqa: E402
 
 from presentation.qt.measurement_stage import (  # noqa: E402
     MEASUREMENT_STAGES,
@@ -75,11 +75,14 @@ class WorkspaceBindingTests(unittest.TestCase):
             "amplifier": self.amplifier_page,
             "test_report": self.report_page,
         }
+        self.mode_badge = QLabel()
+        self.addCleanup(_destroy, self.mode_badge)
         self.binding = WorkspaceBinding(
             self.workspace,
             self.tabs,
             self.pages,
             utility_subtitles={"test_configuration": "参数、频点与连接"},
+            mode_badge=self.mode_badge,
         )
 
     def _select(self, page):
@@ -214,6 +217,78 @@ class WorkspaceBindingTests(unittest.TestCase):
         self.assertIs(
             rail.display_state_for("driver_mapping"), StageState.PENDING
         )
+
+    # ---- 会话模式与运行身份 -------------------------------------------------
+
+    def _driver_tab_visible(self):
+        return self.tabs.isTabVisible(self.tabs.indexOf(self.driver_mapping_page))
+
+    def test_start_session_writes_mode_to_badge_driver_tab_and_rail(self):
+        rail = self.workspace.stage_rail()
+
+        self.binding.start_session(False)
+
+        self.assertEqual(self.mode_badge.text(), "无驱放测试")
+        self.assertFalse(self._driver_tab_visible())
+        self.assertFalse(rail.is_stage_enabled("driver_mapping"))
+        self.assertIs(self.binding.driver_mode(), False)
+        self.assertEqual(self.workspace.run_identity(), (None, None))
+
+        self.binding.start_session(True)
+
+        self.assertEqual(self.mode_badge.text(), "有驱放测试")
+        self.assertTrue(self._driver_tab_visible())
+        self.assertTrue(rail.is_stage_enabled("driver_mapping"))
+        self.assertIs(self.binding.driver_mode(), True)
+
+    def test_reset_identity_restores_the_unselected_state(self):
+        rail = self.workspace.stage_rail()
+        self.binding.bind_run_identity("run-1", True)
+
+        self.binding.reset_identity()
+
+        self.assertEqual(self.mode_badge.text(), "未选择测试模式")
+        self.assertFalse(self._driver_tab_visible())
+        self.assertFalse(rail.is_stage_enabled("driver_mapping"))
+        self.assertIsNone(self.binding.driver_mode())
+        self.assertEqual(self.workspace.run_identity(), (None, None))
+        self.assertEqual(self.workspace.run_identity_label.text(), "未连接")
+
+    def test_start_session_clears_a_previous_run_identity(self):
+        self.binding.bind_run_identity("run-1", True)
+
+        self.binding.start_session(False)
+
+        self.assertEqual(self.workspace.run_identity(), (None, None))
+        self.assertIs(self.binding.driver_mode(), False)
+
+    def test_sync_run_identity_only_writes_the_associated_run(self):
+        self.binding.bind_run_identity("run-1", True)
+
+        self.binding.sync_run_identity("run-1")
+        self.assertEqual(
+            self.workspace.run_identity(), ("run-1", "有驱放测试")
+        )
+
+        self.binding.sync_run_identity("run-old")
+        self.assertEqual(self.workspace.run_identity(), (None, None))
+        self.assertTrue(
+            self._driver_tab_visible(),
+            "刷新页头身份不能改变会话模式或驱动映射标签页",
+        )
+        self.assertIs(self.binding.driver_mode(), True)
+
+    def test_missing_badge_and_driver_page_do_not_raise(self):
+        binding = WorkspaceBinding(
+            self.workspace, self.tabs, {"cable_loss": self.cable_loss_page}
+        )
+
+        binding.start_session(True)
+        binding.sync_run_identity("run-1")
+        binding.reset_identity()
+
+        self.assertIsNone(binding.driver_mode())
+        self.assertEqual(self.workspace.run_identity(), (None, None))
 
 
 if __name__ == "__main__":

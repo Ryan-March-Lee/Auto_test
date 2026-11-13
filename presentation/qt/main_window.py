@@ -154,12 +154,14 @@ class MainWindow(QMainWindow):
         self.tab_widget.setDocumentMode(True)
         self.measurement_workspace.set_content(self.tab_widget)
         self._register_pages()
+        self.mode_badge = self._build_mode_badge()
         # 标签宿主与外壳之间只有一条同步路径：阶段导航、页头同步、阶段停用都在这里。
         self.workspace_binding = WorkspaceBinding(
             self.measurement_workspace,
             self.tab_widget,
             self.pages,
             utility_subtitles={"test_configuration": "参数、频点与连接"},
+            mode_badge=self.mode_badge,
         )
         self.measurement_workspace.stage_selected.connect(
             self.workspace_binding.navigate
@@ -176,7 +178,8 @@ class MainWindow(QMainWindow):
             self.coordinator.editing_read_only_reason()
         )
         # 测试模式徽标并入工作台页头右侧：系统名与版本号已由窗口标题栏显示，不再重复一行。
-        self.measurement_workspace.add_right_widget(self._build_mode_badge())
+        self.measurement_workspace.add_right_widget(self.mode_badge)
+        self.workspace_binding.reset_identity()
 
         self.workspace_page = QWidget()
         workspace_layout = QVBoxLayout(self.workspace_page)
@@ -239,7 +242,7 @@ class MainWindow(QMainWindow):
         self.configuration_editor.set_read_only(read_only_reason)
         if read_only_reason:
             self.add_log_message(f"配置只读: {read_only_reason}")
-        self._apply_driver_mode_to_pages(driver_enabled)
+        self.workspace_binding.start_session(driver_enabled)
         self.tab_widget.setCurrentIndex(0)
         self.coordinator.begin_device_selection()
         self.connection_page.enter()
@@ -293,31 +296,17 @@ class MainWindow(QMainWindow):
         self.view_stack.setCurrentWidget(self.connection_page)
         self._sync_status_panel_visibility()
 
-    def _apply_driver_mode_to_pages(self, driver_enabled: bool) -> None:
-        """无驱放测试隐藏驱动映射页并停用 02 阶段；测试模式徽标也从同一处写入。"""
-        enabled = bool(driver_enabled)
-        index = getattr(self, "_driver_mapping_tab_index", -1)
-        if index >= 0:
-            self.tab_widget.setTabVisible(index, enabled)
-        self.workspace_binding.set_stage_enabled("driver_mapping", enabled)
-        self.mode_badge.setText(mode_text(enabled))
-
-    def _sync_workspace_identity(self) -> None:
-        """把当前 run 与驱动模式同步到页头，并让徽标、标签页与阶段条一起跟新。"""
-        # 配置页回归用例会以 __new__ 构造窗口：装配尚未完成时不能强制刷新页头。
-        if getattr(self, "workspace_binding", None) is None:
-            return
-        driver_enabled = self.coordinator.amplifier_driver_mode()
-        self._apply_driver_mode_to_pages(driver_enabled)
-        self.measurement_workspace.set_run_identity(
-            self.coordinator.current_run_id(), mode_text(driver_enabled)
-        )
+    def _on_run_loaded(self, run_id: str) -> None:
+        """加载冻结运行：只有真正切换成功才把它的模式带回工作台。"""
+        binding = getattr(self, "workspace_binding", None)
+        if binding is not None and self.coordinator.current_run_id() == run_id:
+            binding.bind_run_identity(run_id, self.coordinator.amplifier_driver_mode())
+        self._sync_finalize_entry()
 
     def _return_to_welcome(self) -> None:
         if confirm_leave_configuration(self, self.configuration_editor.is_dirty()):
-            self.mode_badge.setText(mode_text(None))
-            self.measurement_workspace.set_run_identity(None, None)
             self.view_stack.setCurrentWidget(self.welcome_page)
+            self.workspace_binding.reset_identity()
 
     def _register_pages(self):
         """构造标签页并登记；测量页面通过共享 controller 连接。
@@ -425,7 +414,7 @@ class MainWindow(QMainWindow):
         tab.save_requested.connect(self.save_config)
         tab.finalize_run_requested.connect(self._finalize_run)
         tab.load_run_requested.connect(self.coordinator.load_prepared_run)
-        tab.load_run_requested.connect(lambda _run_id: self._sync_finalize_entry())
+        tab.load_run_requested.connect(self._on_run_loaded)
         tab.return_welcome_requested.connect(self._return_to_welcome)
         tab.connection_step_requested.connect(self._return_to_connection_page)
         tab.validation_failed.connect(
@@ -537,8 +526,10 @@ class MainWindow(QMainWindow):
             page.set_reconnect_required(
                 self.coordinator.can_reconnect_current_run()
             )
-        # 加载运行或保存后切换后台上下文都会改变页头身份与驱动模式，两者一起刷新。
-        self._sync_workspace_identity()
+        # 加载运行或保存后切换后台上下文会改变页头身份；模式不在这里重算。
+        binding = getattr(self, "workspace_binding", None)
+        if binding is not None:
+            binding.sync_run_identity(self.coordinator.current_run_id())
 
     def _bind_instrument_worker_signals(self, worker):
         worker.signals.finished.connect(self.on_instrument_connected)
@@ -563,7 +554,9 @@ class MainWindow(QMainWindow):
         self.add_log_message("所有仪器连接成功！")
         self._restore_test_config_page()
         # 提交成功后本次运行才成为当前运行：页头在这一刻显示 run id 与测试模式。
-        self._sync_workspace_identity()
+        self.workspace_binding.bind_run_identity(
+            self.coordinator.current_run_id(), self.coordinator.amplifier_driver_mode()
+        )
         self.tab_widget.setCurrentIndex(0)
         self.view_stack.setCurrentWidget(self.workspace_page)
         self._sync_status_panel_visibility()

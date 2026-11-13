@@ -754,6 +754,82 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
             window.measurement_workspace.configuration_btn.isEnabled()
         )
 
+    def test_connected_run_shows_its_identity_in_the_header(self):
+        """步骤 6：连接成功后页头显示本次 run 与测试模式，而不只是徽标。"""
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+
+        prepared = self._finalize_with_fake_worker(window)
+        window.on_instrument_controller_ready(_ConnectedPort())
+        window.on_instrument_connected()
+
+        workspace = window.measurement_workspace
+        self.assertIs(window.prepared_run, prepared)
+        self.assertEqual(
+            workspace.run_identity(), (prepared.run_id, "无驱放测试")
+        )
+        self.assertIn(prepared.run_id, workspace.run_identity_label.text())
+        self.assertIn("无驱放测试", workspace.run_identity_label.text())
+        self.assertEqual(window.mode_badge.text(), "无驱放测试")
+
+    def test_returning_to_welcome_clears_the_header_identity_and_mode(self):
+        """回到欢迎页后页头不能继续挂着上一轮的 run 与模式。"""
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+        self._finalize_with_fake_worker(window)
+        window.on_instrument_controller_ready(_ConnectedPort())
+        window.on_instrument_connected()
+        self.assertIsNotNone(window.measurement_workspace.run_identity()[0])
+
+        window._return_to_welcome()
+
+        self.assertIs(window.view_stack.currentWidget(), window.welcome_page)
+        self.assertEqual(window.measurement_workspace.run_identity(), (None, None))
+        self.assertEqual(
+            window.measurement_workspace.run_identity_label.text(), "未连接"
+        )
+        self.assertEqual(window.mode_badge.text(), "未选择测试模式")
+
+    def test_loading_a_frozen_run_refreshes_identity_and_driver_mode_together(self):
+        """加载已冻结运行会改变驱动模式：页头、徽标、标签页与阶段条一起跟新。"""
+        from app.gui_runtime import prepare_configuration
+
+        self._silence_dialogs()
+        run_id = "20261113T010203Z_loaddrv"
+        driver_config = self.root / "driver-config.json"
+        driver_config.write_text(
+            json.dumps(_fully_valid_gui_config(driver_enabled=True)),
+            encoding="utf-8",
+        )
+        prepare_configuration(
+            str(driver_config),
+            run_id=run_id,
+            run_repository=RunRepository(paths=self.paths),
+        )
+
+        window = self._window()
+        window._enter_test_mode(False)
+        rail = window.measurement_workspace.stage_rail()
+        self.assertFalse(
+            window.tab_widget.isTabVisible(window._driver_mapping_tab_index)
+        )
+        self.assertFalse(rail.is_stage_enabled("driver_mapping"))
+
+        window.test_config_page.load_run_requested.emit(run_id)
+        self.app.processEvents()
+
+        self.assertEqual(window.prepared_run.run_id, run_id)
+        self.assertEqual(
+            window.measurement_workspace.run_identity(), (run_id, "有驱放测试")
+        )
+        self.assertEqual(window.mode_badge.text(), "有驱放测试")
+        self.assertTrue(
+            window.tab_widget.isTabVisible(window._driver_mapping_tab_index)
+        )
+        self.assertTrue(rail.is_stage_enabled("driver_mapping"))
+
     def test_no_driver_mode_disables_the_driver_mapping_stage(self):
         """无驱放测试：02 号阶段保留但停用，启用后恢复可点。"""
         from presentation.qt.measurement_stage import StageState

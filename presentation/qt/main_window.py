@@ -33,7 +33,7 @@ from presentation.qt.power_configuration_page import PowerConfigurationPage
 from presentation.qt.rack_overview_page import RackOverviewPage
 from presentation.qt.history_view_model import HistoryViewModel
 from presentation.qt.measurement_stage import MEASUREMENT_STAGES
-from presentation.qt.measurement_workspace import MeasurementWorkspace
+from presentation.qt.measurement_workspace import MeasurementWorkspace, mode_text
 from presentation.qt.pages import PageContext, build_pages
 from presentation.qt.realtime_plot import RealTimePlotWidget
 from presentation.qt.stage_result_selection import (
@@ -226,7 +226,7 @@ class MainWindow(QMainWindow):
 
     def _build_mode_badge(self):
         """当前测试模式徽标（只读展示），显示在工作台页头右侧。"""
-        self.mode_badge = QLabel("未选择测试模式")
+        self.mode_badge = QLabel(mode_text(None))
         self.mode_badge.setObjectName("appModeBadge")
         return self.mode_badge
 
@@ -240,7 +240,6 @@ class MainWindow(QMainWindow):
         if read_only_reason:
             self.add_log_message(f"配置只读: {read_only_reason}")
         self._apply_driver_mode_to_pages(driver_enabled)
-        self.mode_badge.setText("有驱放测试" if driver_enabled else "无驱放测试")
         self.tab_widget.setCurrentIndex(0)
         self.coordinator.begin_device_selection()
         self.connection_page.enter()
@@ -295,19 +294,29 @@ class MainWindow(QMainWindow):
         self._sync_status_panel_visibility()
 
     def _apply_driver_mode_to_pages(self, driver_enabled: bool) -> None:
-        """无驱放测试没有驱动功放，只隐藏驱动映射标签页；页面实例与绑定保留。
-
-        阶段条对应项同步为不可用：仍是固定的 02 号阶段，只由 enabled 派生停用态。
-        """
+        """无驱放测试隐藏驱动映射页并停用 02 阶段；测试模式徽标也从同一处写入。"""
         enabled = bool(driver_enabled)
         index = getattr(self, "_driver_mapping_tab_index", -1)
         if index >= 0:
             self.tab_widget.setTabVisible(index, enabled)
         self.workspace_binding.set_stage_enabled("driver_mapping", enabled)
+        self.mode_badge.setText(mode_text(enabled))
+
+    def _sync_workspace_identity(self) -> None:
+        """把当前 run 与驱动模式同步到页头，并让徽标、标签页与阶段条一起跟新。"""
+        # 配置页回归用例会以 __new__ 构造窗口：装配尚未完成时不能强制刷新页头。
+        if getattr(self, "workspace_binding", None) is None:
+            return
+        driver_enabled = self.coordinator.amplifier_driver_mode()
+        self._apply_driver_mode_to_pages(driver_enabled)
+        self.measurement_workspace.set_run_identity(
+            self.coordinator.current_run_id(), mode_text(driver_enabled)
+        )
 
     def _return_to_welcome(self) -> None:
         if confirm_leave_configuration(self, self.configuration_editor.is_dirty()):
-            self.mode_badge.setText("未选择测试模式")
+            self.mode_badge.setText(mode_text(None))
+            self.measurement_workspace.set_run_identity(None, None)
             self.view_stack.setCurrentWidget(self.welcome_page)
 
     def _register_pages(self):
@@ -528,6 +537,8 @@ class MainWindow(QMainWindow):
             page.set_reconnect_required(
                 self.coordinator.can_reconnect_current_run()
             )
+        # 加载运行或保存后切换后台上下文都会改变页头身份与驱动模式，两者一起刷新。
+        self._sync_workspace_identity()
 
     def _bind_instrument_worker_signals(self, worker):
         worker.signals.finished.connect(self.on_instrument_connected)
@@ -551,6 +562,8 @@ class MainWindow(QMainWindow):
             return
         self.add_log_message("所有仪器连接成功！")
         self._restore_test_config_page()
+        # 提交成功后本次运行才成为当前运行：页头在这一刻显示 run id 与测试模式。
+        self._sync_workspace_identity()
         self.tab_widget.setCurrentIndex(0)
         self.view_stack.setCurrentWidget(self.workspace_page)
         self._sync_status_panel_visibility()

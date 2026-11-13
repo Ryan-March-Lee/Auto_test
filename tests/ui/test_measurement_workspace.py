@@ -42,6 +42,7 @@ from presentation.qt.measurement_stage_rail import (  # noqa: E402
 )
 from presentation.qt.measurement_workspace import (  # noqa: E402
     MeasurementWorkspace,
+    mode_text,
 )
 
 
@@ -537,6 +538,21 @@ class RightStatusAreaTests(_WorkspaceTestCase):
         self.app.processEvents()
 
         self.assertEqual(events, ["configuration"])
+
+
+class ModeTextTests(unittest.TestCase):
+    """驱动模式文案只有一份来源：页头与徽标不再各写一套字面量。"""
+
+    def test_driver_mode_maps_to_the_shared_text(self):
+        self.assertEqual(mode_text(True), "有驱放测试")
+        self.assertEqual(mode_text(False), "无驱放测试")
+
+    def test_unselected_mode_is_explicit(self):
+        self.assertEqual(mode_text(None), "未选择测试模式")
+
+    def test_mode_text_rejects_other_values(self):
+        with self.assertRaises(TypeError):
+            mode_text("有驱放测试")
 
 
 class RunIdentityTests(_WorkspaceTestCase):

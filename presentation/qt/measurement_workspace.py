@@ -55,7 +55,7 @@ from .measurement_stage import (
 from .measurement_stage_rail import MeasurementStageRail
 from .theme import set_button_variant
 
-__all__ = ["MeasurementWorkspace"]
+__all__ = ["MeasurementWorkspace", "mode_text"]
 
 #: 工具页（测试配置等）的 eyebrow：它不属于 01–04 阶段，不能显示阶段编号。
 _UTILITY_EYEBROW = "工作区"
@@ -63,8 +63,26 @@ _UTILITY_EYEBROW = "工作区"
 #: 没有 run 标识时页头显示的固定文案；步骤 6 只传入文本，不在外壳判断连接状态。
 _UNCONNECTED_RUN_TEXT = "未连接"
 
+#: 驱动模式文案：页头与测试模式徽标共用同一份来源，避免三处字面量各自漂移。
+_MODE_TEXT_DRIVER = "有驱放测试"
+_MODE_TEXT_NO_DRIVER = "无驱放测试"
+_MODE_TEXT_UNSET = "未选择测试模式"
+
 _HEADER_MARGINS = (16, 12, 16, 8)
 _CONTENT_MARGINS = (16, 0, 12, 12)
+
+
+def mode_text(driver_enabled: bool | None) -> str:
+    """把驱动模式折成页头与徽标共用的唯一文案。
+
+    ``None`` 表示还没有选择测试模式（欢迎页或刚返回欢迎页）；``True`` / ``False``
+    分别表示有驱放测试与无驱放测试。这是纯展示格式，不读取配置，也不决定页面状态。
+    """
+    if driver_enabled is None:
+        return _MODE_TEXT_UNSET
+    if not isinstance(driver_enabled, bool):
+        raise TypeError("驱动模式必须是 bool 或 None")
+    return _MODE_TEXT_DRIVER if driver_enabled else _MODE_TEXT_NO_DRIVER
 
 
 def _clean_text(value: str | None) -> str | None:

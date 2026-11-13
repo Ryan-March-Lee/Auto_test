@@ -8,8 +8,6 @@ from typing import Any, Callable
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QDialog,
-    QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -34,6 +32,13 @@ from .measurement_state import (
     DriverMappingPageResultState,
     MeasurementKind,
     StageResultSelection,
+)
+from .measurement_surface import (
+    CONTROL_SURFACE,
+    RESULT_SURFACE,
+    build_surface,
+    hairline,
+    section_caption,
 )
 from .pages import PageControllerBindingMixin
 from .realtime_buffer import RealtimeMeasurementBuffer
@@ -99,7 +104,7 @@ class DriverMappingPage(
         layout.setContentsMargins(0, 4, 0, 0)
         layout.setSpacing(12)
 
-        # 左侧只放测量控制与状态区（进度 + 实时日志），宽度固定为窄栏；右侧整块留给四张图。
+        # 左侧窄栏自上而下放控制面与状态面板（进度 + 实时日志）；右侧整块留给四张图。
         # 接线说明只保留连接图入口：测试者已知道仪器怎么接，按钮只用于防止忘记。
         # 宽度与另两个测量页共用 theme 里的同一组常量。
         left_panel = QWidget()
@@ -109,10 +114,8 @@ class DriverMappingPage(
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(12)
 
-        control_group = QGroupBox("测量控制")
-        control_layout = QGridLayout(control_group)
-        control_layout.setHorizontalSpacing(8)
-        control_layout.setVerticalSpacing(8)
+        control_surface = build_surface(CONTROL_SURFACE, title="测量控制")
+        control_layout = control_surface.layout()
         self.driver_mapping_btn = QPushButton("开始驱动映射")
         set_button_variant(self.driver_mapping_btn, "primary")
         self.driver_mapping_btn.clicked.connect(self.start_measurement)
@@ -133,32 +136,36 @@ class DriverMappingPage(
             },
         )
         self.controls.show_idle()
-        # 测量控制按钮横向排列在同一行，减少纵向占用面积；连接图入口单独占下一行。
-        for column, button in enumerate(
-            (
-                self.driver_mapping_btn,
-                self.driver_stop_btn,
-            )
-        ):
-            control_layout.addWidget(button, 0, column)
-        control_layout.addWidget(self.load_cable_loss_btn, 1, 0, 1, 2)
-        control_layout.addWidget(self.show_driver_diagram_btn, 2, 0, 1, 2)
-        left_layout.addWidget(control_group)
-        # 线损是驱动映射的前置输入：这里持续回显来源文件与测量时间，未选择时明确提示。
+        # 开始是控制面唯一的主操作，独占整行；停止与连接图收成一行紧凑次操作。
+        control_layout.addWidget(self.driver_mapping_btn)
+        secondary_actions = QHBoxLayout()
+        secondary_actions.setSpacing(8)
+        for button in (self.driver_stop_btn, self.show_driver_diagram_btn):
+            secondary_actions.addWidget(button, 1)
+        control_layout.addLayout(secondary_actions)
+        # 线损是驱动映射的前置输入：加载入口与来源文件、测量时间同属“校准输入”区块。
+        # 未选择时这里给出明确空态，但“是否允许启动”的判断仍留在 start_measurement。
+        control_layout.addWidget(hairline())
+        control_layout.addWidget(section_caption("校准输入"))
+        control_layout.addWidget(self.load_cable_loss_btn)
         self.cable_loss_source_label = QLabel()
         self.cable_loss_source_label.setObjectName("emptyHint")
         self.cable_loss_source_label.setWordWrap(True)
-        left_layout.addWidget(self.cable_loss_source_label)
+        control_layout.addWidget(self.cable_loss_source_label)
+        left_layout.addWidget(control_surface)
         self._sync_cable_loss_label()
         self.archival_banner = self._build_archival_banner()
         left_layout.addWidget(self.archival_banner)
-        # 进度与实时日志由窗口挂进这块容器，占满控制框以下的剩余高度。
+        # 进度与实时日志由窗口挂进这块容器，占满控制面以下的剩余高度。
         self.status_slot = StatusSlot()
         left_layout.addWidget(self.status_slot, 1)
         self.control_panel = left_panel
         layout.addWidget(left_panel)
 
-        self.driver_plot_widget = self._plot_widget_factory(self)
+        # 结果面只承载“测量结果”这一块内容：频点浏览与四张图由绘图控件自带。
+        result_surface = build_surface(RESULT_SURFACE, title="测量结果")
+        result_layout = result_surface.layout()
+        self.driver_plot_widget = self._plot_widget_factory(result_surface)
         self._realtime_plot_widget = self.driver_plot_widget
         prev_clicked = getattr(self.driver_plot_widget, "prev_clicked", None)
         next_clicked = getattr(self.driver_plot_widget, "next_clicked", None)
@@ -166,7 +173,8 @@ class DriverMappingPage(
             prev_clicked.connect(self.previous_frequency)
         if next_clicked is not None:
             next_clicked.connect(self.next_frequency)
-        layout.addWidget(self.driver_plot_widget, 1)
+        result_layout.addWidget(self.driver_plot_widget, 1)
+        layout.addWidget(result_surface, 1)
         return self
 
     def _connect_controller_signals(self, controller: Any) -> None:

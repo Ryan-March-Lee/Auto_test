@@ -4,7 +4,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QDialog, QGroupBox, QWidget
+from PySide6.QtWidgets import QApplication, QDialog, QLabel, QWidget
 
 from application.dto import DriverMappingRawPoint, DriverPowerMappingMeasurementResult
 from presentation.qt.driver_mapping_page import DriverMappingPage
@@ -356,50 +356,135 @@ class DriverMappingPageTests(unittest.TestCase):
         self.assertIsNone(self.page.cable_loss_selection)
         self.assertIn("未选择线损结果", self.page.cable_loss_source_label.text())
 
-    def test_control_buttons_share_one_row(self):
+    def test_stop_and_diagram_share_one_row_below_start(self):
         page = self.page
         page.resize(1200, 800)
         page.show()
         self.app.processEvents()
-        buttons = (
-            page.driver_mapping_btn,
-            page.driver_stop_btn,
-        )
-        tops = {button.geometry().top() for button in buttons}
-        self.assertEqual(len(tops), 1)
-        lefts = [button.geometry().left() for button in buttons]
+        stop_top = page.driver_stop_btn.geometry().top()
+        self.assertEqual(stop_top, page.show_driver_diagram_btn.geometry().top())
+        self.assertLess(page.driver_mapping_btn.geometry().top(), stop_top)
+        lefts = [page.driver_stop_btn.geometry().left(), page.show_driver_diagram_btn.geometry().left()]
         self.assertEqual(lefts, sorted(lefts))
         page.close()
 
     def test_left_column_holds_controls_and_plot_takes_the_right(self):
-        from PySide6.QtWidgets import QGroupBox
+        from PySide6.QtWidgets import QFrame
 
         page = self.page
         page.resize(1400, 800)
         page.show()
         self.app.processEvents()
-        titles = [box.title() for box in page.control_panel.findChildren(QGroupBox)]
-        self.assertEqual(titles, ["测量控制"])
-        # 接线说明只保留连接图按钮，按钮归入测量控制。
-        self.assertEqual(page.show_driver_diagram_btn.parent().title(), "测量控制")
+        result = page.findChild(QFrame, "measurementResultSurface")
+        self.assertIsNotNone(result)
         # 左栏宽度取 theme 里的共用常量，与另两个测量页保持一致。
         self.assertEqual(page.control_panel.width(), MEASUREMENT_LEFT_PANEL_MIN_WIDTH)
         self.assertLess(
             page.control_panel.x() + page.control_panel.width(),
-            page.driver_plot_widget.x(),
+            result.x(),
         )
+        self.assertIs(page.driver_plot_widget.parentWidget(), result)
         page.close()
 
     def test_status_slot_sits_below_the_measurement_controls(self):
-        """左栏在“测量控制”下面留出状态区：进度与日志由窗口挂进来。"""
+        """左栏在控制面下面留出状态区：进度与日志由窗口挂进来。"""
+        from PySide6.QtWidgets import QFrame
+
         page = self.page
         page.resize(1400, 900)
         page.show()
         self.app.processEvents()
-        group = next(box for box in page.control_panel.findChildren(QGroupBox))
-        self.assertIs(page.status_slot.parentWidget(), page.control_panel)
-        self.assertGreaterEqual(page.status_slot.y(), group.y() + group.height())
+        control = page.findChild(QFrame, "measurementSurface")
+        self.assertIs(page.status_slot.parentWidget(), control.parentWidget())
+        self.assertGreaterEqual(page.status_slot.y(), control.y() + control.height())
         page.close()
+
+    def test_page_is_split_into_control_and_result_surfaces(self):
+        from PySide6.QtWidgets import QFrame
+
+        control = self.page.findChild(QFrame, "measurementSurface")
+        result = self.page.findChild(QFrame, "measurementResultSurface")
+        self.assertIsNotNone(control)
+        self.assertIsNotNone(result)
+        self.assertIsNot(control, result)
+        self.assertIs(control.parentWidget(), self.page.control_panel)
+        self.assertIs(result.parentWidget(), self.page)
+
+    def test_page_has_no_group_boxes(self):
+        from PySide6.QtWidgets import QGroupBox
+
+        self.assertEqual(self.page.findChildren(QGroupBox), [])
+
+    def test_start_is_the_only_primary_action(self):
+        primary = [
+            button
+            for button in (
+                self.page.driver_mapping_btn,
+                self.page.driver_stop_btn,
+                self.page.load_cable_loss_btn,
+                self.page.show_driver_diagram_btn,
+            )
+            if button.property("variant") == "primary"
+        ]
+        self.assertEqual(primary, [self.page.driver_mapping_btn])
+
+    def test_start_measurement_takes_its_own_row_in_the_control_surface(self):
+        from PySide6.QtWidgets import QFrame
+
+        control_layout = self.page.findChild(QFrame, "measurementSurface").layout()
+        start_items = [
+            index
+            for index in range(control_layout.count())
+            if control_layout.itemAt(index).widget() is self.page.driver_mapping_btn
+        ]
+        self.assertEqual(len(start_items), 1)
+        row_index = next(
+            index
+            for index in range(control_layout.count())
+            if control_layout.itemAt(index).layout() is not None
+        )
+        self.assertLess(start_items[0], row_index)
+
+    def test_secondary_actions_share_one_compact_row(self):
+        from PySide6.QtWidgets import QFrame
+
+        control_layout = self.page.findChild(QFrame, "measurementSurface").layout()
+        row_layout = None
+        for index in range(control_layout.count()):
+            item = control_layout.itemAt(index)
+            if item.layout() is not None:
+                row_layout = item.layout()
+                break
+        self.assertIsNotNone(row_layout)
+        self.assertEqual(
+            [row_layout.itemAt(index).widget() for index in range(row_layout.count())],
+            [self.page.driver_stop_btn, self.page.show_driver_diagram_btn],
+        )
+
+    def test_calibration_inputs_live_in_the_control_surface(self):
+        from PySide6.QtWidgets import QFrame
+
+        control = self.page.findChild(QFrame, "measurementSurface")
+        self.assertIs(self.page.load_cable_loss_btn.parentWidget(), control)
+        self.assertIs(self.page.cable_loss_source_label.parentWidget(), control)
+        captions = [
+            label.text()
+            for label in control.findChildren(QLabel)
+            if label.property("role") == "sectionCaption"
+        ]
+        self.assertEqual(captions, ["测量控制", "校准输入"])
+
+    def test_result_surface_wraps_the_plot(self):
+        from PySide6.QtWidgets import QFrame
+
+        result = self.page.findChild(QFrame, "measurementResultSurface")
+        self.assertIs(self.page.driver_plot_widget.parentWidget(), result)
+        captions = [
+            label.text()
+            for label in result.findChildren(QLabel)
+            if label.property("role") == "sectionCaption"
+        ]
+        self.assertEqual(captions, ["测量结果"])
 
 
 if __name__ == "__main__":

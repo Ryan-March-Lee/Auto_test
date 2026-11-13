@@ -429,21 +429,55 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.app.processEvents()
         self.assertIs(window.tab_widget.currentWidget(), window.test_config_page)
 
-    def test_reconnect_completion_keeps_the_measurement_page_the_user_is_on(self):
+    def test_reconnect_from_the_configuration_page_hands_over_to_cable_loss(self):
+        """步骤 7：真实重连从配置页发起，完成后同样交接 01 线损测量。"""
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+        prepared = self._prepare_and_commit(window)
+        window.on_instrument_connected()
+        window.measurement_workspace.configuration_btn.click()
+        self.app.processEvents()
+        self.assertIs(window.tab_widget.currentWidget(), window.test_config_page)
+        self.assertTrue(window.coordinator.release_instrument_port())
+        window.coordinator._set_state(RunFlowState.RECONNECT_REQUIRED)
+        window._sync_finalize_entry()
+        window.coordinator._instrument_worker_factory = _RecordingConnectionWorker
+
+        window._finalize_run()
+
+        # 必须走重连分支：不创建新运行，完成后再回到第一个测量阶段。
+        self.assertTrue(window.coordinator._reconnecting)
+        self.assertIs(window.coordinator.prepared_run, prepared)
+        window.on_instrument_controller_ready(_ConnectedPort())
+        window.on_instrument_connected()
+
+        self.assertIs(window.tab_widget.currentWidget(), window.cable_loss_page)
+        self.assertEqual(window.measurement_workspace.current_stage(), "cable_loss")
+
+    def test_reconnect_completion_stays_on_the_measurement_page_the_user_is_on(self):
         """步骤 7：重连完成事件不能把已经停在测量页的用户拉回线损页。"""
         self._silence_dialogs()
         window = self._window()
         window._enter_test_mode(False)
-        self._finalize_with_fake_worker(window)
-        window.on_instrument_controller_ready(_ConnectedPort())
+        prepared = self._prepare_and_commit(window)
         window.on_instrument_connected()
         window.tab_widget.setCurrentWidget(window.amplifier_page)
         self.app.processEvents()
+        self.assertTrue(window.coordinator.release_instrument_port())
+        window.coordinator._set_state(RunFlowState.RECONNECT_REQUIRED)
+        window._sync_finalize_entry()
+        window.coordinator._instrument_worker_factory = _RecordingConnectionWorker
 
+        window._finalize_run()
+
+        self.assertTrue(window.coordinator._reconnecting)
+        window.on_instrument_controller_ready(_ConnectedPort())
         window.on_instrument_connected()
 
         self.assertIs(window.tab_widget.currentWidget(), window.amplifier_page)
         self.assertEqual(window.measurement_workspace.current_stage(), "amplifier")
+        self.assertIs(window.coordinator.prepared_run, prepared)
 
     def test_finalize_stays_on_the_configuration_page_when_the_connection_fails(self):
         self._silence_dialogs()
@@ -1320,7 +1354,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         port = _ConnectedPort()
         self.assertTrue(window.coordinator.commit_finalization(port))
         window.on_instrument_connected()
-        # 真实路径：连接成功后从工作区回到测试配置页，再经“上一步：仪表配置”回本页。
+        # 真实路径：从工作区切回测试配置页后点“上一步：仪表配置”；这里直接调同一入口。
         window._return_to_connection_page(keep_results=True)
         self.assertIs(window.view_stack.currentWidget(), window.connection_page)
 

@@ -565,24 +565,19 @@ class MainWindow(QMainWindow):
         self.workspace_binding.bind_run_identity(
             self.coordinator.current_run_id(), self.coordinator.amplifier_driver_mode()
         )
-        self._hand_over_to_measurement()
+        # 先让工作区可见，再切页：页面在 on_activated 里看到的是可见的宿主。
         self.view_stack.setCurrentWidget(self.workspace_page)
+        self._hand_over_to_first_stage()
         self._sync_status_panel_visibility()
 
-    def _hand_over_to_measurement(self) -> None:
-        """连接成功后的交接：仍停在测试配置页时前进到 01 线损测量。
-
-        只做“配置 → 第一个测量阶段”的一次性交接，不自动开始测量，也不跳到
-        驱动映射或功放。重连或恢复时用户可能已经在某个测量页，此时保持不动，
-        不把界面拉回线损页。
-        """
-        config_index = self.tab_widget.indexOf(self.test_config_page)
-        if self.tab_widget.currentIndex() != config_index:
+    def _hand_over_to_first_stage(self) -> None:
+        """仍停在测试配置页时前进到 01 线损测量；已在测量页时不打断。"""
+        if self.tab_widget.currentWidget() is not self.test_config_page:
             return
-        cable_loss_index = self.tab_widget.indexOf(self.cable_loss_page)
-        if cable_loss_index < 0:
+        index = self.tab_widget.indexOf(self.cable_loss_page)
+        if index < 0:
             return
-        self.tab_widget.setCurrentIndex(cable_loss_index)
+        self.tab_widget.setCurrentIndex(index)
         self.add_log_message("已进入线损测量")
 
     def on_instrument_error(self, error_message):

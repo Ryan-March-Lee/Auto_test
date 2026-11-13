@@ -2,13 +2,16 @@
 
 测量区的外观由 :class:`~presentation.qt.measurement_workspace.MeasurementWorkspace`
 承担，页面注册与生命周期仍归 ``QTabWidget`` 和 :mod:`presentation.qt.pages`。这一层
-只做五件事，且每件都在同一处：
+只做六件事，且每件都在同一处：
 
 - 阶段条点击 → 选中对应页面（:meth:`WorkspaceBinding.navigate`）；
 - 标签切换 → 同步页头、阶段条与进入页过渡（:meth:`WorkspaceBinding.sync`）；
 - 无驱放测试 → 停用驱动映射阶段（:meth:`WorkspaceBinding.set_stage_enabled`）；
 - controller 生命周期 → 各阶段运行状态
   （:meth:`WorkspaceBinding.observe_measurement_state`），run 边界清空上一轮状态；
+- 活动测量与 ``signals.progress`` → 页头进度发丝线
+  （:meth:`WorkspaceBinding.observe_measurement_state` /
+  :meth:`WorkspaceBinding.observe_progress`）；
 - 测试模式与运行身份 → 徽标、驱动映射标签页、阶段条和页头
   （:meth:`WorkspaceBinding.start_session` /
   :meth:`WorkspaceBinding.bind_run_identity`）。
@@ -31,6 +34,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Any, Mapping
 
 from .measurement_controller_contract import ControllerState
@@ -82,6 +86,11 @@ class WorkspaceBinding:
             controller.signals.state_changed.connect(
                 self.observe_measurement_state
             )
+            # 页头发丝线直接消费 controller 的进度信号；假控制器可以没有这一项。
+            progress = getattr(controller.signals, "progress", None)
+            connect = getattr(progress, "connect", None)
+            if callable(connect):
+                connect(self.observe_progress)
 
     # ---- 导航 ---------------------------------------------------------------
 
@@ -138,17 +147,32 @@ class WorkspaceBinding:
         self._workspace.set_stage_enabled(key, enabled)
 
     def observe_measurement_state(self, state: ControllerState) -> None:
-        """把 controller 状态折叠成阶段条状态；不改页头，也不切换页面。
+        """把 controller 状态折叠成阶段条状态与页头发丝线的活动态。
 
         这是 controller 与外壳之间唯一的阶段状态入口：完成/失败/停止由
         :class:`~presentation.qt.workspace_state.WorkspaceRunState` 记住，写穿的只有
-        真正发生变化的阶段。非 ``ControllerState`` 的载荷静默忽略，信号分发不因
-        接线错误中断。
+        真正发生变化的阶段。页头文本与页面导航都不动，发丝线只跟随“这次测量是否还在
+        走”。非 ``ControllerState`` 的载荷静默忽略，信号分发不因接线错误中断。
         """
         if not isinstance(state, ControllerState):
             return
         for key, stage_state in self._run_state.observe(state).items():
             self._workspace.set_stage_state(key, stage_state)
+        # 页头进度发丝线只跟随“这次测量是否还在走”；阶段条呼吸点仍由 ACTIVE 状态派生。
+        self._workspace.set_measurement_active(state.is_active)
+
+    def observe_progress(self, value: int | float) -> None:
+        """把 controller 的粗粒度进度写到页头发丝线；非法载荷静默忽略。
+
+        发丝线只确认测量在推进，不替代状态面板里的详细进度条；同一条信号也仍由页面
+        转发给状态面板，这里不再创造第二份数值来源。``bool``、非数值与 ``NaN``/``±inf``
+        都在这里丢掉：信号槽不能抛异常，展示层也只接受 0–100 的有限值。
+        """
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return
+        if not math.isfinite(float(value)):
+            return
+        self._workspace.set_progress(value)
 
     def run_state(self) -> WorkspaceRunState:
         """当前 run 的阶段状态模型；供窗口与测试读取，不转移所有权。"""
@@ -161,11 +185,13 @@ class WorkspaceBinding:
 
         ``None`` 表示尚未选择测试模式：驱动映射页隐藏、02 阶段停用、徽标显示
         “未选择测试模式”。会话一开始就解除旧运行与页头的关联，之后
-        :meth:`sync_run_identity` 不会把上一轮运行重新挂回来；阶段状态也一起清空。
+        :meth:`sync_run_identity` 不会把上一轮运行重新挂回来；阶段状态与页头进度
+        发丝线也一起清空。
         """
         self._identity_run_id = None
         self._apply_driver_mode(driver_enabled)
         self._workspace.set_run_identity(None, None)
+        self._workspace.set_measurement_active(False)
         self._sync_run_state(None)
 
     def bind_run_identity(
@@ -205,12 +231,14 @@ class WorkspaceBinding:
         return self._driver_mode
 
     def _sync_run_state(self, run_id: str | None) -> None:
-        """run 变化时把上一轮阶段状态清回未开始；同一 run 保持不变。"""
+        """run 变化时把上一轮阶段状态清回未开始，并收起发丝线；同一 run 保持不变。"""
         cleaned = _clean_run_id(run_id)
         if self._run_state.run_id() == cleaned:
             return
         for key, stage_state in self._run_state.reset_run(cleaned).items():
             self._workspace.set_stage_state(key, stage_state)
+        # 换 run 或清空身份时上一轮的活动测量已结束：发丝线跟着收掉。
+        self._workspace.set_measurement_active(False)
 
     def _apply_driver_mode(self, driver_enabled: bool | None) -> None:
         """把会话模式写穿到徽标、驱动映射标签页和阶段条。

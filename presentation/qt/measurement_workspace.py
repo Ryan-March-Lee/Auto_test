@@ -19,6 +19,9 @@
   （:meth:`MeasurementWorkspace.stage_reveal_direction`），过渡也由本模块在内容槽里
   播放（:meth:`MeasurementWorkspace.reveal_current_page`）：只动标签宿主当前显示的
   那一页，阶段条、页头与外壳本身不位移。窗口不参与动画细节。
+- 页头下方的 2px 发丝线（:class:`MeasurementProgressHairline`）只确认“测量在推进”：
+  数值来自已有的 ``signals.progress``，有活动测量时显示、空闲时保持空白；它固定占
+  2px，不推动内容区，也不替代状态面板里的详细进度条。
 
 设计约束（见 ``docs/测量工作台重构计划.md`` 步骤 4）：
 
@@ -32,21 +35,24 @@
 阶段集合由构造参数决定：外壳接受 ``stages`` 时，当前阶段的查找也只在这个集合里
 进行，不再回落到全局 :data:`~presentation.qt.measurement_stage.MEASUREMENT_STAGES`，
 否则自定义阶段会出现“画得出、同步不了”的半成品状态。内容槽与右侧状态区只接受
-调用方自己的控件；外壳的结构控件（阶段条、页头、内容宿主及其子控件）不能被搬进
-自己里面，否则会拆掉常驻框架。
+调用方自己的控件；外壳的结构控件（阶段条、页头、进度发丝线、内容宿主及其子控件）
+不能被搬进自己里面，否则会拆掉常驻框架。
 """
 
 from __future__ import annotations
 
+import math
 from types import MappingProxyType
 from typing import Mapping
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -60,7 +66,11 @@ from .measurement_stage_rail import MeasurementStageRail
 from .motion import RevealDirection, RevealHandle, reveal
 from .theme import MOTION_REVEAL_MS, TOKENS, set_button_variant
 
-__all__ = ["MeasurementWorkspace", "mode_text"]
+__all__ = [
+    "MeasurementProgressHairline",
+    "MeasurementWorkspace",
+    "mode_text",
+]
 
 #: 工具页（测试配置等）的 eyebrow：它不属于 01–04 阶段，不能显示阶段编号。
 _UTILITY_EYEBROW = "工作区"
@@ -100,12 +110,102 @@ def _clean_text(value: str | None) -> str | None:
     return cleaned or None
 
 
-class MeasurementWorkspace(QWidget):
-    """测量工作台的常驻外壳：阶段条、页头与内容槽。
+class MeasurementProgressHairline(QWidget):
+    """页头下方的 2px 进度发丝线：只确认“测量在走”，不承担详细进度。
 
-    调用方只负责写入“当前在哪、各阶段什么状态、页头显示什么”，外壳不读配置、
-    不读控制器、也不切换页面。点击阶段只发出 :attr:`stage_selected`；右侧“配置”
-    动作只发出 :attr:`configuration_requested`，由窗口决定导航到哪一页。
+    它是阶段条与页头之间的常驻一条线，高度固定（不显示时也占位，避免测量开始/
+    结束时内容区上下跳 2px）。只在有活动测量时绘制轨道与进度，空闲时整块保持空白；
+    数值来自已有的 ``signals.progress``，不新增数值来源，也不替代状态面板里的进度条。
+
+    轨道是 2px 的细线而不是可交互控件：不接收鼠标事件，也没有自己的计时器；动画
+    只存在于阶段条（呼吸点与完成扫过），本控件只按进度值重绘。
+    """
+
+    #: 固定高度：发丝线不参与页面排版，显示/隐藏不推动内容区。
+    HEIGHT = 2
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("measurementProgressHairline")
+        self.setFixedHeight(self.HEIGHT)
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._value = 0
+        self._active = False
+
+    # ---- 读取 ---------------------------------------------------------------
+
+    def value(self) -> int:
+        """当前进度（0–100）；空闲时保留上次值没有意义，因此恒为 0。"""
+        return self._value
+
+    def is_active(self) -> bool:
+        """是否有活动测量在驱动这条线。"""
+        return self._active
+
+    def fill_width(self) -> int:
+        """按当前宽度与进度算出的填充像素；空闲时为 0。"""
+        if not self._active:
+            return 0
+        return int(round(self.width() * self._value / 100.0))
+
+    # ---- 写入 ---------------------------------------------------------------
+
+    def set_value(self, value: int | float) -> None:
+        """写入 0–100 的进度；越界值夹紧，非数值或非有限值直接拒绝。
+
+        ``bool`` 与字符串抛 ``TypeError``，``NaN``/``±inf`` 抛 ``ValueError``：后者
+        无法夹紧，放行只会得到一个随平台变化的宽度。空闲时没有显示位置，直接忽略：
+        迟到的进度不能把已经收起的发丝线重新变成一个非零值，下一次激活仍从 0 开始。
+        """
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise TypeError("进度必须是整数或浮点数")
+        if not math.isfinite(float(value)):
+            raise ValueError("进度必须是有限数值")
+        if not self._active:
+            return
+        clamped = max(0, min(100, int(round(float(value)))))
+        if clamped == self._value:
+            return
+        self._value = clamped
+        self.update()
+
+    def set_active(self, active: bool) -> None:
+        """打开/关闭这条线；进入或离开活动测量时进度都回到 0。"""
+        if not isinstance(active, bool):
+            raise TypeError("active 必须是 bool")
+        if active == self._active:
+            return
+        self._active = active
+        self._value = 0
+        self.update()
+
+    # ---- 绘制 ---------------------------------------------------------------
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt 覆盖方法
+        """活动时画轨道 + 已走过的一段；空闲时保持空白，不吸引视线。"""
+        if not self._active:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        painter.fillRect(self.rect(), QColor(TOKENS["border"]))
+        width = self.fill_width()
+        if width <= 0:
+            return
+        painter.fillRect(
+            0, 0, width, self.HEIGHT, QColor(TOKENS["primary"])
+        )
+
+
+class MeasurementWorkspace(QWidget):
+    """测量工作台的常驻外壳：阶段条、页头、进度发丝线与内容槽。
+
+    调用方只负责写入“当前在哪、各阶段什么状态、页头显示什么、测量是否在走、走到
+    多少”，外壳不读配置、不读控制器、也不切换页面。点击阶段只发出
+    :attr:`stage_selected`；右侧“配置”动作只发出 :attr:`configuration_requested`，
+    由窗口决定导航到哪一页。
     """
 
     #: 用户请求进入某个测量阶段；载荷是阶段 key，窗口负责真正切页。
@@ -144,7 +244,7 @@ class MeasurementWorkspace(QWidget):
     # ---- 构造 ---------------------------------------------------------------
 
     def _build_ui(self) -> None:
-        """自上而下：阶段条 → 页头 → 内容槽；三段都是常驻框架。"""
+        """自上而下：阶段条 → 页头 → 进度发丝线 → 内容槽；四段都是常驻框架。"""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -155,6 +255,8 @@ class MeasurementWorkspace(QWidget):
         layout.addWidget(self.rail)
 
         layout.addWidget(self._build_header())
+        self.progress_hairline = MeasurementProgressHairline(self)
+        layout.addWidget(self.progress_hairline)
         layout.addWidget(self._build_content_host(), 1)
 
     def _build_header(self) -> QWidget:
@@ -269,8 +371,16 @@ class MeasurementWorkspace(QWidget):
         """页头展示的 ``(run_id, mode_text)``；未设置的部分为 ``None``。"""
         return self._run_id, self._mode_text
 
+    def progress_value(self) -> int:
+        """页头发丝线的当前进度（0–100）；没有活动测量时为 0。"""
+        return self.progress_hairline.value()
+
+    def progress_active(self) -> bool:
+        """页头发丝线是否显示（有活动测量）。"""
+        return self.progress_hairline.is_active()
+
     def animations_enabled(self) -> bool:
-        """外壳的动效开关：阶段条指示块与阶段切换过渡共用这一个开关。"""
+        """外壳的动效开关：阶段条指示块、呼吸点、完成扫过与切页过渡共用一个开关。"""
         return self._animations_enabled
 
     def stage_reveal_direction(
@@ -444,8 +554,20 @@ class MeasurementWorkspace(QWidget):
         """启用/停用一个阶段；停用只影响交互与显示，编号与保存的状态都不丢。"""
         self.rail.set_stage_enabled(key, enabled)
 
+    def set_progress(self, value: int | float) -> None:
+        """写入页头发丝线的进度；数值来自已有的 ``signals.progress``。"""
+        self.progress_hairline.set_value(value)
+
+    def set_measurement_active(self, active: bool) -> None:
+        """有活动测量时显示发丝线，空闲时隐藏；不改变阶段状态或页面导航。"""
+        self.progress_hairline.set_active(active)
+
     def set_animations_enabled(self, enabled: bool) -> None:
-        """打开/关闭外壳动效；关闭时指示块立即落到当前阶段，切页也不再播放过渡。"""
+        """打开/关闭外壳动效。
+
+        关闭时指示块立即落到当前阶段、呼吸点与完成扫过一起停止，切页也不再播放
+        过渡；重新打开只恢复还在进行中的呼吸，播完的扫过不会重播。
+        """
         if not isinstance(enabled, bool):
             raise TypeError("enabled 必须是 bool")
         self._animations_enabled = enabled
@@ -457,7 +579,12 @@ class MeasurementWorkspace(QWidget):
 
     def _structural_widgets(self) -> tuple[QWidget, ...]:
         """常驻框架自己的控件：它们不能被搬进内容槽或右侧状态区。"""
-        return (self.rail, self.header, self.content_host)
+        return (
+            self.rail,
+            self.header,
+            self.progress_hairline,
+            self.content_host,
+        )
 
     def _ensure_external_widget(self, widget: QWidget, usage: str) -> None:
         """拒绝把外壳自己、它的结构控件（含子控件）或它的祖先交给外壳摆放。

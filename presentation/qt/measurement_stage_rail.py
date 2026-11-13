@@ -20,11 +20,15 @@
   不画完成/未开始标记，也不接受 `set_state`；它仍然可以作为当前阶段被导航。
 - 测量区的动效只做“状态确认”：指示块 180ms（``MOTION_STAGE_MS``）移动，布局和
   文字位置都不动；窗口缩放、首次显示与“关闭动效”路径直接落到目标位置。
+- 运行中的微动效由阶段条统一拥有：ACTIVE 项共用一个呼吸动画（``MOTION_BREATH_MS``
+  循环），ACTIVE → COMPLETED 只在状态真的变化时播放一次 260ms 的绿色扫过
+  （``MOTION_COMPLETE_MS``）。没有 ACTIVE 项、切到配置页、阶段条隐藏或关闭动效时
+  动画立即停止，不留下后台计时器。
 """
 
 from __future__ import annotations
 
-from math import ceil
+from math import ceil, cos, pi
 
 from PySide6.QtCore import (
     QAbstractAnimation,
@@ -43,13 +47,22 @@ from PySide6.QtGui import (
     QFocusEvent,
     QFont,
     QFontMetricsF,
+    QLinearGradient,
     QPainter,
+    QPainterPath,
     QPen,
 )
 from PySide6.QtWidgets import QAbstractButton, QHBoxLayout, QSizePolicy, QWidget
 
 from .measurement_stage import MEASUREMENT_STAGES, StageDescriptor, StageState
-from .theme import MOTION_STAGE_MS, TOKENS, base_font, card_status_font
+from .theme import (
+    MOTION_BREATH_MS,
+    MOTION_COMPLETE_MS,
+    MOTION_STAGE_MS,
+    TOKENS,
+    base_font,
+    card_status_font,
+)
 
 __all__ = [
     "MeasurementStageButton",
@@ -81,6 +94,10 @@ _STATUS_AREA = 12.0
 
 _INDICATOR_INSET = 2.0
 _INDICATOR_RADIUS = 8.0
+
+# 完成态扫过的绿色光带：占按钮宽度的比例与两侧渐隐长度，避免像一块实心色块。
+_SWEEP_BAND_RATIO = 0.42
+_SWEEP_ALPHA = 76
 
 #: 可以经 ``set_state`` 写入的运行状态；``DISABLED`` 不在这里，它只表示“本次配置
 #: 下不启用该阶段”，由 ``set_stage_enabled`` 派生，不能成为第二个真相源。
@@ -152,6 +169,10 @@ class MeasurementStageButton(QAbstractButton):
         self._stage_enabled = True
         self._hovered = False
         self._focus_visible = False
+        # 进行中的呼吸点与完成扫过都由阶段条的统一动画写入，按钮只保存当前相位。
+        self._pulse_phase = 0.0
+        self._sweeping = False
+        self._sweep_progress = 0.0
 
         self._title_font = base_font()
         self._title_font.setWeight(QFont.Weight.DemiBold)
@@ -284,6 +305,50 @@ class MeasurementStageButton(QAbstractButton):
         if emphasized == self._rail_emphasized:
             return
         self._rail_emphasized = emphasized
+        self.update()
+
+    # ---- 运行中微动效 -------------------------------------------------------
+
+    def pulse_phase(self) -> float:
+        """ACTIVE 呼吸点的当前相位（0–1）；没有呼吸时为 0。"""
+        return self._pulse_phase
+
+    def set_pulse_phase(self, phase: float) -> None:
+        """写入呼吸相位；只重绘真正需要呼吸的 ACTIVE 项。"""
+        value = max(0.0, min(1.0, float(phase)))
+        if abs(value - self._pulse_phase) < 1e-6:
+            return
+        self._pulse_phase = value
+        if self.shows_status_mark() and self.display_state() is StageState.ACTIVE:
+            self.update()
+
+    def is_sweeping(self) -> bool:
+        """本按钮是否正在播放完成扫过。"""
+        return self._sweeping
+
+    def sweep_progress(self) -> float:
+        """完成扫过的进度（0–1）；没有扫过时为 0。"""
+        return self._sweep_progress
+
+    def begin_sweep(self) -> None:
+        """开始一次完成扫过；相位从 0 重新开始。"""
+        self._sweeping = True
+        self._sweep_progress = 0.0
+        self.update()
+
+    def set_sweep_progress(self, progress: float) -> None:
+        """推进完成扫过；只在扫过期间重绘。"""
+        if not self._sweeping:
+            return
+        self._sweep_progress = max(0.0, min(1.0, float(progress)))
+        self.update()
+
+    def end_sweep(self) -> None:
+        """结束完成扫过并清除残留光带；重复调用是幂等的。"""
+        if not self._sweeping:
+            return
+        self._sweeping = False
+        self._sweep_progress = 0.0
         self.update()
 
     # ---- 尺寸 ---------------------------------------------------------------
@@ -446,6 +511,7 @@ class MeasurementStageButton(QAbstractButton):
         self._paint_badge(painter, state)
         self._paint_text(painter, state)
         self._paint_status_mark(painter, state)
+        self._paint_sweep(painter)
 
         if self._focus_visible:
             self._paint_focus_ring(painter)
@@ -533,9 +599,15 @@ class MeasurementStageButton(QAbstractButton):
             return
 
         if state is StageState.ACTIVE:
+            # 呼吸点：外圈随相位放大、变亮，内点保持稳定；所有阶段共用阶段条的一个
+            # 动画，空闲时动画停止、相位回到 0，不做后台计时。
+            breath = 0.5 - 0.5 * cos(2.0 * pi * self._pulse_phase)
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(_color("primary", 46))
-            painter.drawEllipse(center, radius + 3.0, radius + 3.0)
+            painter.setBrush(
+                _color("primary", int(28 + 62 * breath))
+            )
+            halo = radius + 2.0 + 3.0 * breath
+            painter.drawEllipse(center, halo, halo)
             painter.setBrush(_color("primary"))
             painter.drawEllipse(center, radius, radius)
             return
@@ -581,6 +653,51 @@ class MeasurementStageButton(QAbstractButton):
         )
         painter.setBrush(_color("surface"))
         painter.drawEllipse(QPointF(center.x(), center.y() + 2.8), 1.0, 1.0)
+
+    def _paint_sweep(self, painter: QPainter) -> None:
+        """完成态的一次性绿色扫过：一条渐隐光带从左到右掠过按钮。
+
+        光带只在 ``begin_sweep`` 到 ``end_sweep`` 之间绘制，结束后不留任何像素；
+        它不改变控件几何，也不接受鼠标事件，因此不会推迟完成状态的可读性。
+        """
+        if not self._sweeping:
+            return
+        rect = QRectF(self.rect())
+        path = QPainterPath()
+        path.addRoundedRect(
+            rect.adjusted(
+                _INDICATOR_INSET,
+                _INDICATOR_INSET,
+                -_INDICATOR_INSET,
+                -_INDICATOR_INSET,
+            ),
+            _INDICATOR_RADIUS,
+            _INDICATOR_RADIUS,
+        )
+        band = max(24.0, rect.width() * _SWEEP_BAND_RATIO)
+        center = (
+            rect.left()
+            - band
+            + self._sweep_progress * (rect.width() + 2.0 * band)
+        )
+        gradient = QLinearGradient(
+            center - band / 2.0, 0.0, center + band / 2.0, 0.0
+        )
+        base = _color("success")
+        start = QColor(base)
+        start.setAlpha(0)
+        middle = QColor(base)
+        middle.setAlpha(_SWEEP_ALPHA)
+        end = QColor(base)
+        end.setAlpha(0)
+        gradient.setColorAt(0.0, start)
+        gradient.setColorAt(0.5, middle)
+        gradient.setColorAt(1.0, end)
+
+        painter.save()
+        painter.setClipPath(path)
+        painter.fillRect(rect, gradient)
+        painter.restore()
 
     def _paint_focus_ring(self, painter: QPainter) -> None:
         painter.setPen(QPen(_color("primary"), 2.0))
@@ -649,6 +766,8 @@ class MeasurementStageRail(QWidget):
         self._indicator_center = 0.0
         self._indicator_width = 0.0
         self._animations_enabled = True
+        # 呼吸点与完成扫过各只有一条动画：不为每个阶段各起计时器。
+        self._sweep_target: MeasurementStageButton | None = None
 
         self._layout = QHBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
@@ -681,6 +800,25 @@ class MeasurementStageRail(QWidget):
         self._indicator_animation.finished.connect(
             self._on_indicator_finished
         )
+
+        # ACTIVE 呼吸点：一条无限循环的相位动画，所有 ACTIVE 项共用；没有活动测量、
+        # 没有当前阶段、阶段条不可见或动效关闭时停止，不留下后台计时器。
+        self._pulse_animation = QVariantAnimation(self)
+        self._pulse_animation.setStartValue(0.0)
+        self._pulse_animation.setEndValue(1.0)
+        self._pulse_animation.setDuration(MOTION_BREATH_MS)
+        self._pulse_animation.setEasingCurve(QEasingCurve.Type.Linear)
+        self._pulse_animation.setLoopCount(-1)
+        self._pulse_animation.valueChanged.connect(self._on_pulse_value)
+
+        # 完成扫过：ACTIVE → COMPLETED 时播放一次，同一时刻只有一个目标按钮。
+        self._sweep_animation = QVariantAnimation(self)
+        self._sweep_animation.setStartValue(0.0)
+        self._sweep_animation.setEndValue(1.0)
+        self._sweep_animation.setDuration(MOTION_COMPLETE_MS)
+        self._sweep_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._sweep_animation.valueChanged.connect(self._on_sweep_value)
+        self._sweep_animation.finished.connect(self._on_sweep_finished)
 
     # ---- 读取 ---------------------------------------------------------------
 
@@ -751,6 +889,38 @@ class MeasurementStageRail(QWidget):
             == QAbstractAnimation.State.Running
         )
 
+    def pulse_animation(self) -> QVariantAnimation:
+        """ACTIVE 呼吸点的共享动画；测试与排障可据此推进时间。"""
+        return self._pulse_animation
+
+    def is_pulsing(self) -> bool:
+        """呼吸点是否正在运行；没有 ACTIVE 项、不可见或动效关闭时为 ``False``。"""
+        return (
+            self._pulse_animation.state()
+            == QAbstractAnimation.State.Running
+        )
+
+    def pulse_phase_for(self, key: str) -> float:
+        """某个阶段按钮当前的呼吸相位。"""
+        return self.stage_button(key).pulse_phase()
+
+    def sweep_animation(self) -> QVariantAnimation:
+        """完成扫过的共享动画；测试与排障可据此推进时间。"""
+        return self._sweep_animation
+
+    def is_sweeping(self) -> bool:
+        """完成扫过是否正在播放。"""
+        return (
+            self._sweep_target is not None
+            and self._sweep_animation.state()
+            == QAbstractAnimation.State.Running
+        )
+
+    def sweep_target_key(self) -> str | None:
+        """正在播放完成扫过的阶段 key；没有扫过时为 ``None``。"""
+        target = self._sweep_target
+        return target.key() if target is not None else None
+
     def animations_enabled(self) -> bool:
         """阶段条动效是否开启。"""
         return self._animations_enabled
@@ -774,6 +944,8 @@ class MeasurementStageRail(QWidget):
 
         if key is None:
             self._indicator_animation.stop()
+            self._stop_pulse()
+            self._stop_sweep()
             self._indicator_visible = False
             self._indicator_center = 0.0
             self._indicator_width = 0.0
@@ -787,6 +959,7 @@ class MeasurementStageRail(QWidget):
             self._indicator_visible = True
             if not self.is_animating():
                 self._snap_indicator_to_current()
+            self._sync_pulse_animation()
             self.update()
             return
 
@@ -800,6 +973,7 @@ class MeasurementStageRail(QWidget):
             or previous is None
         ):
             self._indicator_center = target
+            self._sync_pulse_animation()
             self.update()
             return
 
@@ -807,13 +981,29 @@ class MeasurementStageRail(QWidget):
         self._indicator_animation.setStartValue(float(self._indicator_center))
         self._indicator_animation.setEndValue(float(target))
         self._indicator_animation.start()
+        self._sync_pulse_animation()
 
     def set_state(self, key: str, state: StageState | str) -> None:
         """更新一个阶段的运行状态；不改变当前项、摘要或是否启用。
 
         只接受五个运行状态；``DISABLED`` 与只读阶段都会抛出 ``ValueError``。
+        ACTIVE 项会让共享呼吸动画在需要时启动；ACTIVE → COMPLETED 只播放一次完成
+        扫过，重复写入同一状态不会重播。目标被写离完成态（换 run 清回未开始）或被
+        停用时，正在播的扫过立即收尾，光带不会压在已经不是完成态的按钮上。
         """
-        self.stage_button(key).set_state(state)
+        button = self.stage_button(key)
+        previous = button.state()
+        button.set_state(state)
+        resolved = button.state()
+        if previous is StageState.ACTIVE and resolved is StageState.COMPLETED:
+            self._play_sweep(button)
+        elif (
+            self._sweep_target is button
+            and button.display_state() is not StageState.COMPLETED
+        ):
+            # 扫过只确认“刚完成”：换 run 把目标清回 PENDING 后不能继续扫完。
+            self._stop_sweep()
+        self._sync_pulse_animation()
 
     def set_summary(self, key: str, text: str) -> None:
         """更新一个阶段的摘要；不改变状态或当前项。"""
@@ -832,14 +1022,20 @@ class MeasurementStageRail(QWidget):
         if button.stage_enabled() == enabled:
             return
         button.set_stage_enabled(enabled)
+        if not enabled and self._sweep_target is button:
+            self._stop_sweep()
         if self._current_key == key:
             self._layout.activate()
             self._indicator_animation.stop()
             self._snap_indicator_to_current()
+        self._sync_pulse_animation()
         self.update()
 
     def set_animations_enabled(self, enabled: bool) -> None:
-        """关闭动效时立即落到目标位置；不改变任何布局或状态。"""
+        """关闭动效时立即落到目标位置，并停止呼吸与扫过；不改变布局或状态。
+
+        重新打开只恢复还在进行中的呼吸，已经播完（或被停掉）的完成扫过不会重播。
+        """
         if not isinstance(enabled, bool):
             raise TypeError("enabled 必须是 bool")
         if enabled == self._animations_enabled:
@@ -847,9 +1043,13 @@ class MeasurementStageRail(QWidget):
         self._animations_enabled = enabled
         if not enabled:
             self._indicator_animation.stop()
+            self._stop_pulse()
+            self._stop_sweep()
             if self._current_key is not None:
                 self._snap_indicator_to_current()
                 self.update()
+            return
+        self._sync_pulse_animation()
 
     # ---- 内部：动画与几何 ---------------------------------------------------
 
@@ -902,6 +1102,80 @@ class MeasurementStageRail(QWidget):
         self._snap_indicator_to_current()
         self.update()
 
+    # ---- 内部：呼吸点与完成扫过 ---------------------------------------------
+
+    def _micro_motion_allowed(self) -> bool:
+        """微动效的统一放行条件：动效开启、阶段条可见且确实有当前阶段。
+
+        三者缺一都不播：配置页（``set_current(None)``）把整条阶段条降级成参考信息，
+        窗口关闭或切到其它整屏页面时控件不可见，关闭动效用于排障与无动画环境。
+        呼吸点与完成扫过共用这一条，避免两套判断漂移。
+        """
+        return (
+            self._animations_enabled
+            and self.isVisible()
+            and self._current_key is not None
+        )
+
+    def _should_pulse(self) -> bool:
+        """只有“允许播放且确有 ACTIVE 项”时才呼吸。"""
+        if not self._micro_motion_allowed():
+            return False
+        return any(
+            button.display_state() is StageState.ACTIVE
+            for button in self._buttons
+        )
+
+    def _sync_pulse_animation(self) -> None:
+        """按当前状态启动或停止共享呼吸动画；停止时相位回到 0。"""
+        if not self._should_pulse():
+            self._stop_pulse()
+            return
+        if not self.is_pulsing():
+            self._pulse_animation.start()
+
+    def _stop_pulse(self) -> None:
+        """停止呼吸并把所有按钮的相位清回 0；重复调用是幂等的。"""
+        self._pulse_animation.stop()
+        for button in self._buttons:
+            button.set_pulse_phase(0.0)
+
+    def _on_pulse_value(self, value: float) -> None:
+        phase = float(value)
+        for button in self._buttons:
+            if button.display_state() is StageState.ACTIVE:
+                button.set_pulse_phase(phase)
+
+    def _play_sweep(self, button: MeasurementStageButton) -> None:
+        """播放一次完成扫过；不允许播放或目标不是完成态时只保留完成色。
+
+        ``display_state()`` 是扫过与呼吸共用的“实际画出来的状态”：停用阶段显示为
+        ``DISABLED``，不参与运行状态，也就不该被绿色光带扫过。
+        """
+        if not self._micro_motion_allowed():
+            return
+        if button.display_state() is not StageState.COMPLETED:
+            return
+        self._stop_sweep()
+        self._sweep_target = button
+        button.begin_sweep()
+        self._sweep_animation.start()
+
+    def _on_sweep_value(self, value: float) -> None:
+        target = self._sweep_target
+        if target is not None:
+            target.set_sweep_progress(float(value))
+
+    def _on_sweep_finished(self) -> None:
+        self._stop_sweep()
+
+    def _stop_sweep(self) -> None:
+        """停止完成扫过并清掉目标按钮上的光带；重复调用是幂等的。"""
+        self._sweep_animation.stop()
+        target, self._sweep_target = self._sweep_target, None
+        if target is not None:
+            target.end_sweep()
+
     # ---- 内部：绘制与事件 ---------------------------------------------------
 
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt 覆盖方法
@@ -951,8 +1225,19 @@ class MeasurementStageRail(QWidget):
     def showEvent(self, event) -> None:  # noqa: N802 - Qt 覆盖方法
         """首次显示时布局已经有几何，指示块直接落到当前阶段。"""
         super().showEvent(event)
-        if self._current_key is None:
-            return
+        if self._current_key is not None:
+            self._indicator_animation.stop()
+            self._snap_indicator_to_current()
+            self.update()
+        self._sync_pulse_animation()
+
+    def hideEvent(self, event) -> None:  # noqa: N802 - Qt 覆盖方法
+        """离开可见界面（切到整屏配置、窗口关闭）时停止所有动效。
+
+        指示块的移动、呼吸点与完成扫过一起停：控件已经不可见，任何还在跑的计时器
+        都是白烧 CPU；重新显示时指示块直接落到当前阶段，扫过不会被重播。
+        """
+        super().hideEvent(event)
         self._indicator_animation.stop()
-        self._snap_indicator_to_current()
-        self.update()
+        self._stop_pulse()
+        self._stop_sweep()

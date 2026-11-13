@@ -33,6 +33,7 @@ from presentation.qt.measurement_state import (
     MeasurementStatus,
     MeasurementViewState,
 )
+from presentation.qt.theme import MOTION_COMPLETE_MS
 from tests.integration.test_gui_two_phase_flow import _fully_valid_gui_config
 from tests.ui.test_gui_import import gui_dependencies_available
 
@@ -1017,6 +1018,131 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
             window.amplifier_page.graphicsEffect(),
             "过渡结束后必须摘除效果，不能拖慢后续绘制",
         )
+
+    # ---- 步骤 14：运行中的微动效与完成收束 --------------------------------
+
+    def test_progress_hairline_follows_measurement_activity(self):
+        """进度发丝线只在活动测量时出现，数值来自已有的 progress 信号。"""
+        self._silence_dialogs()
+        window = self._connected_window()
+        window.show()
+        window.view_stack.setCurrentWidget(window.workspace_page)
+        self.app.processEvents()
+        workspace = window.measurement_workspace
+
+        self.assertFalse(workspace.progress_active())
+
+        self._emit_measurement_state(
+            window, MeasurementKind.CABLE_LOSS, MeasurementStatus.PREPARING
+        )
+
+        self.assertTrue(workspace.progress_active())
+        self.assertTrue(workspace.stage_rail().is_pulsing())
+
+        window.measurement_controller.signals.progress.emit(46)
+        self.app.processEvents()
+        self.assertEqual(workspace.progress_value(), 46)
+
+        self._emit_measurement_state(
+            window, MeasurementKind.CABLE_LOSS, MeasurementStatus.COMPLETED
+        )
+
+        self.assertFalse(workspace.progress_active())
+        self.assertFalse(workspace.stage_rail().is_pulsing())
+        self.assertEqual(workspace.progress_value(), 0)
+
+    def test_completion_sweep_plays_once_and_stops_on_the_configuration_page(self):
+        self._silence_dialogs()
+        window = self._connected_window()
+        window.show()
+        window.view_stack.setCurrentWidget(window.workspace_page)
+        self.app.processEvents()
+        workspace = window.measurement_workspace
+        rail = workspace.stage_rail()
+
+        self._emit_measurement_state(
+            window, MeasurementKind.CABLE_LOSS, MeasurementStatus.RUNNING
+        )
+        self._emit_measurement_state(
+            window, MeasurementKind.CABLE_LOSS, MeasurementStatus.COMPLETED
+        )
+
+        self.assertTrue(rail.is_sweeping())
+        self.assertEqual(rail.sweep_target_key(), "cable_loss")
+
+        rail.sweep_animation().setCurrentTime(MOTION_COMPLETE_MS)
+        self.app.processEvents()
+        self.assertFalse(rail.is_sweeping())
+
+        self._emit_measurement_state(
+            window, MeasurementKind.CABLE_LOSS, MeasurementStatus.COMPLETED
+        )
+        self.assertFalse(
+            rail.is_sweeping(), "重复写入完成态不重播扫过"
+        )
+
+        self._emit_measurement_state(
+            window, MeasurementKind.CABLE_LOSS, MeasurementStatus.RUNNING
+        )
+        self.assertTrue(rail.is_pulsing())
+
+        window.measurement_workspace.configuration_btn.click()
+        self.app.processEvents()
+
+        self.assertTrue(workspace.is_utility_view())
+        self.assertFalse(
+            rail.is_pulsing(),
+            "切到配置页时阶段条动画必须停止，不能留在后台空转",
+        )
+
+    def test_completion_while_the_configuration_page_is_open_does_not_sweep(self):
+        """配置页把阶段条降为参考信息：此时完成只落绿，不播扫过。"""
+        self._silence_dialogs()
+        window = self._connected_window()
+        window.show()
+        window.view_stack.setCurrentWidget(window.workspace_page)
+        self.app.processEvents()
+        workspace = window.measurement_workspace
+        rail = workspace.stage_rail()
+
+        self._emit_measurement_state(
+            window, MeasurementKind.CABLE_LOSS, MeasurementStatus.RUNNING
+        )
+        workspace.configuration_btn.click()
+        self.app.processEvents()
+        self.assertTrue(workspace.is_utility_view())
+
+        self._emit_measurement_state(
+            window, MeasurementKind.CABLE_LOSS, MeasurementStatus.COMPLETED
+        )
+
+        self.assertIs(rail.state_for("cable_loss"), StageState.COMPLETED)
+        self.assertFalse(
+            rail.is_sweeping(),
+            "没有当前阶段时不播扫过，完成态等回到测量页再看",
+        )
+        self.assertIsNone(rail.sweep_target_key())
+
+    def test_closing_the_window_stops_the_running_micro_motion(self):
+        self._silence_dialogs()
+        window = self._connected_window()
+        window.show()
+        window.view_stack.setCurrentWidget(window.workspace_page)
+        self.app.processEvents()
+        rail = window.measurement_workspace.stage_rail()
+
+        self._emit_measurement_state(
+            window, MeasurementKind.CABLE_LOSS, MeasurementStatus.RUNNING
+        )
+        self.assertTrue(rail.is_pulsing())
+
+        window.close()
+        self.app.processEvents()
+
+        self.assertFalse(
+            rail.is_pulsing(), "窗口关闭后不能留下呼吸计时器"
+        )
+        self.assertFalse(rail.is_sweeping())
 
     # ---- 步骤 8：controller 状态 → 阶段条 ------------------------------------
 

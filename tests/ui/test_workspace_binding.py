@@ -56,8 +56,11 @@ class _FakeSignal:
             slot(value)
 
 
-def _fake_controller():
-    return SimpleNamespace(signals=SimpleNamespace(state_changed=_FakeSignal()))
+def _fake_controller(*, with_progress: bool = True):
+    signals = SimpleNamespace(state_changed=_FakeSignal())
+    if with_progress:
+        signals.progress = _FakeSignal()
+    return SimpleNamespace(signals=signals)
 
 
 def _state(kind, status):
@@ -300,6 +303,80 @@ class WorkspaceBindingTests(unittest.TestCase):
         controller.signals.state_changed.emit(None)
 
         self.assertIs(rail.state_for("cable_loss"), StageState.PENDING)
+
+    def test_measurement_activity_and_progress_drive_the_header_hairline(self):
+        """步骤 14：发丝线跟随活动测量与已有进度信号，不新增数值来源。"""
+        controller, _binding = self._state_binding()
+        self.assertFalse(self.workspace.progress_active())
+
+        controller.signals.state_changed.emit(
+            _state(MeasurementKind.CABLE_LOSS, MeasurementStatus.RUNNING)
+        )
+        self.assertTrue(self.workspace.progress_active())
+
+        controller.signals.progress.emit(37)
+        self.assertEqual(self.workspace.progress_value(), 37)
+
+        controller.signals.state_changed.emit(
+            _state(MeasurementKind.CABLE_LOSS, MeasurementStatus.COMPLETED)
+        )
+        self.assertFalse(self.workspace.progress_active())
+        self.assertEqual(self.workspace.progress_value(), 0)
+
+    def test_invalid_progress_payloads_are_ignored(self):
+        controller, _binding = self._state_binding()
+        controller.signals.state_changed.emit(
+            _state(MeasurementKind.CABLE_LOSS, MeasurementStatus.RUNNING)
+        )
+
+        for value in (None, "50", True, object()):
+            with self.subTest(value=value):
+                controller.signals.progress.emit(value)
+
+        self.assertEqual(self.workspace.progress_value(), 0)
+
+    def test_non_finite_progress_payloads_are_ignored(self):
+        """信号槽不抛异常：NaN/±inf 在这里丢掉，发丝线保持上一个有效值。"""
+        controller, _binding = self._state_binding()
+        controller.signals.state_changed.emit(
+            _state(MeasurementKind.CABLE_LOSS, MeasurementStatus.RUNNING)
+        )
+        controller.signals.progress.emit(42)
+
+        for value in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(value=value):
+                controller.signals.progress.emit(value)
+
+        self.assertEqual(self.workspace.progress_value(), 42)
+        self.assertTrue(self.workspace.progress_active())
+
+    def test_a_controller_without_progress_signal_does_not_raise(self):
+        controller = _fake_controller(with_progress=False)
+        WorkspaceBinding(
+            self.workspace, self.tabs, self.pages, controller=controller
+        )
+
+        controller.signals.state_changed.emit(
+            _state(MeasurementKind.AMPLIFIER, MeasurementStatus.RUNNING)
+        )
+
+        self.assertTrue(self.workspace.progress_active())
+        self.assertIs(
+            self.workspace.stage_rail().state_for("amplifier"),
+            StageState.ACTIVE,
+        )
+
+    def test_starting_a_session_hides_the_hairline(self):
+        _controller, binding = self._state_binding()
+        binding.observe_measurement_state(
+            _state(MeasurementKind.CABLE_LOSS, MeasurementStatus.RUNNING)
+        )
+        self.assertTrue(self.workspace.progress_active())
+
+        binding.start_session(False)
+
+        self.assertFalse(self.workspace.progress_active())
+        self.assertEqual(self.workspace.progress_value(), 0)
 
     def test_new_run_clears_the_previous_stage_states(self):
         controller, binding = self._state_binding()

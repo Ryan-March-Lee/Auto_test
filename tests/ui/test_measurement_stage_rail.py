@@ -35,7 +35,12 @@ from presentation.qt.measurement_stage_rail import (  # noqa: E402
     MeasurementStageButton,
     MeasurementStageRail,
 )
-from presentation.qt.theme import MOTION_STAGE_MS, TOKENS  # noqa: E402
+from presentation.qt.theme import (  # noqa: E402
+    MOTION_BREATH_MS,
+    MOTION_COMPLETE_MS,
+    MOTION_STAGE_MS,
+    TOKENS,
+)
 
 
 MODULE_PATH = (
@@ -706,6 +711,185 @@ class VisualEmphasisTests(_RailTestCase):
             ).name(),
             TOKENS["primary_soft"].lower(),
         )
+
+
+class LiveMotionTests(_RailTestCase):
+    """步骤 14：ACTIVE 呼吸、COMPLETED 扫过与空闲停机。"""
+
+    def setUp(self):
+        super().setUp()
+        self.rail.set_current("cable_loss")
+        self.app.processEvents()
+
+    def advance_pulse(self, milliseconds):
+        self.rail.pulse_animation().setCurrentTime(milliseconds)
+        self.app.processEvents()
+
+    def advance_sweep(self, milliseconds):
+        self.rail.sweep_animation().setCurrentTime(milliseconds)
+        self.app.processEvents()
+
+    def test_active_stage_starts_the_shared_breathing_animation(self):
+        self.assertFalse(self.rail.is_pulsing())
+
+        self.rail.set_state("cable_loss", StageState.ACTIVE)
+
+        self.assertTrue(self.rail.is_pulsing())
+        self.assertEqual(
+            self.rail.pulse_animation().loopCount(),
+            -1,
+            "呼吸点是一条循环动画，不为每个阶段各起一个计时器",
+        )
+
+        self.advance_pulse(MOTION_BREATH_MS // 4)
+
+        self.assertGreater(
+            self.rail.pulse_phase_for("cable_loss"),
+            0.0,
+            "相位真的在推进，按钮据此重绘呼吸点",
+        )
+
+    def test_stopping_or_failing_ends_the_breathing_animation(self):
+        self.rail.set_state("cable_loss", StageState.ACTIVE)
+        self.assertTrue(
+            self.rail.is_pulsing(),
+            "先确认它确实在呼吸，再验证终态会停",
+        )
+
+        self.rail.set_state("cable_loss", StageState.STOPPED)
+
+        self.assertFalse(self.rail.is_pulsing())
+        self.assertEqual(self.rail.pulse_phase_for("cable_loss"), 0.0)
+
+        self.rail.set_state("cable_loss", StageState.ACTIVE)
+        self.rail.set_state("cable_loss", StageState.FAILED)
+
+        self.assertFalse(self.rail.is_pulsing())
+        self.assertFalse(self.rail.is_sweeping())
+
+    def test_active_to_completed_plays_the_sweep_exactly_once(self):
+        self.rail.set_state("cable_loss", StageState.ACTIVE)
+        button = self.rail.stage_button("cable_loss")
+
+        self.rail.set_state("cable_loss", StageState.COMPLETED)
+
+        self.assertTrue(self.rail.is_sweeping())
+        self.assertEqual(self.rail.sweep_target_key(), "cable_loss")
+        self.assertTrue(button.is_sweeping())
+
+        self.advance_sweep(MOTION_COMPLETE_MS // 2)
+
+        self.assertGreater(button.sweep_progress(), 0.0)
+
+        self.advance_sweep(MOTION_COMPLETE_MS)
+
+        self.assertFalse(self.rail.is_sweeping())
+        self.assertFalse(button.is_sweeping())
+        self.assertEqual(button.sweep_progress(), 0.0)
+        self.assertIsNone(self.rail.sweep_target_key())
+
+        self.rail.set_state("cable_loss", StageState.COMPLETED)
+
+        self.assertFalse(
+            self.rail.is_sweeping(),
+            "重复写入同一个完成态不能重播；重新进入页面也不重播",
+        )
+
+    def test_pending_to_completed_does_not_sweep(self):
+        self.rail.set_state("cable_loss", StageState.COMPLETED)
+
+        self.assertFalse(self.rail.is_sweeping())
+        self.assertIsNone(self.rail.sweep_target_key())
+
+    def test_utility_page_does_not_play_the_completion_sweep(self):
+        self.rail.set_state("cable_loss", StageState.ACTIVE)
+        self.rail.set_current(None)
+
+        self.rail.set_state("cable_loss", StageState.COMPLETED)
+
+        self.assertFalse(
+            self.rail.is_sweeping(),
+            "没有当前阶段（配置页）时不播扫过；完成标记仍要留着",
+        )
+        self.assertIsNone(self.rail.sweep_target_key())
+        self.assertIs(
+            self.rail.state_for("cable_loss"), StageState.COMPLETED
+        )
+
+    def test_disabled_stage_never_plays_the_completion_sweep(self):
+        self.rail.set_stage_enabled("cable_loss", False)
+
+        self.rail.set_state("cable_loss", StageState.ACTIVE)
+        self.rail.set_state("cable_loss", StageState.COMPLETED)
+
+        self.assertFalse(
+            self.rail.is_sweeping(),
+            "未启用阶段不参与运行状态，绿色光带不能压在它上面",
+        )
+        self.assertIsNone(self.rail.sweep_target_key())
+
+    def test_resetting_the_completed_stage_stops_the_sweep(self):
+        self.rail.set_state("cable_loss", StageState.ACTIVE)
+        self.rail.set_state("cable_loss", StageState.COMPLETED)
+        self.assertTrue(self.rail.is_sweeping())
+
+        self.rail.set_state("cable_loss", StageState.PENDING)
+
+        self.assertFalse(
+            self.rail.is_sweeping(),
+            "换 run 把目标清回未开始后，扫过必须立刻收尾",
+        )
+        self.assertIsNone(self.rail.sweep_target_key())
+        self.assertFalse(self.rail.stage_button("cable_loss").is_sweeping())
+
+    def test_disabling_animations_mid_sweep_ends_it(self):
+        self.rail.set_state("cable_loss", StageState.ACTIVE)
+        self.rail.set_state("cable_loss", StageState.COMPLETED)
+        self.assertTrue(self.rail.is_sweeping())
+
+        self.rail.set_animations_enabled(False)
+
+        self.assertFalse(self.rail.is_sweeping())
+        self.assertIsNone(self.rail.sweep_target_key())
+
+    def test_disabling_animations_skips_pulse_and_sweep(self):
+        self.rail.set_animations_enabled(False)
+
+        self.rail.set_state("cable_loss", StageState.ACTIVE)
+        self.assertFalse(self.rail.is_pulsing())
+
+        self.rail.set_state("cable_loss", StageState.COMPLETED)
+        self.assertFalse(self.rail.is_sweeping())
+
+    def test_clearing_current_or_hiding_stops_all_micro_motion(self):
+        self.rail.set_state("cable_loss", StageState.ACTIVE)
+        self.assertTrue(self.rail.is_pulsing())
+
+        self.rail.set_current(None)
+        self.assertFalse(self.rail.is_pulsing())
+
+        self.rail.set_current("cable_loss")
+        self.assertTrue(self.rail.is_pulsing())
+
+        self.rail.hide()
+        self.app.processEvents()
+        self.assertFalse(self.rail.is_pulsing())
+
+        self.rail.show()
+        self.app.processEvents()
+        self.app.processEvents()
+        self.assertTrue(
+            self.rail.is_pulsing(),
+            "回到阶段条时仍在进行的测量继续呼吸",
+        )
+
+    def test_disabling_a_breathing_stage_stops_the_animation(self):
+        self.rail.set_state("cable_loss", StageState.ACTIVE)
+        self.assertTrue(self.rail.is_pulsing())
+
+        self.rail.set_stage_enabled("cable_loss", False)
+
+        self.assertFalse(self.rail.is_pulsing())
 
 
 class StylingSourceTests(unittest.TestCase):

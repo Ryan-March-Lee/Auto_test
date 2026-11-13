@@ -28,6 +28,7 @@ from PySide6.QtCore import (  # noqa: E402
     QRectF,
     Qt,
 )
+from PySide6.QtGui import QColor  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel, QWidget  # noqa: E402
 
@@ -434,6 +435,7 @@ class ContentSlotTests(_WorkspaceTestCase):
         for part in (
             self.workspace.stage_rail(),
             self.workspace.header,
+            self.workspace.progress_hairline,
             self.workspace.content_host,
             self.workspace.title_label,
             self.workspace.run_identity_label,
@@ -516,6 +518,7 @@ class RightStatusAreaTests(_WorkspaceTestCase):
         for part in (
             self.workspace.stage_rail(),
             self.workspace.header,
+            self.workspace.progress_hairline,
             self.workspace.content_host,
             self.workspace.configuration_btn,
             content,
@@ -657,6 +660,157 @@ class AnimationSwitchTests(_WorkspaceTestCase):
     def test_animation_switch_rejects_non_bool(self):
         with self.assertRaises(TypeError):
             self.workspace.set_animations_enabled("yes")
+
+
+class ProgressHairlineTests(_WorkspaceTestCase):
+    """步骤 14：页头下方的 2px 发丝线只在活动测量时出现，不推动常驻框架。"""
+
+    def setUp(self):
+        super().setUp()
+        self.settle()
+
+    def hairline_pixel(self, ratio=0.5):
+        hairline = self.workspace.progress_hairline
+        image = hairline.grab().toImage()
+        x = max(0, min(hairline.width() - 1, int(hairline.width() * ratio)))
+        return QColor(image.pixel(x, 1))
+
+    def test_idle_hairline_reserves_two_pixels_and_draws_nothing(self):
+        hairline = self.workspace.progress_hairline
+        self.assertEqual(hairline.height(), 2)
+        self.assertFalse(self.workspace.progress_active())
+        self.assertEqual(self.workspace.progress_value(), 0)
+        self.assertEqual(hairline.fill_width(), 0)
+
+        image = hairline.grab().toImage()
+        colours = {
+            QColor(image.pixel(x, 1)).name() for x in range(image.width())
+        }
+        self.assertEqual(
+            len(colours),
+            1,
+            "空闲时整条发丝线只有一个颜色：没有已走段，也没有轨道",
+        )
+        self.assertNotEqual(
+            self.hairline_pixel().name(),
+            TOKENS["primary"].lower(),
+            "空闲时不能画出一条正在推进的线",
+        )
+
+    def test_active_measurement_shows_progress_and_idle_hides_it(self):
+        hairline = self.workspace.progress_hairline
+
+        self.workspace.set_measurement_active(True)
+        self.workspace.set_progress(62)
+        self.settle()
+
+        self.assertTrue(self.workspace.progress_active())
+        self.assertEqual(self.workspace.progress_value(), 62)
+        self.assertEqual(
+            hairline.fill_width(),
+            round(hairline.width() * 62 / 100.0),
+        )
+        self.assertEqual(
+            self.hairline_pixel().name(),
+            TOKENS["primary"].lower(),
+            "活动测量时发丝线在页头下方真正画出来",
+        )
+
+        self.workspace.set_measurement_active(False)
+        self.settle()
+
+        self.assertFalse(self.workspace.progress_active())
+        self.assertEqual(self.workspace.progress_value(), 0)
+        self.assertNotEqual(
+            self.hairline_pixel().name(), TOKENS["primary"].lower()
+        )
+
+    def test_hairline_sits_between_the_header_and_the_content(self):
+        header = self.workspace.header
+        hairline = self.workspace.progress_hairline
+        content = self.workspace.content_host
+
+        self.assertGreaterEqual(hairline.geometry().top(), header.geometry().bottom())
+        self.assertLessEqual(hairline.geometry().bottom(), content.geometry().top())
+
+    def test_toggling_activity_and_progress_does_not_move_the_frame(self):
+        self.workspace.set_measurement_active(True)
+        self.workspace.set_progress(40)
+        self.settle()
+        frame = (
+            self.workspace.stage_rail().geometry(),
+            self.workspace.header.geometry(),
+            self.workspace.content_host.geometry(),
+        )
+
+        self.workspace.set_measurement_active(False)
+        self.settle()
+        self.assertEqual(
+            (
+                self.workspace.stage_rail().geometry(),
+                self.workspace.header.geometry(),
+                self.workspace.content_host.geometry(),
+            ),
+            frame,
+            "发丝线不能因为显示/隐藏推动阶段条、页头或内容槽",
+        )
+
+    def test_progress_is_clamped_and_rejects_non_numbers(self):
+        hairline = self.workspace.progress_hairline
+        self.workspace.set_measurement_active(True)
+
+        self.workspace.set_progress(-20)
+        self.assertEqual(self.workspace.progress_value(), 0)
+
+        self.workspace.set_progress(150)
+        self.assertEqual(self.workspace.progress_value(), 100)
+
+        for value in (True, "50", None, object()):
+            with self.subTest(value=value):
+                with self.assertRaises(TypeError):
+                    self.workspace.set_progress(value)
+        self.assertEqual(hairline.value(), 100, "非法载荷不能改写已有进度")
+
+    def test_non_finite_progress_is_rejected_without_touching_the_value(self):
+        hairline = self.workspace.progress_hairline
+        self.workspace.set_measurement_active(True)
+        self.workspace.set_progress(55)
+
+        for value in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    self.workspace.set_progress(value)
+
+        self.assertEqual(
+            hairline.value(), 55, "NaN/±inf 无法夹紧，只能拒绝且不改写已有进度"
+        )
+
+    def test_activation_restarts_the_line_from_zero(self):
+        self.workspace.set_measurement_active(True)
+        self.workspace.set_progress(100)
+        self.workspace.set_measurement_active(False)
+
+        self.workspace.set_measurement_active(True)
+
+        self.assertEqual(
+            self.workspace.progress_value(),
+            0,
+            "下一次测量不能先显示上一轮的 100%",
+        )
+
+    def test_late_progress_while_idle_is_ignored(self):
+        self.workspace.set_measurement_active(True)
+        self.workspace.set_progress(70)
+        self.workspace.set_measurement_active(False)
+
+        self.workspace.set_progress(100)
+
+        self.assertEqual(
+            self.workspace.progress_value(),
+            0,
+            "迟到的进度不能把已经收起的发丝线重新点亮",
+        )
+        self.assertFalse(self.workspace.progress_active())
 
 
 class StageRevealDirectionTests(_WorkspaceTestCase):

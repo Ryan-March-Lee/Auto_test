@@ -159,7 +159,16 @@ DEFAULT_BUTTON_VARIANT = "secondary"
 TONE_NAMES = ("info", "success", "warning", "danger", "muted")
 
 #: 允许的标签语义角色；页面与 ``.ui`` 只声明角色，字号与字重由样式表决定。
-LABEL_ROLES = ("pageTitle", "section", "hint", "fieldLabel", "note")
+#: ``sectionCaption`` 是测量面里的小标题：它比 ``section`` 低一级，只说明一块内容
+#: 是什么，不承担页面或卡片的标题层级。
+LABEL_ROLES = (
+    "pageTitle",
+    "section",
+    "sectionCaption",
+    "hint",
+    "fieldLabel",
+    "note",
+)
 
 #: 整屏步骤页的版心最大宽度：窗口更宽时内容不再横向拉伸。连接页与配置页共用，
 #: 版面调整只改这一处（``.ui`` 与页面都不再各自写死宽度）。
@@ -1119,6 +1128,35 @@ QFrame#archivalBanner {
 QLabel#archivalBannerMessage {
     color: $text;
     font-size: $font_small;
+}
+
+/* ===== 共享测量面（控制面 / 结果面） =====
+   测量页每页最多两块面：左栏控制面、右侧结果面。两者都保留卡片的白底、细边与
+   圆角，但内部不再嵌套 QGroupBox；分区靠 sectionCaption 小标题、留白和 1px
+   发丝线表达，而不是“分区再套一张卡”。 */
+QFrame#measurementSurface, QFrame#measurementResultSurface {
+    background-color: $surface;
+    border: 1px solid $border;
+    border-radius: 8px;
+}
+/* 面内小标题：比正文更小、更淡，只说明这一块是什么。 */
+QLabel[role="sectionCaption"] {
+    color: $text_secondary;
+    font-size: $font_small;
+    font-weight: 600;
+}
+/* 结果面里的关键数字：比正文大一级，现场读数时先看到它。 */
+QLabel#measurementMetric {
+    color: $text;
+    font-size: $font_title;
+    font-weight: 700;
+}
+/* 面内分隔：只是一条 1px 的线，不加边距，也不使用 QFrame 的立体边框。 */
+QFrame#measurementHairline {
+    background-color: $border;
+    border: none;
+    max-height: 1px;
+    min-height: 1px;
 }
 
 /* ===== 状态区 ===== */

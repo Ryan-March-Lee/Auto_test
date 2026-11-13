@@ -1,12 +1,14 @@
 """测量工作台外壳的契约（重构计划步骤 4）。
 
-这里锁定用户能看见、步骤 5 会依赖的八件事：
+这里锁定用户能看见、步骤 5 会依赖的九件事：
 
 - 外壳能独立构造：阶段条、页头与内容槽都在，内容由窗口注入而不是外壳自建；
 - ``set_current_stage`` 同时同步阶段条与页头，阶段条仍是受控视图；
 - 当前阶段只在构造时传入的阶段集合里查找，自定义阶段也能同步页头；
+- ``has_stage`` 用同一份阶段集合回答“这是不是阶段”，窗口据此分流页头；
 - 点击阶段只转发导航请求，不预先改写当前阶段；
-- ``show_utility`` 不点亮任何阶段，页头改成工具页自己的标题与副标题；
+- ``show_utility`` 不点亮任何阶段，页头改成工具页自己的标题与副标题，并禁用无处
+  可去的“配置”动作；
 - 内容槽只接受一个 widget，替换时只把旧 widget 从布局摘掉，不销毁它；
 - 内容槽与右侧状态区拒绝外壳自己的结构控件，避免把常驻框架拆开；
 - 运行标识、右侧状态区、阶段状态与动效开关都由调用方写入，外壳只展示。
@@ -118,7 +120,11 @@ class ConstructionTests(_WorkspaceTestCase):
 
     def test_unset_run_identity_reads_as_unconnected(self):
         self.assertEqual(self.workspace.run_identity(), (None, None))
-        self.assertIn("未连接", self.workspace.run_identity_label.text())
+        self.assertEqual(
+            self.workspace.run_identity_label.text(),
+            "未连接",
+            "没有运行时不能拼成“本次运行 未连接”这种自相矛盾的文案",
+        )
 
 
 class CurrentStageTests(_WorkspaceTestCase):
@@ -155,6 +161,18 @@ class CurrentStageTests(_WorkspaceTestCase):
         self.assertFalse(
             self.workspace.stage_rail().participates_in_run("visualization")
         )
+
+    def test_stage_membership_query_covers_exactly_the_configured_stages(self):
+        for stage in MEASUREMENT_STAGES:
+            with self.subTest(key=stage.key):
+                self.assertTrue(self.workspace.has_stage(stage.key))
+        for key in ("test_configuration", "not_a_stage", ""):
+            with self.subTest(key=key):
+                self.assertFalse(self.workspace.has_stage(key))
+
+    def test_stage_membership_query_rejects_non_strings(self):
+        with self.assertRaises(TypeError):
+            self.workspace.has_stage(None)
 
     def test_unknown_stage_key_is_rejected_without_touching_the_header(self):
         self.workspace.set_current_stage("cable_loss")
@@ -248,6 +266,7 @@ class StageSubsetTests(_WorkspaceTestCase):
     def test_default_stage_keys_are_unknown_in_a_custom_stage_set(self):
         for key in ("cable_loss", "visualization"):
             with self.subTest(key=key):
+                self.assertFalse(self.workspace.has_stage(key))
                 with self.assertRaises(KeyError):
                     self.workspace.set_current_stage(key)
                 self.assertIsNone(
@@ -287,6 +306,32 @@ class UtilityViewTests(_WorkspaceTestCase):
         self.assertFalse(self.workspace.is_utility_view())
         self.assertEqual(self.workspace.title_label.text(), "线损测量")
         self.assertIn("阶段 01 / 04", self.workspace.eyebrow_label.text())
+
+    def test_utility_view_disables_the_configuration_action(self):
+        self.workspace.set_current_stage("cable_loss")
+        self.assertTrue(self.workspace.configuration_btn.isEnabled())
+
+        self.workspace.show_utility("测试配置", "参数、频点与连接")
+
+        self.assertFalse(
+            self.workspace.configuration_btn.isEnabled(),
+            "已经站在工具页上时“配置”没有去处，不能留下可点的空动作",
+        )
+
+        self.workspace.set_current_stage("cable_loss")
+
+        self.assertTrue(self.workspace.configuration_btn.isEnabled())
+
+    def test_disabled_configuration_action_emits_nothing(self):
+        events = []
+        self.workspace.configuration_requested.connect(
+            lambda: events.append("configuration")
+        )
+        self.workspace.show_utility("测试配置", "")
+
+        self.workspace.configuration_btn.click()
+
+        self.assertEqual(events, [])
 
     def test_show_utility_rejects_an_empty_title_without_changing_stage(self):
         self.workspace.set_current_stage("amplifier")
@@ -513,8 +558,7 @@ class RunIdentityTests(_WorkspaceTestCase):
         self.workspace.set_run_identity(None, None)
 
         self.assertEqual(self.workspace.run_identity(), (None, None))
-        self.assertIn("未连接", self.workspace.run_identity_label.text())
-        self.assertNotIn("20261112T101010", self.workspace.run_identity_label.text())
+        self.assertEqual(self.workspace.run_identity_label.text(), "未连接")
 
     def test_run_identity_does_not_change_the_current_stage(self):
         self.workspace.set_current_stage("amplifier")

@@ -668,6 +668,112 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertTrue(window.tab_widget.isTabVisible(driver_index))
         self.assertEqual(window.tab_widget.count(), len(definitions))
 
+    def test_measurement_workspace_hosts_the_tabs_without_a_tab_bar(self):
+        """步骤 5：标签页降级为外壳内容宿主，页头右侧接管测试模式徽标。"""
+        from PySide6.QtCore import Qt
+
+        self._silence_dialogs()
+        window = self._window()
+
+        window._enter_test_mode(False)
+
+        workspace = window.measurement_workspace
+        self.assertIs(workspace.content_widget(), window.tab_widget)
+        self.assertTrue(window.tab_widget.tabBar().isHidden())
+        self.assertIn(window.mode_badge, workspace.right_widgets())
+        self.assertIsNone(
+            window.tab_widget.cornerWidget(Qt.Corner.TopRightCorner),
+            "测试模式徽标不再挂在标签栏角落",
+        )
+
+    def test_stage_rail_and_tabs_keep_the_header_in_sync(self):
+        """阶段条点击切页；隐藏标签栏后反向切页仍同步页头与阶段条。"""
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+        workspace = window.measurement_workspace
+
+        self.assertIs(window.tab_widget.currentWidget(), window.test_config_page)
+        self.assertTrue(workspace.is_utility_view())
+        self.assertIsNone(workspace.current_stage())
+        self.assertFalse(
+            workspace.configuration_btn.isEnabled(),
+            "已经在测试配置页时“配置”不能留下可点的空动作",
+        )
+
+        workspace.stage_rail().stage_button("amplifier").click()
+        self.app.processEvents()
+
+        self.assertIs(window.tab_widget.currentWidget(), window.amplifier_page)
+        self.assertEqual(workspace.current_stage(), "amplifier")
+        self.assertEqual(workspace.title_label.text(), "功放测试")
+        self.assertTrue(workspace.configuration_btn.isEnabled())
+        self.assertIs(window.status_panel.parentWidget(), window.amplifier_page.status_slot)
+
+        window.tab_widget.setCurrentWidget(window.test_config_page)
+        self.app.processEvents()
+
+        self.assertTrue(workspace.is_utility_view())
+        self.assertIsNone(workspace.current_stage())
+        self.assertEqual(workspace.title_label.text(), "测试配置")
+
+    def test_stage_rail_keyboard_navigation_still_switches_pages(self):
+        """隐藏标签栏后键盘导航由阶段条接管：Space 必须能切页并同步页头。"""
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+        workspace = window.measurement_workspace
+        button = workspace.stage_rail().stage_button("cable_loss")
+        self.assertNotEqual(
+            button.focusPolicy(), Qt.FocusPolicy.NoFocus, "阶段项必须可聚焦"
+        )
+
+        QTest.keyClick(button, Qt.Key.Key_Space)
+        self.app.processEvents()
+
+        self.assertIs(window.tab_widget.currentWidget(), window.cable_loss_page)
+        self.assertEqual(workspace.current_stage(), "cable_loss")
+        self.assertEqual(workspace.title_label.text(), "线损测量")
+
+    def test_workspace_configuration_action_returns_to_the_configuration_tab(self):
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+        window.measurement_workspace.stage_rail().stage_button("cable_loss").click()
+        self.app.processEvents()
+
+        window.measurement_workspace.configuration_btn.click()
+        self.app.processEvents()
+
+        self.assertIs(window.tab_widget.currentWidget(), window.test_config_page)
+        self.assertTrue(window.measurement_workspace.is_utility_view())
+        self.assertFalse(
+            window.measurement_workspace.configuration_btn.isEnabled()
+        )
+
+    def test_no_driver_mode_disables_the_driver_mapping_stage(self):
+        """无驱放测试：02 号阶段保留但停用，启用后恢复可点。"""
+        from presentation.qt.measurement_stage import StageState
+
+        self._silence_dialogs()
+        window = self._window()
+        rail = window.measurement_workspace.stage_rail()
+
+        window._enter_test_mode(False)
+        self.assertFalse(rail.is_stage_enabled("driver_mapping"))
+        self.assertIs(
+            rail.display_state_for("driver_mapping"), StageState.DISABLED
+        )
+
+        window._enter_test_mode(True)
+        self.assertTrue(rail.is_stage_enabled("driver_mapping"))
+        self.assertIs(
+            rail.display_state_for("driver_mapping"), StageState.PENDING
+        )
+
     def test_visualization_activation_refreshes_report_availability(self):
         """移除历史页后，切回数据可视化仍按最新报告状态刷新按钮。"""
         self._silence_dialogs()

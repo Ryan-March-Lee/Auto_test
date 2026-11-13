@@ -12,7 +12,8 @@
 - 阶段条仍是受控视图：点击阶段只经 :attr:`MeasurementWorkspace.stage_selected`
   发出导航请求，窗口切页完成后调用 :meth:`set_current_stage` 同步。
 - ``show_utility`` 用于不属于 01–04 阶段的工具页（例如“测试配置”）：它清空当前
-  阶段（阶段条不点亮任何一项），页头显示工具页自己的标题与副标题。
+  阶段（阶段条不点亮任何一项），页头显示工具页自己的标题与副标题；此时右侧
+  “配置”动作没有去处，随之禁用，离开工具页后恢复。
 - 类名不带 ``Page`` 后缀，避免被页面注册门禁误登记为页面。
 
 设计约束（见 ``docs/测量工作台重构计划.md`` 步骤 4）：
@@ -218,6 +219,18 @@ class MeasurementWorkspace(QWidget):
         """页头当前是否显示工具页（不点亮任何阶段）。"""
         return self._utility_view
 
+    def has_stage(self, key: str) -> bool:
+        """``key`` 是否属于构造时接收的阶段集合。
+
+        窗口的 :class:`~presentation.qt.workspace_binding.WorkspaceBinding` 用它分流
+        页头：阶段页走 :meth:`set_current_stage`，其余已登记页面（例如测试配置）走
+        :meth:`show_utility`。非字符串抛 ``TypeError``；未知 key 只返回 ``False``，
+        不在查询里抛异常。
+        """
+        if not isinstance(key, str):
+            raise TypeError("阶段 key 必须是字符串")
+        return key in self._stages_by_key
+
     def content_widget(self) -> QWidget | None:
         """内容槽里的当前 widget；没有内容时为 ``None``。"""
         return self._content
@@ -254,6 +267,7 @@ class MeasurementWorkspace(QWidget):
         self.rail.set_current(descriptor.key)
         self._current_stage_key = descriptor.key
         self._utility_view = False
+        self.configuration_btn.setEnabled(True)
         self._apply_stage_header(descriptor)
 
     def show_utility(self, title: str, subtitle: str) -> None:
@@ -273,6 +287,8 @@ class MeasurementWorkspace(QWidget):
         self.rail.set_current(None)
         self._current_stage_key = None
         self._utility_view = True
+        # 已经站在工具页上时“配置”没有去处：按钮保留位置但不可用，离开后恢复。
+        self.configuration_btn.setEnabled(False)
         self.eyebrow_label.setText(_UTILITY_EYEBROW)
         self.title_label.setText(cleaned_title)
         self.subtitle_label.setText(subtitle.strip())
@@ -289,10 +305,12 @@ class MeasurementWorkspace(QWidget):
         self.run_identity_label.setText(self._format_run_identity())
 
     def _format_run_identity(self) -> str:
-        run_text = self._run_id or _UNCONNECTED_RUN_TEXT
+        # 没有运行标识时只写“未连接”；不能拼成“本次运行 未连接”这类自相矛盾的文案。
+        if self._run_id is None:
+            return _UNCONNECTED_RUN_TEXT
         if self._mode_text:
-            return f"本次运行 {run_text} · {self._mode_text}"
-        return f"本次运行 {run_text}"
+            return f"本次运行 {self._run_id} · {self._mode_text}"
+        return f"本次运行 {self._run_id}"
 
     def _apply_stage_header(self, descriptor: StageDescriptor) -> None:
         kind_text = "查看" if descriptor.kind is None else "测量"
@@ -308,6 +326,7 @@ class MeasurementWorkspace(QWidget):
         self.rail.set_current(None)
         self._current_stage_key = None
         self._utility_view = False
+        self.configuration_btn.setEnabled(False)
         self.eyebrow_label.setText(_UTILITY_EYEBROW)
         self.title_label.setText("")
         self.subtitle_label.setText("")

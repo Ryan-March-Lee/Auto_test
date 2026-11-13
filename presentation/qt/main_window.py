@@ -9,7 +9,7 @@ import logging
 import sys
 from typing import Any
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QApplication,
     QLabel,
@@ -32,6 +32,8 @@ from presentation.qt.instrument_setup_page import InstrumentSetupPage
 from presentation.qt.power_configuration_page import PowerConfigurationPage
 from presentation.qt.rack_overview_page import RackOverviewPage
 from presentation.qt.history_view_model import HistoryViewModel
+from presentation.qt.measurement_stage import MEASUREMENT_STAGES
+from presentation.qt.measurement_workspace import MeasurementWorkspace
 from presentation.qt.pages import PageContext, build_pages
 from presentation.qt.realtime_plot import RealTimePlotWidget
 from presentation.qt.stage_result_selection import (
@@ -45,6 +47,7 @@ from presentation.qt.theme import apply_theme, build_stylesheet
 from presentation.qt.visualization_page import VisualizationPage
 from presentation.qt.welcome_page import WelcomePage, apply_test_mode, confirm_leave_configuration
 from presentation.qt.window_geometry import fit_window_to_screen
+from presentation.qt.workspace_binding import WorkspaceBinding
 
 # 全局样式表来自统一主题层：颜色、字号与控件外观只在 presentation.qt.theme 定义一次。
 APPLICATION_STYLE = build_stylesheet()
@@ -141,15 +144,30 @@ class MainWindow(QMainWindow):
         self.welcome_page.mode_selected.connect(self._enter_test_mode)
         self.view_stack.addWidget(self.welcome_page)
 
-        left_widget = QWidget()
-        left_layout = QVBoxLayout(left_widget)
-        left_layout.setContentsMargins(16, 12, 12, 12)
-        left_layout.setSpacing(8)
+        # 常驻外壳接管测量区外观：标签页降为内容宿主，注册与生命周期都不变。
+        self.measurement_workspace = MeasurementWorkspace(MEASUREMENT_STAGES)
+        self.measurement_workspace.configuration_requested.connect(
+            self._open_workspace_configuration
+        )
         self.tab_widget = QTabWidget()
         self.tab_widget.setObjectName("mainTabs")
         self.tab_widget.setDocumentMode(True)
-        left_layout.addWidget(self.tab_widget)
+        self.measurement_workspace.set_content(self.tab_widget)
         self._register_pages()
+        # 标签宿主与外壳之间只有一条同步路径：阶段导航、页头同步、阶段停用都在这里。
+        self.workspace_binding = WorkspaceBinding(
+            self.measurement_workspace,
+            self.tab_widget,
+            self.pages,
+            utility_subtitles={"test_configuration": "参数、频点与连接"},
+        )
+        self.measurement_workspace.stage_selected.connect(
+            self.workspace_binding.navigate
+        )
+        # 标签栏是隐藏的内部宿主；保留 setDrawBase(False) 是为了“显示标签栏”的回退
+        # 路径：分段选择器样式不要底边基线，否则宽度变化后会露出一个空的长灰框。
+        self.tab_widget.tabBar().setDrawBase(False)
+        self.tab_widget.tabBar().hide()
         # 电源配置是整屏步骤：在标签页之外创建，进入工作区前单独切页；测试配置页与它由
         # 同一个编辑器装配成共享草稿。
         self.power_page = self.create_power_page()
@@ -157,13 +175,8 @@ class MainWindow(QMainWindow):
         self.configuration_editor.set_read_only(
             self.coordinator.editing_read_only_reason()
         )
-        # 测试模式徽标并入标签栏右侧：系统名与版本号已由窗口标题栏显示，不再重复一行。
-        self.tab_widget.setCornerWidget(
-            self._build_mode_badge(), Qt.Corner.TopRightCorner
-        )
-        # 分段选择器样式的标签栏不要底边基线：Qt 会在标签栏矩形上描一圈 1px 浅灰框，
-        # 标签栏铺满整行时看不出来，宽度变化后就会露出一个空的长灰框。
-        self.tab_widget.tabBar().setDrawBase(False)
+        # 测试模式徽标并入工作台页头右侧：系统名与版本号已由窗口标题栏显示，不再重复一行。
+        self.measurement_workspace.add_right_widget(self._build_mode_badge())
 
         self.workspace_page = QWidget()
         workspace_layout = QVBoxLayout(self.workspace_page)
@@ -171,7 +184,7 @@ class MainWindow(QMainWindow):
         workspace_layout.setSpacing(0)
         # 标签页占满工作区：状态面板不在右侧另占一栏，而是挂在当前测量页左栏的
         # “测量控制”下方，把横向空间整块留给结果表与频点浏览图。
-        workspace_layout.addWidget(left_widget, 1)
+        workspace_layout.addWidget(self.measurement_workspace, 1)
         self.create_status_panel()
         self.view_stack.addWidget(self.workspace_page)
 
@@ -209,9 +222,10 @@ class MainWindow(QMainWindow):
         self.view_stack.setCurrentWidget(self.welcome_page)
         # 初始标签页就是“测试配置”：进入工作区后右侧不应出现进度与日志。
         self._sync_status_panel_visibility()
+        self.workspace_binding.sync()
 
     def _build_mode_badge(self):
-        """当前测试模式徽标（只读展示），显示在标签栏最右侧。"""
+        """当前测试模式徽标（只读展示），显示在工作台页头右侧。"""
         self.mode_badge = QLabel("未选择测试模式")
         self.mode_badge.setObjectName("appModeBadge")
         return self.mode_badge
@@ -281,10 +295,15 @@ class MainWindow(QMainWindow):
         self._sync_status_panel_visibility()
 
     def _apply_driver_mode_to_pages(self, driver_enabled: bool) -> None:
-        """无驱放测试没有驱动功放，只隐藏驱动映射标签页；页面实例与绑定保留。"""
+        """无驱放测试没有驱动功放，只隐藏驱动映射标签页；页面实例与绑定保留。
+
+        阶段条对应项同步为不可用：仍是固定的 02 号阶段，只由 enabled 派生停用态。
+        """
+        enabled = bool(driver_enabled)
         index = getattr(self, "_driver_mapping_tab_index", -1)
         if index >= 0:
-            self.tab_widget.setTabVisible(index, bool(driver_enabled))
+            self.tab_widget.setTabVisible(index, enabled)
+        self.workspace_binding.set_stage_enabled("driver_mapping", enabled)
 
     def _return_to_welcome(self) -> None:
         if confirm_leave_configuration(self, self.configuration_editor.is_dirty()):
@@ -359,6 +378,7 @@ class MainWindow(QMainWindow):
             pages[index].on_activated()
         self._active_page_index = index
         self._sync_status_panel_visibility()
+        self.workspace_binding.sync()
 
     def _sync_status_panel_visibility(self) -> None:
         """把唯一的进度与日志面板挂到当前测量页左栏。

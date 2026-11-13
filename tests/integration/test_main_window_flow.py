@@ -400,7 +400,50 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIs(window.coordinator.instrument_ctrl, port)
         self.assertIs(window.coordinator.state, RunFlowState.CONNECTED)
         self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
+        # 连接成功后的交接：从测试配置页前进到 01 线损测量，而不是停在配置页。
+        self.assertIs(window.tab_widget.currentWidget(), window.cable_loss_page)
+        self.assertEqual(window.measurement_workspace.current_stage(), "cable_loss")
         self.assertTrue(window.test_config_page.finalize_run_btn.isEnabled())
+
+    def test_connection_success_hands_over_to_the_cable_loss_stage(self):
+        """步骤 7：连接成功只做一次“配置 → 01 线损测量”的交接，不自动开始测量。"""
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+        self._finalize_with_fake_worker(window)
+        window.on_instrument_controller_ready(_ConnectedPort())
+
+        window.on_instrument_connected()
+
+        workspace = window.measurement_workspace
+        self.assertIs(window.tab_widget.currentWidget(), window.cable_loss_page)
+        self.assertEqual(workspace.current_stage(), "cable_loss")
+        self.assertIn("已进入线损测量", window.log_text.toPlainText())
+        self.assertFalse(
+            window.measurement_controller.state.is_active,
+            "交接不能自动开始测量",
+        )
+
+        # 配置入口仍在：可以从第一个测量阶段回到测试配置页。
+        workspace.configuration_btn.click()
+        self.app.processEvents()
+        self.assertIs(window.tab_widget.currentWidget(), window.test_config_page)
+
+    def test_reconnect_completion_keeps_the_measurement_page_the_user_is_on(self):
+        """步骤 7：重连完成事件不能把已经停在测量页的用户拉回线损页。"""
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+        self._finalize_with_fake_worker(window)
+        window.on_instrument_controller_ready(_ConnectedPort())
+        window.on_instrument_connected()
+        window.tab_widget.setCurrentWidget(window.amplifier_page)
+        self.app.processEvents()
+
+        window.on_instrument_connected()
+
+        self.assertIs(window.tab_widget.currentWidget(), window.amplifier_page)
+        self.assertEqual(window.measurement_workspace.current_stage(), "amplifier")
 
     def test_finalize_stays_on_the_configuration_page_when_the_connection_fails(self):
         self._silence_dialogs()

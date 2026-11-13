@@ -841,6 +841,66 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertEqual(window.mode_badge.text(), "有驱放测试")
         self.assertEqual(window.measurement_workspace.run_identity(), (None, None))
 
+    def test_new_no_driver_mode_reaches_the_rack_and_amplifier_pages(self):
+        """步骤 1 验收：旧运行 A 之后选相反模式 B，排布页与功放页都按 B 呈现。
+
+        徽标与标签页在上一轮已经覆盖；这里盯住两个曾从旧运行推导模式的消费者：
+        仪器排布页的链路和功放页的驱动映射入口。
+        """
+        self._silence_dialogs()
+        self.config_path.write_text(
+            json.dumps(_fully_valid_gui_config(driver_enabled=True)),
+            encoding="utf-8",
+        )
+        window = self._window()
+        window._enter_test_mode(True)
+        self.assertIsNotNone(self._prepare_and_commit(window))
+        window.on_instrument_connected()
+        self.assertTrue(
+            window.coordinator.amplifier_driver_mode(),
+            "旧运行 A 仍冻结着有驱放模式，配置 UI 不能继续读它",
+        )
+
+        window._return_to_welcome()
+        window._enter_test_mode(False)
+
+        window._open_rack_overview_page()
+        self.assertFalse(window.rack_page.board._driver_enabled)
+        self.assertEqual(
+            [label for label, _rect in window.rack_page.board._amplifiers()],
+            ["DUT"],
+            "无驱放测试的排布链路里不能出现 Driver",
+        )
+
+        window.amplifier_page.on_activated()
+        self.assertTrue(window.amplifier_page.load_driver_mapping_btn.isHidden())
+        self.assertEqual(
+            window.amplifier_page.driver_mapping_source_label.text(),
+            "无驱放测试不需要驱动映射结果",
+        )
+
+    def test_new_driver_mode_restores_the_driver_chain_and_mapping_entry(self):
+        """反向：旧运行无驱放，重新选有驱放后排布页与功放页一起恢复。"""
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+        self.assertIsNotNone(self._prepare_and_commit(window))
+        window.on_instrument_connected()
+        self.assertFalse(window.coordinator.amplifier_driver_mode())
+
+        window._return_to_welcome()
+        window._enter_test_mode(True)
+
+        window._open_rack_overview_page()
+        self.assertTrue(window.rack_page.board._driver_enabled)
+        self.assertEqual(
+            [label for label, _rect in window.rack_page.board._amplifiers()],
+            ["Driver", "DUT"],
+        )
+
+        window.amplifier_page.on_activated()
+        self.assertFalse(window.amplifier_page.load_driver_mapping_btn.isHidden())
+
     def test_loading_a_frozen_run_refreshes_identity_and_driver_mode_together(self):
         """加载已冻结运行会改变驱动模式：页头、徽标、标签页与阶段条一起更新。"""
         from app.gui_runtime import prepare_configuration

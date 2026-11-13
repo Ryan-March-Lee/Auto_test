@@ -480,14 +480,14 @@ class MainWindowAssemblyBoundaryTests(unittest.TestCase):
             "ApplicationCoordinator(",
             "run_provider=self.coordinator.resolve_measurement_run",
             "config_path_provider=self.coordinator.measurement_config_path",
-            "driver_mode_provider=self.coordinator.amplifier_driver_mode",
+            "driver_mode_provider=self._current_driver_mode",
         ):
             self.assertIn(literal, self.source)
 
     def test_rack_overview_receives_the_selected_test_mode(self):
         """仪器排布页要知道欢迎页选的模式：无驱放测试的链路里不能出现 Driver。"""
         self.assertIn(
-            "driver_enabled=self.coordinator.amplifier_driver_mode()",
+            "driver_enabled=self._current_driver_mode()",
             self.source,
         )
 
@@ -497,6 +497,60 @@ class MainWindowAssemblyBoundaryTests(unittest.TestCase):
                 widget, self.source,
                 f"主窗口不得直接读取配置控件 {widget}；应使用配置页的窄接口",
             )
+
+
+class CurrentDriverModeTests(unittest.TestCase):
+    """步骤 1：配置 UI 读当前会话模式，只有测量进行中才跟冻结运行模式。"""
+
+    @staticmethod
+    def _window(
+        binding_mode,
+        *,
+        measurement_active=False,
+        coordinator_mode=True,
+        assembled=True,
+    ):
+        from presentation.qt.main_window import MainWindow
+
+        window = SimpleNamespace(
+            measurement_controller=SimpleNamespace(
+                state=SimpleNamespace(is_active=measurement_active)
+            ),
+            coordinator=SimpleNamespace(
+                amplifier_driver_mode=Mock(return_value=coordinator_mode)
+            ),
+        )
+        if assembled:
+            window.workspace_binding = SimpleNamespace(
+                driver_mode=lambda: binding_mode
+            )
+        return MainWindow, window
+
+    def test_configuration_session_prefers_the_selected_mode_over_the_frozen_run(self):
+        MainWindow, window = self._window(False, coordinator_mode=True)
+
+        self.assertFalse(MainWindow._current_driver_mode(window))
+        window.coordinator.amplifier_driver_mode.assert_not_called()
+
+    def test_running_measurement_keeps_the_frozen_run_mode(self):
+        MainWindow, window = self._window(
+            False, measurement_active=True, coordinator_mode=True
+        )
+
+        self.assertTrue(MainWindow._current_driver_mode(window))
+
+    def test_unselected_session_mode_falls_back_to_the_coordinator(self):
+        MainWindow, window = self._window(None, coordinator_mode=False)
+
+        self.assertFalse(MainWindow._current_driver_mode(window))
+        window.coordinator.amplifier_driver_mode.assert_called_once_with()
+
+    def test_window_without_the_binding_yet_falls_back_to_the_coordinator(self):
+        MainWindow, window = self._window(
+            None, coordinator_mode=True, assembled=False
+        )
+
+        self.assertTrue(MainWindow._current_driver_mode(window))
 
 
 class MainWindowMigrationResidueTests(unittest.TestCase):

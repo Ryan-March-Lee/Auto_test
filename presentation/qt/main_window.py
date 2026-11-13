@@ -255,9 +255,7 @@ class MainWindow(QMainWindow):
                  if card.is_checked()]
         self.view_stack.setCurrentWidget(self.rack_page)
         entries = RackOverviewPage.entries_from_cards(cards)
-        self.rack_page.enter(
-            entries, driver_enabled=self.coordinator.amplifier_driver_mode()
-        )
+        self.rack_page.enter(entries, driver_enabled=self._current_driver_mode())
 
     def _open_test_configuration_page(self) -> None:
         """排布完成：进整屏电源配置页，把排布页的电源卡片展开成通道卡片。"""
@@ -296,6 +294,14 @@ class MainWindow(QMainWindow):
         self.view_stack.setCurrentWidget(self.connection_page)
         self._sync_status_panel_visibility()
 
+    def _current_driver_mode(self) -> bool:
+        """当前配置会话的驱动模式；测量进行中始终使用冻结运行的模式。"""
+        binding = getattr(self, "workspace_binding", None)
+        mode = binding.driver_mode() if binding is not None else None
+        if mode is None or self.measurement_controller.state.is_active:
+            return self.coordinator.amplifier_driver_mode()
+        return mode
+
     def _on_run_loaded(self, run_id: str) -> None:
         """加载冻结运行：只有真正切换成功才把它的模式带回工作台。"""
         binding = getattr(self, "workspace_binding", None)
@@ -318,7 +324,7 @@ class MainWindow(QMainWindow):
             controller=self.measurement_controller,
             config_path_provider=self.coordinator.measurement_config_path,
             run_provider=self.coordinator.resolve_measurement_run,
-            driver_mode_provider=self.coordinator.amplifier_driver_mode,
+            driver_mode_provider=self._current_driver_mode,
             connection_dialog_factory=lambda kind, parent: ConnectionDialog(kind, parent),
             plot_widget_factory=lambda _parent: RealTimePlotWidget(show_nav_buttons=True),
             log_callback=self.add_log_message,

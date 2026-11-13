@@ -783,6 +783,22 @@ class FinalizationTransactionTests(unittest.TestCase):
             any("尚未创建运行" in message for message in coordinator.errors)
         )
 
+    def test_measurement_run_requires_a_connected_session(self):
+        """旧运行与旧端口残留时，只有 ``CONNECTED`` 才允许交给测量页。"""
+        coordinator = self._finalization_coordinator()
+        coordinator.prepared_run = _prepared_run()
+        coordinator.instrument_ctrl = _OkPort()
+        coordinator._set_state(RunFlowState.DEVICE_SELECTION)
+
+        self.assertIsNone(coordinator.resolve_measurement_run())
+        self.assertTrue(
+            any("不在已连接的测量会话" in message for message in coordinator.errors)
+        )
+
+        coordinator._set_state(RunFlowState.CONNECTED)
+
+        self.assertIs(coordinator.resolve_measurement_run(), coordinator.prepared_run)
+
     def test_reconnect_reuses_the_committed_run_without_saving_or_freezing(self):
         coordinator = self._finalization_coordinator()
         previous_run = _prepared_run()

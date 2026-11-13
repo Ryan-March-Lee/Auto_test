@@ -623,6 +623,7 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
         coordinator = self._coordinator(error=errors.append)
         coordinator.prepared_run = run
         coordinator.instrument_ctrl = object()
+        coordinator._set_state(RunFlowState.CONNECTED)
 
         self.assertIs(coordinator.resolve_measurement_run(), run)
         self.assertEqual(errors, [])
@@ -647,6 +648,7 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
                 coordinator = self._coordinator(error=errors.append)
                 coordinator.prepared_run = _broken_contract_run(value)
                 coordinator.instrument_ctrl = object()
+                coordinator._set_state(RunFlowState.CONNECTED)
 
                 self.assertIsNone(coordinator.resolve_measurement_run())
                 self.assertEqual(len(errors), 1)

@@ -636,6 +636,13 @@ class ApplicationCoordinator:
         if self.instrument_ctrl is None:
             self._error("请先重新连接仪器；上一次连接或测量结束后端口已安全释放")
             return None
+        if self._state is not RunFlowState.CONNECTED:
+            # 旧运行与旧端口都可能残留到新的配置会话：只有当前流程已连接，
+            # 才允许把运行契约交给测量页，避免按上一次运行的冻结模式启动测量。
+            self._error(
+                "当前不在已连接的测量会话中；请先完成配置并连接仪器后再开始测量"
+            )
+            return None
         try:
             self.measurement_config_path()
         except RunNotResumable as failure:

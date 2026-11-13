@@ -650,6 +650,87 @@ class ApplicationCoordinator:
             return None
         return self.prepared_run
 
+    # ---- 放弃当前会话 ----
+
+    def abandon_current_session(self) -> bool:
+        """显式放弃当前窗口中的运行会话；返回是否已安全放弃。
+
+        这是“返回欢迎页”唯一的会话清理入口：先拒绝测量进行中、连接线程未结束、
+        最终化事务未完成或存在未决端口清理的状态，再释放当前仪器端口。只有确认
+        端口已经安全释放后才清除内存中的当前运行/后台运行绑定，并把流程状态回到
+        设备选择初态。
+
+        “放弃”只解除**本窗口的内存绑定**：不调用待提交运行撤销、不删除已保存的
+        运行目录、配置文件和历史记录；以后仍可从历史入口重新加载。
+
+        清理失败时保留未决端口引用与当前运行身份，返回 ``False``，绝不假装已经
+        进入一个干净的新会话——调用方必须留在原流程并报告失败。
+        """
+        blocker = self._session_abandon_blocker()
+        if blocker is not None:
+            self._refuse_session_abandon(blocker)
+            return False
+        if not self.release_instrument_port() or self.has_unreleased_ports():
+            self._set_state(RunFlowState.MANUAL_CLEANUP_REQUIRED)
+            self._log(
+                "返回欢迎页未生效：当前仪器端口未能确认安全释放；"
+                "当前运行保持不变，端口已进入未决清理清单"
+            )
+            self._warn(
+                "无法返回欢迎页",
+                "当前仪器端口未能完成安全清理；请在现场确认仪器已断开并重试清理后再返回",
+            )
+            return False
+        self._forget_session_run_identity()
+        self._set_state(RunFlowState.DEVICE_SELECTION)
+        # 状态可能本来就是 DEVICE_SELECTION：_set_state 会提前返回，运行状态文案
+        # 必须在这里显式刷新，否则界面仍显示已清除的运行。
+        self.run_status_changed(self.run_status_text())
+        self._log("已放弃当前运行会话；运行目录与历史数据保持不变")
+        return True
+
+    def _session_abandon_blocker(self) -> str | None:
+        """返回不允许放弃会话的原因；可以放弃时返回 ``None``。
+
+        只读测量/连接状态、最终化事务与未决清理清单，不改动运行身份：调用方被
+        拒绝后必须还能留在原流程继续操作。
+        """
+        if self._measurement_is_active():
+            return "测量正在运行；请先结束或停止测量，再返回欢迎页"
+        if self.instrument_worker_running():
+            return "仪器连接仍在进行；请等待连接结束后再返回欢迎页"
+        if self._state is RunFlowState.FINALIZING or self._pending_run is not None:
+            return "最终动作正在进行；请先完成或取消当前最终动作，再返回欢迎页"
+        if self.has_unreleased_ports() or self._state is RunFlowState.MANUAL_CLEANUP_REQUIRED:
+            return "存在未完成的仪器清理；请在现场确认仪器已断开并完成清理后再返回欢迎页"
+        return None
+
+    def _refuse_session_abandon(self, reason: str) -> None:
+        """报告拒绝原因；未决清理状态继续保持阻断。
+
+        最终化事务有自己的状态机（由补偿路径收尾），这里不能把它改写成人工清理，
+        否则连接结果回来时事务会被当成已取消。
+        """
+        self._log(f"未返回欢迎页：{reason}")
+        self._warn("无法返回欢迎页", reason)
+        if (
+            self._state is not RunFlowState.FINALIZING
+            and self.has_unreleased_ports()
+        ):
+            self._set_state(RunFlowState.MANUAL_CLEANUP_REQUIRED)
+
+    def _forget_session_run_identity(self) -> None:
+        """只清除内存中的会话运行绑定，不触碰磁盘上的运行目录。
+
+        调用前必须已确认端口清理成功且没有未提交运行：这里不撤销、不删除任何
+        运行，因此清除引用不会让“已保存但尚未提交”的运行失去所有者。
+        """
+        self.prepared_run = None
+        self.background_run = None
+        self._pending_run_created_here = False
+        self._reconnecting = False
+        self._saved_configuration_pending = False
+
     # ---- 最终化事务 ----
 
     def finalize_configuration(

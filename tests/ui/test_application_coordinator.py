@@ -880,6 +880,184 @@ class FinalizationTransactionTests(unittest.TestCase):
         create.assert_not_called()
 
 
+class SessionAbandonTests(unittest.TestCase):
+    """步骤 5：返回欢迎页前的显式会话放弃契约。
+
+    放弃会话只解除本窗口的内存绑定：先确认可以导航（无测量/连接/最终化/未决清理），
+    再释放端口，最后才清除当前与后台运行引用；运行目录与历史数据始终保留。
+    """
+
+    def _connected_coordinator(self, *, port=None, controller=None):
+        page = _Page()
+        coordinator = _coordinator(page=page, controller=controller or MagicMock())
+        coordinator.prepared_run = _prepared_run()
+        if port is not None:
+            coordinator.instrument_ctrl = port
+        coordinator._set_state(RunFlowState.CONNECTED)
+        return coordinator, page
+
+    def _assert_refused_with_warning(self, coordinator):
+        self.assertTrue(
+            any(title == "无法返回欢迎页" for title, _message in coordinator.warnings)
+        )
+
+    def test_abandon_without_a_port_clears_the_session_run_identity(self):
+        coordinator, page = self._connected_coordinator()
+        run = coordinator.prepared_run
+        coordinator.background_run = run
+        coordinator.save_configuration = MagicMock(return_value=True)
+
+        with patch(
+            "presentation.qt.application_coordinator.prepare_configuration"
+        ) as create:
+            self.assertTrue(coordinator.abandon_current_session())
+
+        # 放弃会话既不保存配置、也不创建新运行或撤销运行目录。
+        create.assert_not_called()
+        coordinator.save_configuration.assert_not_called()
+        self.assertIsNone(coordinator.prepared_run)
+        self.assertIsNone(coordinator.background_run)
+        self.assertIs(coordinator.state, RunFlowState.DEVICE_SELECTION)
+        self.assertFalse(coordinator.has_unreleased_ports())
+        # 状态可能本来就是 DEVICE_SELECTION：运行状态文案仍必须刷新。
+        self.assertEqual(page.statuses[-1], "当前运行: 未创建")
+        self.assertTrue(Path(run.run_directory).is_dir())
+
+    def test_abandon_closes_the_port_before_forgetting_the_run(self):
+        port = _OkPort()
+        controller = MagicMock()
+        coordinator, _page = self._connected_coordinator(
+            port=port, controller=controller
+        )
+        run = coordinator.prepared_run
+
+        self.assertTrue(coordinator.abandon_current_session())
+
+        self.assertEqual(port.close_calls, 1)
+        self.assertIsNone(coordinator.instrument_ctrl)
+        # 关闭端口后 controller 不得再持有已失效的会话引用。
+        controller.set_measurement_port.assert_called_once_with(None)
+        self.assertIsNone(coordinator.prepared_run)
+        self.assertIs(coordinator.state, RunFlowState.DEVICE_SELECTION)
+        self.assertTrue(Path(run.run_directory).is_dir())
+
+    def test_cleanup_failure_keeps_the_run_identity_and_the_unreleased_port(self):
+        port = _FailingPort("RF 未确认关闭")
+        coordinator, _page = self._connected_coordinator(port=port)
+        run = coordinator.prepared_run
+
+        self.assertFalse(coordinator.abandon_current_session())
+
+        # 清理失败不得进入看似干净的新会话：运行身份、未决引用与人工清理状态都保留。
+        self.assertIs(coordinator.prepared_run, run)
+        self.assertIsNone(coordinator.instrument_ctrl)
+        self.assertTrue(coordinator.has_unreleased_ports())
+        self.assertEqual(coordinator.unreleased_port_count(), 1)
+        self.assertIs(coordinator.state, RunFlowState.MANUAL_CLEANUP_REQUIRED)
+        self._assert_refused_with_warning(coordinator)
+        self.assertTrue(Path(run.run_directory).is_dir())
+
+    def test_measurement_in_progress_refuses_abandon(self):
+        controller = MagicMock()
+        controller.state = SimpleNamespace(is_active=True)
+        port = _OkPort()
+        coordinator, _page = self._connected_coordinator(
+            port=port, controller=controller
+        )
+        run = coordinator.prepared_run
+
+        self.assertFalse(coordinator.abandon_current_session())
+
+        self.assertIs(coordinator.prepared_run, run)
+        self.assertIs(coordinator.instrument_ctrl, port)
+        self.assertEqual(port.close_calls, 0)
+        self.assertIs(coordinator.state, RunFlowState.CONNECTED)
+        self._assert_refused_with_warning(coordinator)
+        self.assertTrue(
+            any("测量正在运行" in message for message in coordinator.messages)
+        )
+
+    def test_connection_worker_in_progress_refuses_abandon(self):
+        port = _OkPort()
+        coordinator, _page = self._connected_coordinator(port=port)
+        run = coordinator.prepared_run
+        worker = MagicMock()
+        worker.isRunning.return_value = True
+        coordinator.instrument_worker = worker
+
+        self.assertFalse(coordinator.abandon_current_session())
+
+        # 线程仍在使用资源：不丢弃 worker 引用，也不关闭它尚未交接的端口。
+        self.assertIs(coordinator.prepared_run, run)
+        self.assertIs(coordinator.instrument_ctrl, port)
+        self.assertIs(coordinator.instrument_worker, worker)
+        self.assertEqual(port.close_calls, 0)
+        self.assertIs(coordinator.state, RunFlowState.CONNECTED)
+        self._assert_refused_with_warning(coordinator)
+
+    def test_finalization_in_progress_refuses_abandon(self):
+        coordinator, _page = self._connected_coordinator()
+        previous = coordinator.prepared_run
+        pending = _prepared_run()
+        coordinator._stage_pending_run(pending, created_here=True)
+        coordinator._set_state(RunFlowState.FINALIZING)
+
+        self.assertFalse(coordinator.abandon_current_session())
+
+        self.assertIs(coordinator._pending_run, pending)
+        self.assertIs(coordinator.prepared_run, previous)
+        self.assertIs(coordinator.state, RunFlowState.FINALIZING)
+        self._assert_refused_with_warning(coordinator)
+
+    def test_existing_unreleased_ports_block_abandon(self):
+        coordinator, _page = self._connected_coordinator()
+        run = coordinator.prepared_run
+        coordinator.instrument_ctrl = _FailingPort()
+        self.assertFalse(coordinator.release_instrument_port())
+        self.assertTrue(coordinator.has_unreleased_ports())
+
+        self.assertFalse(coordinator.abandon_current_session())
+
+        self.assertIs(coordinator.prepared_run, run)
+        self.assertTrue(coordinator.has_unreleased_ports())
+        self.assertIs(coordinator.state, RunFlowState.MANUAL_CLEANUP_REQUIRED)
+        self._assert_refused_with_warning(coordinator)
+
+    def test_abandon_never_discards_or_deletes_the_saved_run(self):
+        repository = _RunRepository()
+        coordinator = _coordinator(page=_Page())
+        run = _prepared_run(repository)
+        coordinator.prepared_run = run
+        coordinator.background_run = run
+        coordinator._set_state(RunFlowState.CONNECTED)
+
+        with patch(
+            "presentation.qt.application_coordinator.discard_unstarted_run"
+        ) as discard:
+            self.assertTrue(coordinator.abandon_current_session())
+
+        # 放弃会话不是补偿：绝不撤销运行，磁盘上的运行目录仍属于历史记录。
+        discard.assert_not_called()
+        self.assertEqual(repository.discarded, [])
+        self.assertTrue(Path(run.run_directory).is_dir())
+
+    def test_abandoned_run_can_no_longer_start_a_measurement(self):
+        page = _Page(driver_mode=True)
+        coordinator = _coordinator(page=page)
+        coordinator.prepared_run = _prepared_run()
+        coordinator.instrument_ctrl = _OkPort()
+        coordinator._set_state(RunFlowState.CONNECTED)
+
+        self.assertTrue(coordinator.abandon_current_session())
+
+        self.assertIsNone(coordinator.resolve_measurement_run())
+        self.assertTrue(
+            any("尚未创建运行" in message for message in coordinator.errors)
+        )
+        # 新会话的模式只能来自页面选择，不再来自已放弃的旧运行。
+        self.assertTrue(coordinator.amplifier_driver_mode())
+
+
 class BackgroundRunContextTests(unittest.TestCase):
     """步骤 16：保存配置后创建/复用后台运行上下文，连接仪器是后续动作。"""
 

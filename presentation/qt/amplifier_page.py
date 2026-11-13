@@ -5,11 +5,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Callable
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QDialog,
-    QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -30,6 +28,13 @@ from .measurement_start_facade import (
     is_busy,
 )
 from .measurement_state import MeasurementKind, StageResultSelection
+from .measurement_surface import (
+    CONTROL_SURFACE,
+    RESULT_SURFACE,
+    build_surface,
+    hairline,
+    section_caption,
+)
 from .pages import PageControllerBindingMixin
 from .realtime_buffer import RealtimeMeasurementBuffer
 from .realtime_page import RealtimePageMixin
@@ -99,7 +104,7 @@ class AmplifierPage(
         layout.setContentsMargins(0, 4, 0, 0)
         layout.setSpacing(12)
 
-        # 左侧窄栏自上而下放测量控制与状态面板（进度 + 实时日志）；右侧整块留给四张图。
+        # 左侧窄栏自上而下放控制面与状态面板（进度 + 实时日志）；右侧整块留给结果面。
         # 测量结果由频点浏览图按频点展示，页面不再重复列一份结果表。
         # 接线说明只保留连接图入口：测试者已知道仪器怎么接，按钮只用于防止忘记。
         # 宽度与另两个测量页共用 theme 里的同一组常量。
@@ -110,10 +115,8 @@ class AmplifierPage(
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(12)
 
-        control_group = QGroupBox("测量控制")
-        control_layout = QGridLayout(control_group)
-        control_layout.setHorizontalSpacing(8)
-        control_layout.setVerticalSpacing(8)
+        control_surface = build_surface(CONTROL_SURFACE, title="测量控制")
+        control_layout = control_surface.layout()
         self.amplifier_test_btn = QPushButton("开始功放测试")
         set_button_variant(self.amplifier_test_btn, "primary")
         self.amplifier_test_btn.clicked.connect(self.start_measurement)
@@ -139,46 +142,54 @@ class AmplifierPage(
             },
         )
         self.controls.show_idle()
-        # 测量控制按钮横向排列在同一行，连接图入口单独占下一行。
-        for column, button in enumerate(
-            (
-                self.amplifier_test_btn,
-                self.stop_btn,
-            )
-        ):
-            control_layout.addWidget(button, 0, column)
-        control_layout.addWidget(self.show_amp_diagram_btn, 1, 0, 1, 2)
-        control_layout.addWidget(self.load_cable_loss_btn, 2, 0, 1, 2)
-        control_layout.addWidget(self.load_driver_mapping_btn, 3, 0, 1, 2)
-        left_layout.addWidget(control_group)
-        # 两类校准输入是主功放测量的前置条件：这里持续回显来源文件与测量时间。
-        # 驱动关闭时不需要驱动映射，入口与来源行随驱动模式一起隐藏。
+        # 开始是控制面唯一的主操作，独占整行；停止与连接图收成一行紧凑次操作。
+        control_layout.addWidget(self.amplifier_test_btn)
+        secondary_actions = QHBoxLayout()
+        secondary_actions.setSpacing(8)
+        for button in (self.stop_btn, self.show_amp_diagram_btn):
+            secondary_actions.addWidget(button, 1)
+        control_layout.addLayout(secondary_actions)
+        # 两类校准输入是主功放测量的前置条件：合并成同一个“校准输入”区块，每行是
+        # 来源文件、测量时间和加载动作。驱动关闭时不需要驱动映射，整行随模式隐藏。
+        control_layout.addWidget(hairline())
+        control_layout.addWidget(section_caption("校准输入"))
         self.cable_loss_source_label = QLabel()
         self.cable_loss_source_label.setObjectName("emptyHint")
         self.cable_loss_source_label.setWordWrap(True)
-        left_layout.addWidget(self.cable_loss_source_label)
+        self.cable_loss_input_row = _calibration_input_row(
+            self.load_cable_loss_btn, self.cable_loss_source_label
+        )
+        control_layout.addWidget(self.cable_loss_input_row)
         self.driver_mapping_source_label = QLabel()
         self.driver_mapping_source_label.setObjectName("emptyHint")
         self.driver_mapping_source_label.setWordWrap(True)
-        left_layout.addWidget(self.driver_mapping_source_label)
+        self.driver_mapping_input_row = _calibration_input_row(
+            self.load_driver_mapping_btn, self.driver_mapping_source_label
+        )
+        control_layout.addWidget(self.driver_mapping_input_row)
+        left_layout.addWidget(control_surface)
         self._sync_cable_loss_label()
         self._sync_driver_mapping_label()
         self._sync_driver_input_availability()
         self.archival_banner = self._build_archival_banner()
         left_layout.addWidget(self.archival_banner)
-        # 进度与实时日志由窗口挂进这块容器，占满控制框以下的剩余高度。
+        # 进度与实时日志由窗口挂进这块容器，占满控制面以下的剩余高度。
         self.status_slot = StatusSlot()
         left_layout.addWidget(self.status_slot, 1)
         self.control_panel = left_panel
         layout.addWidget(left_panel)
 
-        self.amplifier_plot_widget = self._plot_widget_factory(self)
+        # 结果面统一包住绘图控件：频点浏览仍由绘图控件自带，本步只加标题行，不做 KPI。
+        result_surface = build_surface(RESULT_SURFACE, title="测量结果")
+        result_layout = result_surface.layout()
+        self.amplifier_plot_widget = self._plot_widget_factory(result_surface)
         self._realtime_plot_widget = self.amplifier_plot_widget
         for signal_name, slot in (("prev_clicked", self.previous_frequency), ("next_clicked", self.next_frequency)):
             signal = getattr(self.amplifier_plot_widget, signal_name, None)
             if signal is not None:
                 signal.connect(slot)
-        layout.addWidget(self.amplifier_plot_widget, 1)
+        result_layout.addWidget(self.amplifier_plot_widget, 1)
+        layout.addWidget(result_surface, 1)
         return self
 
     def _connect_controller_signals(self, controller: Any) -> None:
@@ -377,8 +388,9 @@ class AmplifierPage(
         )
 
     def _sync_driver_input_availability(self) -> None:
-        """驱动关闭时隐藏驱动映射入口：该模式下它既不需要，也不会被检查。"""
+        """驱动关闭时隐藏整行驱动映射输入：该模式下它既不需要，也不会被检查。"""
         required = bool(self._driver_mode_provider())
+        row = getattr(self, "driver_mapping_input_row", None)
         button = getattr(self, "load_driver_mapping_btn", None)
         label = getattr(self, "driver_mapping_source_label", None)
         if button is not None:
@@ -389,6 +401,8 @@ class AmplifierPage(
                 self._sync_driver_mapping_label()
             else:
                 label.setText("无驱放测试不需要驱动映射结果")
+        if row is not None:
+            row.setVisible(required)
 
     def _update_plot(self, data: Mapping[str, Any]) -> None:
         update_plot = getattr(self.amplifier_plot_widget, "update_plot", None)
@@ -424,6 +438,18 @@ class AmplifierPage(
 
     def _show_error(self, message: str) -> None:
         QMessageBox.critical(self, "错误", message)
+
+
+def _calibration_input_row(button: QPushButton, label: QLabel) -> QWidget:
+    """一行校准输入：加载动作在左，来源文件与测量时间在右，文本可换行。"""
+    row = QWidget()
+    row_layout = QHBoxLayout(row)
+    row_layout.setContentsMargins(0, 0, 0, 0)
+    row_layout.setSpacing(8)
+    row_layout.addWidget(button)
+    row_layout.setAlignment(button, Qt.AlignmentFlag.AlignTop)
+    row_layout.addWidget(label, 1)
+    return row
 
 
 __all__ = ["AmplifierPage"]

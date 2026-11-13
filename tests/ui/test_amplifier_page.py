@@ -4,7 +4,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QDialog, QGroupBox, QWidget
+from PySide6.QtWidgets import QApplication, QDialog, QLabel, QWidget
 
 from presentation.qt.amplifier_page import AmplifierPage
 from presentation.qt.measurement_controller_contract import MeasurementCommand
@@ -409,45 +409,170 @@ class AmplifierPageTests(unittest.TestCase):
         self.assertTrue(self.page.amplifier_test_btn.isEnabled())
         self.assertFalse(self.page.stop_btn.isEnabled())
 
-    def test_control_buttons_share_one_row(self):
+    def test_stop_and_diagram_share_one_row_below_start(self):
         page = self.page
         page.resize(1200, 800)
         page.show()
         self.app.processEvents()
-        buttons = (page.amplifier_test_btn, page.stop_btn)
+        buttons = (page.stop_btn, page.show_amp_diagram_btn)
         tops = {button.geometry().top() for button in buttons}
         self.assertEqual(len(tops), 1)
         lefts = [button.geometry().left() for button in buttons]
         self.assertEqual(lefts, sorted(lefts))
+        self.assertLess(page.amplifier_test_btn.geometry().top(), min(tops))
         page.close()
 
-    def test_left_column_holds_only_controls_and_plot_takes_the_right(self):
+    def test_left_column_holds_controls_and_result_surface_takes_the_right(self):
+        from PySide6.QtWidgets import QFrame
+
         page = self.page
         page.resize(1600, 900)
         page.show()
         self.app.processEvents()
-        titles = [box.title() for box in page.control_panel.findChildren(QGroupBox)]
-        self.assertEqual(titles, ["测量控制"])
-        # 接线说明只保留连接图按钮，按钮归入测量控制。
-        self.assertEqual(page.show_amp_diagram_btn.parent().title(), "测量控制")
+        result = page.findChild(QFrame, "measurementResultSurface")
+        self.assertIsNotNone(result)
         # 左栏宽度取 theme 里的共用常量，与另两个测量页保持一致。
         self.assertEqual(page.control_panel.width(), MEASUREMENT_LEFT_PANEL_MIN_WIDTH)
         self.assertLess(
             page.control_panel.x() + page.control_panel.width(),
-            page.amplifier_plot_widget.x(),
+            result.x(),
         )
+        self.assertIs(page.amplifier_plot_widget.parentWidget(), result)
         page.close()
 
     def test_status_slot_sits_below_the_measurement_controls(self):
-        """左栏在“测量控制”下面留出状态区：进度与日志由窗口挂进来。"""
+        """左栏在控制面下面留出状态区：进度与日志由窗口挂进来。"""
+        from PySide6.QtWidgets import QFrame
+
         page = self.page
         page.resize(1200, 900)
         page.show()
         self.app.processEvents()
-        group = next(box for box in page.control_panel.findChildren(QGroupBox))
-        self.assertIs(page.status_slot.parentWidget(), page.control_panel)
-        self.assertGreaterEqual(page.status_slot.y(), group.y() + group.height())
+        control = page.findChild(QFrame, "measurementSurface")
+        self.assertIs(page.status_slot.parentWidget(), control.parentWidget())
+        self.assertGreaterEqual(page.status_slot.y(), control.y() + control.height())
         page.close()
+
+    def test_page_is_split_into_control_and_result_surfaces(self):
+        from PySide6.QtWidgets import QFrame
+
+        control = self.page.findChild(QFrame, "measurementSurface")
+        result = self.page.findChild(QFrame, "measurementResultSurface")
+        self.assertIsNotNone(control)
+        self.assertIsNotNone(result)
+        self.assertIsNot(control, result)
+        self.assertIs(control.parentWidget(), self.page.control_panel)
+        self.assertIs(result.parentWidget(), self.page)
+
+    def test_page_has_no_group_boxes(self):
+        from PySide6.QtWidgets import QGroupBox
+
+        self.assertEqual(self.page.findChildren(QGroupBox), [])
+
+    def test_start_is_the_only_primary_action(self):
+        primary = [
+            button
+            for button in (
+                self.page.amplifier_test_btn,
+                self.page.stop_btn,
+                self.page.load_cable_loss_btn,
+                self.page.load_driver_mapping_btn,
+                self.page.show_amp_diagram_btn,
+            )
+            if button.property("variant") == "primary"
+        ]
+        self.assertEqual(primary, [self.page.amplifier_test_btn])
+
+    def test_start_measurement_takes_its_own_row_in_the_control_surface(self):
+        from PySide6.QtWidgets import QFrame
+
+        control_layout = self.page.findChild(QFrame, "measurementSurface").layout()
+        start_items = [
+            index
+            for index in range(control_layout.count())
+            if control_layout.itemAt(index).widget() is self.page.amplifier_test_btn
+        ]
+        self.assertEqual(len(start_items), 1)
+        row_index = next(
+            index
+            for index in range(control_layout.count())
+            if control_layout.itemAt(index).layout() is not None
+        )
+        self.assertLess(start_items[0], row_index)
+
+    def test_secondary_actions_share_one_compact_row(self):
+        from PySide6.QtWidgets import QFrame
+
+        control_layout = self.page.findChild(QFrame, "measurementSurface").layout()
+        row_layout = next(
+            control_layout.itemAt(index).layout()
+            for index in range(control_layout.count())
+            if control_layout.itemAt(index).layout() is not None
+        )
+        self.assertEqual(
+            [row_layout.itemAt(index).widget() for index in range(row_layout.count())],
+            [self.page.stop_btn, self.page.show_amp_diagram_btn],
+        )
+
+    def test_calibration_inputs_share_one_section_in_the_control_surface(self):
+        from PySide6.QtWidgets import QFrame
+
+        control = self.page.findChild(QFrame, "measurementSurface")
+        self.assertIs(self.page.cable_loss_input_row.parentWidget(), control)
+        self.assertIs(self.page.driver_mapping_input_row.parentWidget(), control)
+        captions = [
+            label.text()
+            for label in control.findChildren(QLabel)
+            if label.property("role") == "sectionCaption"
+        ]
+        self.assertEqual(captions, ["测量控制", "校准输入"])
+
+    def test_calibration_rows_pair_the_load_action_with_its_source(self):
+        rows = (
+            (
+                self.page.cable_loss_input_row,
+                self.page.load_cable_loss_btn,
+                self.page.cable_loss_source_label,
+            ),
+            (
+                self.page.driver_mapping_input_row,
+                self.page.load_driver_mapping_btn,
+                self.page.driver_mapping_source_label,
+            ),
+        )
+        for row, button, label in rows:
+            with self.subTest(button=button.text()):
+                layout = row.layout()
+                self.assertEqual(
+                    [layout.itemAt(index).widget() for index in range(layout.count())],
+                    [button, label],
+                )
+
+    def test_driver_off_hides_the_whole_driver_mapping_row(self):
+        self.page._driver_mode_provider = lambda: False
+        self.page.on_activated()
+
+        self.assertTrue(self.page.driver_mapping_input_row.isHidden())
+        self.assertTrue(self.page.load_driver_mapping_btn.isHidden())
+        self.assertTrue(self.page.driver_mapping_source_label.isHidden())
+        self.assertFalse(self.page.cable_loss_input_row.isHidden())
+
+        self.page._driver_mode_provider = lambda: True
+        self.page.on_activated()
+        self.assertFalse(self.page.driver_mapping_input_row.isHidden())
+
+    def test_result_surface_wraps_the_plot_and_only_adds_a_title(self):
+        from PySide6.QtWidgets import QFrame
+
+        result = self.page.findChild(QFrame, "measurementResultSurface")
+        self.assertIs(self.page.amplifier_plot_widget.parentWidget(), result)
+        captions = [
+            label.text()
+            for label in result.findChildren(QLabel)
+            if label.property("role") == "sectionCaption"
+        ]
+        self.assertEqual(captions, ["测量结果"])
+        self.assertFalse(hasattr(self.page, "amplifier_metric_label"))
 
     def test_close_disconnects_controller_signals(self):
         self.assertEqual(len(self.controller.signals.data_update.slots), 1)

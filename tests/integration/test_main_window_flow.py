@@ -826,6 +826,9 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self._prepare_and_commit(window)
         window.on_instrument_connected()
         window._return_to_welcome()
+        self.assertIsNone(
+            window.coordinator.prepared_run, "返回欢迎页必须先放弃旧运行身份"
+        )
         window._enter_test_mode(True)
 
         rail = window.measurement_workspace.stage_rail()
@@ -900,6 +903,100 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
 
         window.amplifier_page.on_activated()
         self.assertFalse(window.amplifier_page.load_driver_mapping_btn.isHidden())
+
+    def test_full_mode_switch_after_abandoning_a_connected_run(self):
+        """步骤 7：A 连接 → 返回欢迎页清理 A → 选相反模式 B → UI 按 B、入口拒绝旧运行。"""
+        dialogs = self._silence_dialogs()
+        self.config_path.write_text(
+            json.dumps(_fully_valid_gui_config(driver_enabled=True)),
+            encoding="utf-8",
+        )
+        window = self._window()
+        window._enter_test_mode(True)
+        old_run = window.coordinator.prepare_pending_run()
+        self.assertIsNotNone(old_run)
+        old_port = _ConnectedPort()
+        self.assertTrue(window.coordinator.commit_finalization(old_port))
+        window.on_instrument_connected()
+        self.assertIs(window.coordinator.resolve_measurement_run(), old_run)
+        self.assertEqual(window.mode_badge.text(), "有驱放测试")
+        self.assertTrue(window.coordinator.amplifier_driver_mode())
+
+        window._return_to_welcome()
+
+        self.assertIs(window.view_stack.currentWidget(), window.welcome_page)
+        self.assertEqual(old_port.close_calls, 1)
+        self.assertIsNone(window.coordinator.prepared_run)
+        self.assertIsNone(window.coordinator.instrument_ctrl)
+        self.assertIs(window.coordinator.state, RunFlowState.DEVICE_SELECTION)
+        self.assertEqual(window.measurement_workspace.run_identity(), (None, None))
+        self.assertEqual(window.mode_badge.text(), "未选择测试模式")
+        self.assertTrue(old_run.run_directory.is_dir(), "放弃会话不能删掉运行目录")
+
+        window._enter_test_mode(False)
+        self.assertEqual(window.mode_badge.text(), "无驱放测试")
+
+        window._open_rack_overview_page()
+        self.assertFalse(window.rack_page.board._driver_enabled)
+        self.assertEqual(
+            [label for label, _rect in window.rack_page.board._amplifiers()],
+            ["DUT"],
+            "新模式 B 的排布链路里不能沿用旧运行的 Driver",
+        )
+        window.amplifier_page.on_activated()
+        self.assertTrue(window.amplifier_page.load_driver_mapping_btn.isHidden())
+        self.assertEqual(
+            window.amplifier_page.driver_mapping_source_label.text(),
+            "无驱放测试不需要驱动映射结果",
+        )
+
+        # 新会话尚未连接：测量入口必须拒绝，不能把旧运行的契约交给页面。
+        dialogs["critical"].reset_mock()
+        self.assertIsNone(window.coordinator.resolve_measurement_run())
+        dialogs["critical"].assert_called_once()
+        self.assertIn("尚未创建运行", dialogs["critical"].call_args.args[2])
+
+        dialogs["critical"].reset_mock()
+        window.cable_loss_page.start_measurement()
+        self.assertFalse(window.measurement_controller.state.is_active)
+        dialogs["critical"].assert_called()
+        self.assertTrue(
+            any(
+                "尚未创建运行" in call.args[2]
+                for call in dialogs["critical"].call_args_list
+            ),
+            "测量入口必须说明没有可用的当前运行",
+        )
+
+    def test_abandoned_run_remains_loadable_from_the_history_entry(self):
+        """步骤 7：返回欢迎页只清会话身份，磁盘上的运行仍可从历史入口重新加载。"""
+        self._silence_dialogs()
+        self.config_path.write_text(
+            json.dumps(_fully_valid_gui_config(driver_enabled=True)),
+            encoding="utf-8",
+        )
+        window = self._window()
+        window._enter_test_mode(True)
+        old_run = self._prepare_and_commit(window)
+        window.on_instrument_connected()
+        self.assertTrue(old_run.run_directory.is_dir())
+
+        window._return_to_welcome()
+        self.assertIsNone(window.coordinator.prepared_run)
+        self.assertTrue(old_run.run_directory.is_dir(), "返回欢迎页不能删运行目录")
+
+        window.test_config_page.load_run_requested.emit(old_run.run_id)
+        self.app.processEvents()
+
+        self.assertEqual(window.prepared_run.run_id, old_run.run_id)
+        self.assertEqual(window.coordinator.current_run_id(), old_run.run_id)
+        self.assertEqual(
+            window.measurement_workspace.run_identity(),
+            (old_run.run_id, "有驱放测试"),
+        )
+        self.assertEqual(window.mode_badge.text(), "有驱放测试")
+        self.assertIs(window.coordinator.state, RunFlowState.RECONNECT_REQUIRED)
+        self.assertIsNone(window.coordinator.instrument_ctrl)
 
     def test_loading_a_frozen_run_refreshes_identity_and_driver_mode_together(self):
         """加载已冻结运行会改变驱动模式：页头、徽标、标签页与阶段条一起更新。"""
@@ -1153,18 +1250,126 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         )
 
     def test_instrument_setup_page_return_link_routes_to_welcome(self):
-        """步骤 4：返回欢迎页只保留仪表配置页入口，不再有脏配置确认。"""
+        """步骤 4/6：返回欢迎页只保留仪表配置页入口，并清掉本次扫描结果。"""
         dialogs = self._silence_dialogs()
         window = self._window()
         window._enter_test_mode(False)
         window.test_config_page.freq_start.setValue(9.0)
         window.test_config_page.freq_stop.setValue(9.0)
+        panel = self._scan_and_select(window)
+        self.assertGreater(panel.card_count(), 0)
 
         window.connection_page.return_welcome_requested.emit()
         self.app.processEvents()
 
         dialogs["question"].assert_not_called()
         self.assertIs(window.view_stack.currentWidget(), window.welcome_page)
+        self.assertEqual(panel.card_count(), 0, "本次设备结果不能留到下一次会话")
+        self.assertIs(window.coordinator.state, RunFlowState.DEVICE_SELECTION)
+        self.assertIsNone(window.coordinator.prepared_run)
+
+    def test_returning_to_welcome_after_a_connected_run_releases_the_port(self):
+        """步骤 6：返回欢迎页先释放已连接端口，再清空本窗口的运行身份。"""
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+        prepared = window.coordinator.prepare_pending_run()
+        port = _ConnectedPort()
+        self.assertTrue(window.coordinator.commit_finalization(port))
+        window.on_instrument_connected()
+        # 真实路径：连接成功后从工作区回到测试配置页，再经“上一步：仪表配置”回本页。
+        window._return_to_connection_page(keep_results=True)
+        self.assertIs(window.view_stack.currentWidget(), window.connection_page)
+
+        window.connection_page.return_welcome_requested.emit()
+        self.app.processEvents()
+
+        self.assertIs(window.view_stack.currentWidget(), window.welcome_page)
+        self.assertEqual(port.close_calls, 1, "返回前必须关闭本次连接的端口")
+        self.assertIsNone(window.coordinator.instrument_ctrl)
+        self.assertIsNone(window.coordinator.prepared_run)
+        self.assertNotEqual(window.coordinator.current_run_id(), prepared.run_id)
+        self.assertIs(window.coordinator.state, RunFlowState.DEVICE_SELECTION)
+        self.assertEqual(window.measurement_workspace.run_identity(), (None, None))
+
+    def test_failed_port_cleanup_keeps_the_setup_page_and_the_session(self):
+        """步骤 6：端口清理失败不能进入欢迎页，旧运行与端口引用都要保留。"""
+        dialogs = self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+        prepared = window.coordinator.prepare_pending_run()
+        self.assertTrue(
+            window.coordinator.commit_finalization(_UnconfirmedClosePort())
+        )
+        window.on_instrument_connected()
+        window._return_to_connection_page(keep_results=True)
+        self.assertIs(window.view_stack.currentWidget(), window.connection_page)
+
+        window.connection_page.return_welcome_requested.emit()
+        self.app.processEvents()
+
+        self.assertIs(window.view_stack.currentWidget(), window.connection_page)
+        self.assertIs(window.coordinator.prepared_run, prepared)
+        self.assertEqual(window.coordinator.current_run_id(), prepared.run_id)
+        self.assertTrue(prepared.run_directory.is_dir(), "清理失败不能丢运行目录")
+        self.assertIsNone(window.coordinator.instrument_ctrl)
+        self.assertEqual(window.coordinator.unreleased_port_count(), 1)
+        self.assertIs(
+            window.coordinator.state, RunFlowState.MANUAL_CLEANUP_REQUIRED
+        )
+        self.assertNotEqual(
+            window.measurement_workspace.run_identity(), (None, None),
+            "没有进入新会话时，当前运行身份仍属于用户停留的流程",
+        )
+        dialogs["warning"].assert_called()
+        self.assertEqual(dialogs["warning"].call_args.args[1], "无法返回欢迎页")
+
+    def test_returning_to_welcome_during_a_scan_discards_the_late_result(self):
+        """步骤 6：扫描中返回先作废本轮查找，迟到的结果不能写回页面。"""
+        import threading
+
+        from tests.integration.device_discovery.support import scanner_factory
+
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+        gate = threading.Event()
+        base_factory = scanner_factory
+
+        class _GatedScanner:
+            def __init__(self, scanner):
+                self.scanner = scanner
+
+            def set_cancel_event(self, event):
+                self.scanner.set_cancel_event(event)
+
+            def request_cancel(self):
+                self.scanner.request_cancel()
+
+            def scan(self, subnet, progress=None):
+                gate.wait(5)
+                return self.scanner.scan(subnet, progress=progress)
+
+        panel = window.connection_page.discovery_panel
+        panel.scanner_factory = lambda mode: _GatedScanner(base_factory(mode))
+        panel.request_scan()
+        self.assertIsNotNone(panel.worker)
+        self.assertTrue(panel.is_scanning())
+
+        window.connection_page.return_welcome_requested.emit()
+        self.app.processEvents()
+
+        self.assertIs(window.view_stack.currentWidget(), window.welcome_page)
+        worker = panel.worker
+        self.assertIsNotNone(worker)
+        gate.set()
+        worker.wait(5000)
+        self.app.processEvents()
+        self.app.processEvents()
+
+        self.assertIsNone(panel.worker)
+        self.assertEqual(panel.card_count(), 0, "作废扫描的迟到结果不能补回页面")
+        self.assertIsNone(window.coordinator.prepared_run)
 
     def test_no_driver_mode_hides_the_driver_mapping_tab(self):
         self._silence_dialogs()

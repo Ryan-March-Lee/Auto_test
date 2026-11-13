@@ -310,9 +310,12 @@ class MainWindow(QMainWindow):
         self._sync_finalize_entry()
 
     def _return_to_welcome(self) -> None:
-        """返回欢迎页：只接受仪表配置页的请求，配置流程内没有这条捷径。"""
-        self.view_stack.setCurrentWidget(self.welcome_page)
-        self.workspace_binding.reset_identity()
+        """返回欢迎页：先作废本次查找，再放弃会话，清理成功才切页。"""
+        # 顺序不能反：迟到扫描结果要先失效；端口没清干净就不能进入欢迎页。
+        self.connection_page.discovery_panel.clear_results()
+        if self.coordinator.abandon_current_session():
+            self.workspace_binding.reset_identity()
+            self.view_stack.setCurrentWidget(self.welcome_page)
 
     def _register_pages(self):
         """构造标签页并登记；测量页面通过共享 controller 连接。

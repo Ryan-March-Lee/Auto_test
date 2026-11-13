@@ -153,7 +153,6 @@ class WorkspaceBindingTests(unittest.TestCase):
             self.workspace,
             self.tabs,
             self.pages,
-            utility_subtitles={"test_configuration": "参数、频点与连接"},
             mode_badge=self.mode_badge,
         )
 
@@ -205,8 +204,7 @@ class WorkspaceBindingTests(unittest.TestCase):
         rail = self.workspace.stage_rail()
         self.assertEqual(self.workspace.current_stage(), "amplifier")
         self.assertEqual(rail.current_key(), "amplifier")
-        self.assertEqual(self.workspace.title_label.text(), "功放测试")
-        self.assertIn("阶段 03 / 04", self.workspace.eyebrow_label.text())
+        self.assertEqual(self.workspace.summary_text(), "")
         self.assertTrue(self.workspace.configuration_btn.isEnabled())
 
     # ---- 阶段摘要（步骤 15） -------------------------------------------------
@@ -304,36 +302,28 @@ class WorkspaceBindingTests(unittest.TestCase):
         self.assertIsNone(self.workspace.current_stage())
         self.assertIsNone(self.workspace.stage_rail().current_key())
         self.assertEqual(
-            self.workspace.title_label.text(),
-            self.tabs.tabText(self.tabs.currentIndex()),
-            "工具页标题取标签页已登记标题，不再写第二份字面量",
-        )
-        self.assertEqual(
-            self.workspace.subtitle_label.text(), "参数、频点与连接"
+            self.workspace.summary_text(),
+            "",
+            "工具页不显示测量摘要",
         )
 
     def test_a_registered_non_stage_page_becomes_a_utility_page(self):
-        """新增报告/历史这类页面时，页头用它自己的标签标题，不能抛 KeyError。"""
+        """新增报告/历史这类页面时，页头只保留运行身份，不能抛 KeyError。"""
         self._select(self.report_page)
 
         self.binding.sync()
 
         self.assertTrue(self.workspace.is_utility_view())
         self.assertIsNone(self.workspace.current_stage())
-        self.assertEqual(self.workspace.title_label.text(), "测试报告")
-        self.assertEqual(
-            self.workspace.subtitle_label.text(),
-            "",
-            "没有登记副标题的工具页只显示一行标题",
-        )
+        self.assertEqual(self.workspace.summary_text(), "")
 
     def test_an_unregistered_widget_leaves_the_header_untouched(self):
         self._select(self.cable_loss_page)
         self.binding.sync()
         before = (
             self.workspace.current_stage(),
-            self.workspace.title_label.text(),
-            self.workspace.eyebrow_label.text(),
+            self.workspace.summary_text(),
+            self.workspace.run_identity_label.text(),
         )
 
         stranger = QWidget()
@@ -346,8 +336,8 @@ class WorkspaceBindingTests(unittest.TestCase):
         self.assertEqual(
             (
                 self.workspace.current_stage(),
-                self.workspace.title_label.text(),
-                self.workspace.eyebrow_label.text(),
+                self.workspace.summary_text(),
+                self.workspace.run_identity_label.text(),
             ),
             before,
             "完全未登记的 widget 不能让外壳停在半更新的状态",

@@ -822,7 +822,6 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
 
         self.assertIs(window.tab_widget.currentWidget(), window.amplifier_page)
         self.assertEqual(workspace.current_stage(), "amplifier")
-        self.assertEqual(workspace.title_label.text(), "功放测试")
         self.assertTrue(workspace.configuration_btn.isEnabled())
         self.assertIs(window.status_panel.parentWidget(), window.amplifier_page.status_slot)
 
@@ -831,7 +830,6 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
 
         self.assertTrue(workspace.is_utility_view())
         self.assertIsNone(workspace.current_stage())
-        self.assertEqual(workspace.title_label.text(), "测试配置")
 
     def test_page_stage_summary_reaches_the_rail_and_header(self):
         """步骤 15：页面已经显示的数据变成阶段条/页头摘要，空态不显示假数量。"""
@@ -891,7 +889,6 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
 
         self.assertIs(window.tab_widget.currentWidget(), window.cable_loss_page)
         self.assertEqual(workspace.current_stage(), "cable_loss")
-        self.assertEqual(workspace.title_label.text(), "线损测量")
 
     def test_workspace_configuration_action_returns_to_the_configuration_tab(self):
         self._silence_dialogs()

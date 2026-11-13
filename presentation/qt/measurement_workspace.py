@@ -7,13 +7,14 @@
 - 内容由窗口通过 :meth:`MeasurementWorkspace.set_content` 注入，第一步继续由
   窗口里的 ``QTabWidget`` 承载页面；外壳不调用页面的 ``on_activated`` /
   ``on_deactivated``，也不决定页面生命周期。
-- 页头只展示调用方传入的文本（当前阶段、run 标识、模式文本），不读配置、不读
-  运行服务，避免在表现层形成第二个业务真相源。
+- 页头只展示调用方传入的文本（run 标识、模式文本与阶段摘要），不读配置、不读
+  运行服务，避免在表现层形成第二个业务真相源。阶段编号与标题只由阶段条表达，
+  页头不再重复三段文字（eyebrow / 标题 / 副标题）。
 - 阶段条仍是受控视图：点击阶段只经 :attr:`MeasurementWorkspace.stage_selected`
   发出导航请求，窗口切页完成后调用 :meth:`set_current_stage` 同步。
 - ``show_utility`` 用于不属于 01–04 阶段的工具页（例如“测试配置”）：它清空当前
-  阶段（阶段条不点亮任何一项），页头显示工具页自己的标题与副标题；此时右侧
-  “配置”动作没有去处，随之禁用，离开工具页后恢复。
+  阶段（阶段条不点亮任何一项），页头也不显示工具页标题；此时右侧“配置”动作
+  没有去处，随之禁用，离开工具页后恢复。
 - 类名不带 ``Page`` 后缀，避免被页面注册门禁误登记为页面。
 - 阶段切换的进入方向由本模块按阶段顺序回答
   （:meth:`MeasurementWorkspace.stage_reveal_direction`），过渡也由本模块在内容槽里
@@ -75,9 +76,6 @@ __all__ = [
     "MeasurementWorkspace",
     "mode_text",
 ]
-
-#: 工具页（测试配置等）的 eyebrow：它不属于 01–04 阶段，不能显示阶段编号。
-_UTILITY_EYEBROW = "工作区"
 
 #: 没有 run 标识时页头显示的固定文案；步骤 6 只传入文本，不在外壳判断连接状态。
 _UNCONNECTED_RUN_TEXT = "未连接"
@@ -225,7 +223,6 @@ class MeasurementWorkspace(QWidget):
     ) -> None:
         super().__init__(parent)
         self._stages = tuple(stages)
-        self._total_stages = len(self._stages)
         # 当前阶段的查找表与阶段条同源（同一份 ``stages``），不回落全局默认阶段：
         # 自定义阶段必须既能画出来，也能同步页头。
         self._stages_by_key: Mapping[str, StageDescriptor] = MappingProxyType(
@@ -266,36 +263,16 @@ class MeasurementWorkspace(QWidget):
         layout.addWidget(self._build_content_host(), 1)
 
     def _build_header(self) -> QWidget:
-        """页头：左侧 eyebrow/标题/副标题，右侧运行标识、状态区与配置入口。"""
+        """页头：右侧运行标识、阶段摘要与配置入口。
+
+        阶段编号、标题与副标题由阶段条表达，页头不再重复三段文字；页头高度只由
+        右侧这一行内容决定。
+        """
         self.header = QFrame(self)
         self.header.setObjectName("measurementWorkspaceHeader")
         header_layout = QHBoxLayout(self.header)
         header_layout.setContentsMargins(*_HEADER_MARGINS)
         header_layout.setSpacing(16)
-
-        title_column = QVBoxLayout()
-        title_column.setContentsMargins(0, 0, 0, 0)
-        title_column.setSpacing(2)
-
-        self.eyebrow_label = QLabel(_UTILITY_EYEBROW, self.header)
-        self.eyebrow_label.setObjectName("measurementWorkspaceEyebrow")
-        self.eyebrow_label.setProperty("role", "hint")
-        self.eyebrow_label.setTextFormat(Qt.TextFormat.PlainText)
-
-        self.title_label = QLabel("", self.header)
-        self.title_label.setObjectName("measurementWorkspaceTitle")
-        self.title_label.setProperty("role", "section")
-        self.title_label.setTextFormat(Qt.TextFormat.PlainText)
-
-        self.subtitle_label = QLabel("", self.header)
-        self.subtitle_label.setObjectName("measurementWorkspaceSubtitle")
-        self.subtitle_label.setProperty("role", "hint")
-        self.subtitle_label.setTextFormat(Qt.TextFormat.PlainText)
-
-        title_column.addWidget(self.eyebrow_label)
-        title_column.addWidget(self.title_label)
-        title_column.addWidget(self.subtitle_label)
-        header_layout.addLayout(title_column, 1)
 
         right_panel = QWidget(self.header)
         right_panel.setObjectName("measurementWorkspaceStatusArea")
@@ -489,7 +466,7 @@ class MeasurementWorkspace(QWidget):
     # ---- 写入：阶段与页头 ---------------------------------------------------
 
     def set_current_stage(self, key: str | None) -> None:
-        """设置当前阶段并同步页头；``None`` 表示没有当前阶段。
+        """设置当前阶段并同步页头摘要；``None`` 表示没有当前阶段。
 
         阶段条是受控视图：这里由窗口在真正切页后调用。key 必须是构造时传入的阶段
         集合里的 key；未知 key 抛 ``KeyError``，且不会改动任何页头文本。
@@ -508,30 +485,19 @@ class MeasurementWorkspace(QWidget):
         self._current_stage_key = descriptor.key
         self._utility_view = False
         self.configuration_btn.setEnabled(True)
-        self._apply_stage_header(descriptor)
+        self._apply_header_summary(self._stage_summaries.get(descriptor.key))
 
-    def show_utility(self, title: str, subtitle: str) -> None:
+    def show_utility(self) -> None:
         """显示一个不属于 01–04 阶段的工具页（例如“测试配置”）。
 
-        阶段条不点亮任何一项；页头标题与副标题由窗口传入。``title`` 必须非空，
-        ``subtitle`` 可以为空字符串。
+        阶段条不点亮任何一项；页头不显示工具页标题与副标题，只保留运行身份、
+        摘要（工具页不显示）与“配置”动作。工具页的说明由页面内容自己承担。
         """
-        if not isinstance(title, str):
-            raise TypeError("工具页标题必须是字符串")
-        if not isinstance(subtitle, str):
-            raise TypeError("工具页副标题必须是字符串")
-        cleaned_title = title.strip()
-        if not cleaned_title:
-            raise ValueError("工具页标题不能为空")
-
         self.rail.set_current(None)
         self._current_stage_key = None
         self._utility_view = True
         # 已经站在工具页上时“配置”没有去处：按钮保留位置但不可用，离开后恢复。
         self.configuration_btn.setEnabled(False)
-        self.eyebrow_label.setText(_UTILITY_EYEBROW)
-        self.title_label.setText(cleaned_title)
-        self.subtitle_label.setText(subtitle.strip())
         self._apply_header_summary(None)
 
     def set_run_identity(
@@ -553,16 +519,6 @@ class MeasurementWorkspace(QWidget):
             return f"本次运行 {self._run_id} · {self._mode_text}"
         return f"本次运行 {self._run_id}"
 
-    def _apply_stage_header(self, descriptor: StageDescriptor) -> None:
-        kind_text = "查看" if descriptor.kind is None else "测量"
-        self.eyebrow_label.setText(
-            f"阶段 {descriptor.order:02d} / {self._total_stages:02d}"
-            f" · {kind_text}"
-        )
-        self.title_label.setText(descriptor.title)
-        self.subtitle_label.setText(descriptor.subtitle)
-        self._apply_header_summary(self._stage_summaries.get(descriptor.key))
-
     def _apply_header_summary(self, summary: StageSummary | None) -> None:
         """把阶段摘要折成页头右侧的一行紧凑文本；空态和工具页不显示。"""
         if summary is None or not summary.has_data or not summary.metrics:
@@ -582,9 +538,6 @@ class MeasurementWorkspace(QWidget):
         self._current_stage_key = None
         self._utility_view = False
         self.configuration_btn.setEnabled(False)
-        self.eyebrow_label.setText(_UTILITY_EYEBROW)
-        self.title_label.setText("")
-        self.subtitle_label.setText("")
         self._apply_header_summary(None)
 
     # ---- 写入：阶段状态与动效 -------------------------------------------------

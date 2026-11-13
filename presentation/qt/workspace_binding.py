@@ -23,8 +23,8 @@
 - 同步入口都是信号槽，**不能抛异常**：未知阶段 key、被隐藏的标签页、尚未登记的
   widget 都只静默忽略，把界面留在上一个一致状态，而不是打断 Qt 的信号分发。
 - “是不是阶段”由外壳回答（``workspace.has_stage``）：阶段页点亮阶段，其余**已登记**
-  页面按工具页显示自己的标签标题。新增报告/历史这类非阶段页不需要改窗口，也不会
-  再出现“画得出、同步不了”的 ``KeyError``。
+  页面按工具页同步。新增报告/历史这类非阶段页不需要改窗口，也不会再出现“画得出、
+  同步不了”的 ``KeyError``；工具页标题不再写进页头。
 - **会话模式与运行身份是两个状态**：模式只由 :meth:`start_session` 和
   :meth:`bind_run_identity` 改写，``None`` 表示尚未选择测试模式；
   :meth:`sync_run_identity` 只刷新页头，不能从冻结运行重新推导模式，否则旧运行会
@@ -81,7 +81,6 @@ class WorkspaceBinding:
         tabs: QTabWidget,
         pages: Mapping[str, Any],
         *,
-        utility_subtitles: Mapping[str, str] | None = None,
         mode_badge: Any | None = None,
         controller: Any | None = None,
         run_state: WorkspaceRunState | None = None,
@@ -89,8 +88,6 @@ class WorkspaceBinding:
         self._workspace = workspace
         self._tabs = tabs
         self._pages = pages
-        # 工具页副标题按页面 key 给：只有确实需要第二行说明的页面才登记，其余留空。
-        self._utility_subtitles = dict(utility_subtitles or {})
         # 徽标是窗口创建、挂在页头右侧的控件；绑定层只写文本，不拥有它。
         self._mode_badge = mode_badge
         # 阶段运行状态模型是纯 Python：controller 只暴露“当前这一次测量”，
@@ -152,10 +149,7 @@ class WorkspaceBinding:
                 # 页头与阶段条共用同一份摘要；切回该阶段时按页面当前数据显示。
                 self.refresh_stage_summary(key)
             else:
-                title = self._tabs.tabText(index).strip() or key
-                self._workspace.show_utility(
-                    title, self._utility_subtitles.get(key, "")
-                )
+                self._workspace.show_utility()
             # 进入页过渡的开关与“测量中瞬时切换”都在外壳里；本层只回答现在忙不忙。
             self._workspace.reveal_current_page(animate=self._measurement_idle())
             return

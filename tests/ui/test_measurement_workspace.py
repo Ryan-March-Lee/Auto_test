@@ -3,12 +3,12 @@
 这里锁定用户能看见、步骤 5 会依赖的九件事：
 
 - 外壳能独立构造：阶段条、页头与内容槽都在，内容由窗口注入而不是外壳自建；
-- ``set_current_stage`` 同时同步阶段条与页头，阶段条仍是受控视图；
-- 当前阶段只在构造时传入的阶段集合里查找，自定义阶段也能同步页头；
+- ``set_current_stage`` 同时同步阶段条与页头摘要，阶段条仍是受控视图；
+- 当前阶段只在构造时传入的阶段集合里查找，自定义阶段也能同步；
 - ``has_stage`` 用同一份阶段集合回答“这是不是阶段”，窗口据此分流页头；
 - 点击阶段只转发导航请求，不预先改写当前阶段；
-- ``show_utility`` 不点亮任何阶段，页头改成工具页自己的标题与副标题，并禁用无处
-  可去的“配置”动作；
+- ``show_utility`` 不点亮任何阶段，页头不显示工具页标题，并禁用无去处
+  的“配置”动作；
 - 内容槽只接受一个 widget，替换时只把旧 widget 从布局摘掉，不销毁它；
 - 内容槽与右侧状态区拒绝外壳自己的结构控件，避免把常驻框架拆开；
 - 运行标识、右侧状态区、阶段状态与动效开关都由调用方写入，外壳只展示。
@@ -36,7 +36,6 @@ from presentation.qt.measurement_stage import (  # noqa: E402
     MEASUREMENT_STAGES,
     StageDescriptor,
     StageState,
-    stage_for_key,
 )
 from presentation.qt.measurement_stage_rail import (  # noqa: E402
     MeasurementStageRail,
@@ -112,16 +111,13 @@ class ConstructionTests(_WorkspaceTestCase):
             "外壳不是页面，类名不能触发页面注册门禁",
         )
 
-    def test_header_labels_use_existing_semantic_roles(self):
-        self.assertEqual(
-            self.workspace.eyebrow_label.property("role"), "hint"
-        )
-        self.assertEqual(
-            self.workspace.title_label.property("role"), "section"
-        )
-        self.assertEqual(
-            self.workspace.subtitle_label.property("role"), "hint"
-        )
+    def test_header_no_longer_renders_the_three_line_text_group(self):
+        for name in ("eyebrow_label", "title_label", "subtitle_label"):
+            with self.subTest(name=name):
+                self.assertFalse(
+                    hasattr(self.workspace, name),
+                    "阶段编号/标题/副标题只由阶段条表达，页头不再保留这三行",
+                )
         self.assertEqual(
             self.workspace.configuration_btn.property("variant"), "ghost",
             "配置入口是低强调的工具动作，不是第五个阶段",
@@ -137,7 +133,7 @@ class ConstructionTests(_WorkspaceTestCase):
 
 
 class CurrentStageTests(_WorkspaceTestCase):
-    def test_set_current_stage_syncs_rail_and_header(self):
+    def test_set_current_stage_syncs_rail_and_header_summary(self):
         self.workspace.set_current_stage("cable_loss")
 
         rail = self.workspace.stage_rail()
@@ -145,28 +141,16 @@ class CurrentStageTests(_WorkspaceTestCase):
         self.assertTrue(rail.indicator_visible())
         self.assertEqual(self.workspace.current_stage(), "cable_loss")
         self.assertFalse(self.workspace.is_utility_view())
-        self.assertEqual(self.workspace.title_label.text(), "线损测量")
-        self.assertEqual(
-            self.workspace.subtitle_label.text(),
-            stage_for_key("cable_loss").subtitle,
-        )
-        self.assertIn("阶段 01 / 04", self.workspace.eyebrow_label.text())
-        self.assertIn("测量", self.workspace.eyebrow_label.text())
+        self.assertEqual(self.workspace.summary_text(), "")
 
         self.workspace.set_current_stage("amplifier")
 
         self.assertEqual(rail.current_key(), "amplifier")
-        self.assertEqual(self.workspace.title_label.text(), "功放测试")
-        self.assertIn("阶段 03 / 04", self.workspace.eyebrow_label.text())
+        self.assertEqual(self.workspace.summary_text(), "")
 
     def test_visualization_is_shown_as_a_read_only_view(self):
         self.workspace.set_current_stage("visualization")
 
-        self.assertEqual(
-            self.workspace.title_label.text(), "数据可视化"
-        )
-        self.assertIn("阶段 04 / 04", self.workspace.eyebrow_label.text())
-        self.assertIn("查看", self.workspace.eyebrow_label.text())
         self.assertFalse(
             self.workspace.stage_rail().participates_in_run("visualization")
         )
@@ -185,11 +169,12 @@ class CurrentStageTests(_WorkspaceTestCase):
 
     def test_unknown_stage_key_is_rejected_without_touching_the_header(self):
         self.workspace.set_current_stage("cable_loss")
+        self.workspace.set_stage_summary(
+            "cable_loss", StageSummary("6 频点", (StageMetric("频点", "6"),))
+        )
         before = (
             self.workspace.current_stage(),
-            self.workspace.eyebrow_label.text(),
-            self.workspace.title_label.text(),
-            self.workspace.subtitle_label.text(),
+            self.workspace.summary_text(),
         )
 
         with self.assertRaises(KeyError):
@@ -198,9 +183,7 @@ class CurrentStageTests(_WorkspaceTestCase):
         self.assertEqual(
             (
                 self.workspace.current_stage(),
-                self.workspace.eyebrow_label.text(),
-                self.workspace.title_label.text(),
-                self.workspace.subtitle_label.text(),
+                self.workspace.summary_text(),
             ),
             before,
             "未知阶段不能把页头留在半更新状态",
@@ -229,7 +212,6 @@ class CurrentStageTests(_WorkspaceTestCase):
             "cable_loss",
             "外壳只转发导航请求；窗口真正切页后才同步 current",
         )
-        self.assertEqual(self.workspace.title_label.text(), "线损测量")
 
         # 模拟窗口接受导航并完成切页后的同步。
         self.workspace.set_current_stage("amplifier")
@@ -237,7 +219,7 @@ class CurrentStageTests(_WorkspaceTestCase):
         self.assertEqual(
             self.workspace.stage_rail().current_key(), "amplifier"
         )
-        self.assertEqual(self.workspace.title_label.text(), "功放测试")
+        self.assertEqual(self.workspace.current_stage(), "amplifier")
 
 
 class StageSubsetTests(_WorkspaceTestCase):
@@ -256,7 +238,7 @@ class StageSubsetTests(_WorkspaceTestCase):
     def create_workspace(self):
         return MeasurementWorkspace((self.CUSTOM,))
 
-    def test_custom_stages_can_be_synced_to_the_header(self):
+    def test_custom_stages_can_be_synced_to_the_rail(self):
         self.workspace.set_current_stage("overview")
 
         self.assertEqual(
@@ -264,13 +246,7 @@ class StageSubsetTests(_WorkspaceTestCase):
         )
         self.assertEqual(self.workspace.current_stage(), "overview")
         self.assertFalse(self.workspace.is_utility_view())
-        self.assertEqual(self.workspace.title_label.text(), "总览")
-        self.assertEqual(
-            self.workspace.subtitle_label.text(), self.CUSTOM.subtitle
-        )
-        self.assertEqual(
-            self.workspace.eyebrow_label.text(), "阶段 01 / 01 · 查看"
-        )
+        self.assertEqual(self.workspace.summary_text(), "")
 
     def test_default_stage_keys_are_unknown_in_a_custom_stage_set(self):
         for key in ("cable_loss", "visualization"):
@@ -282,7 +258,7 @@ class StageSubsetTests(_WorkspaceTestCase):
                     self.workspace.current_stage(),
                     "阶段集合之外的 key 不能留下半更新的页头",
                 )
-                self.assertEqual(self.workspace.title_label.text(), "")
+                self.assertEqual(self.workspace.summary_text(), "")
 
 
 class StageSummaryTests(_WorkspaceTestCase):
@@ -362,7 +338,7 @@ class StageSummaryTests(_WorkspaceTestCase):
         self.workspace.set_current_stage("cable_loss")
         self.workspace.set_stage_summary("cable_loss", self.SUMMARY)
 
-        self.workspace.show_utility("测试配置", "")
+        self.workspace.show_utility()
 
         self.assertEqual(self.workspace.summary_text(), "")
         self.assertTrue(self.workspace.summary_label.isHidden())
@@ -380,7 +356,7 @@ class UtilityViewTests(_WorkspaceTestCase):
     def test_show_utility_lights_no_stage(self):
         self.workspace.set_current_stage("amplifier")
 
-        self.workspace.show_utility("测试配置", "参数、频点与连接")
+        self.workspace.show_utility()
 
         rail = self.workspace.stage_rail()
         self.assertIsNone(rail.current_key())
@@ -391,27 +367,22 @@ class UtilityViewTests(_WorkspaceTestCase):
         )
         self.assertIsNone(self.workspace.current_stage())
         self.assertTrue(self.workspace.is_utility_view())
-        self.assertEqual(self.workspace.eyebrow_label.text(), "工作区")
-        self.assertEqual(self.workspace.title_label.text(), "测试配置")
-        self.assertEqual(
-            self.workspace.subtitle_label.text(), "参数、频点与连接"
-        )
+        self.assertEqual(self.workspace.summary_text(), "")
 
     def test_returning_from_a_utility_view_restores_the_stage_header(self):
         self.workspace.set_current_stage("cable_loss")
-        self.workspace.show_utility("测试配置", "")
+        self.workspace.show_utility()
 
         self.workspace.set_current_stage("cable_loss")
 
         self.assertFalse(self.workspace.is_utility_view())
-        self.assertEqual(self.workspace.title_label.text(), "线损测量")
-        self.assertIn("阶段 01 / 04", self.workspace.eyebrow_label.text())
+        self.assertEqual(self.workspace.current_stage(), "cable_loss")
 
     def test_utility_view_disables_the_configuration_action(self):
         self.workspace.set_current_stage("cable_loss")
         self.assertTrue(self.workspace.configuration_btn.isEnabled())
 
-        self.workspace.show_utility("测试配置", "参数、频点与连接")
+        self.workspace.show_utility()
 
         self.assertFalse(
             self.workspace.configuration_btn.isEnabled(),
@@ -427,25 +398,11 @@ class UtilityViewTests(_WorkspaceTestCase):
         self.workspace.configuration_requested.connect(
             lambda: events.append("configuration")
         )
-        self.workspace.show_utility("测试配置", "")
+        self.workspace.show_utility()
 
         self.workspace.configuration_btn.click()
 
         self.assertEqual(events, [])
-
-    def test_show_utility_rejects_an_empty_title_without_changing_stage(self):
-        self.workspace.set_current_stage("amplifier")
-
-        for title in ("", "   "):
-            with self.subTest(title=title):
-                with self.assertRaises(ValueError):
-                    self.workspace.show_utility(title, "副标题")
-                self.assertEqual(
-                    self.workspace.current_stage(), "amplifier"
-                )
-
-        with self.assertRaises(TypeError):
-            self.workspace.show_utility(None, "副标题")
 
 
 class ContentSlotTests(_WorkspaceTestCase):
@@ -533,7 +490,6 @@ class ContentSlotTests(_WorkspaceTestCase):
             self.workspace.header,
             self.workspace.progress_hairline,
             self.workspace.content_host,
-            self.workspace.title_label,
             self.workspace.run_identity_label,
         ):
             with self.subTest(part=part.objectName()):
@@ -683,7 +639,9 @@ class RunIdentityTests(_WorkspaceTestCase):
         self.workspace.set_run_identity("run-1", "有驱放测试")
 
         self.assertEqual(self.workspace.current_stage(), "amplifier")
-        self.assertEqual(self.workspace.title_label.text(), "功放测试")
+        self.assertEqual(
+            self.workspace.stage_rail().current_key(), "amplifier"
+        )
 
     def test_run_identity_rejects_non_string_values(self):
         with self.assertRaises(TypeError):
@@ -1021,7 +979,7 @@ class PageRevealTests(_WorkspaceTestCase):
         self.workspace.set_current_stage("cable_loss")
         self.assertIsNone(self.workspace.reveal_current_page())
 
-        self.workspace.show_utility("测试配置", "")
+        self.workspace.show_utility()
         self.workspace.set_current_stage("amplifier")
 
         self.assertIsNone(

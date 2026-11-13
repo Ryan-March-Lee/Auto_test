@@ -64,10 +64,7 @@ def build_action_bar(page) -> QWidget:
     set_button_variant(page.previous_step_btn, "secondary")
     page.save_config_btn = QPushButton("保存配置")
     set_button_variant(page.save_config_btn, "primary")
-    page.return_welcome_btn = QPushButton("返回欢迎页")
-    set_button_variant(page.return_welcome_btn, "secondary")
     row.addWidget(page.previous_step_btn)
-    row.addWidget(page.return_welcome_btn)
     row.addWidget(page.save_config_btn)
     return bar
 

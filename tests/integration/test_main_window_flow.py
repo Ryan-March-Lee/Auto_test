@@ -375,7 +375,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertFalse(window.test_config_page.save_config_btn.isEnabled())
         self.assertFalse(window.test_config_page.finalize_run_btn.isEnabled())
         self.assertFalse(window.power_page.power_section.isEnabled())
-        self.assertTrue(window.test_config_page.return_welcome_btn.isEnabled())
+        self.assertTrue(window.test_config_page.previous_step_btn.isEnabled())
         # 配置页被登记成协调器的窄接口，而不是控件宿主。
         self.assertIs(window.coordinator.test_config_page, window.test_config_page)
 

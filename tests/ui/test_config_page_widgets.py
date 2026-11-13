@@ -28,9 +28,17 @@ class BuildActionBarTests(unittest.TestCase):
         bar = build_action_bar(page)
         self.assertIsNotNone(bar)
 
-        for name in ("previous_step_btn", "save_config_btn", "return_welcome_btn"):
+        for name in ("previous_step_btn", "save_config_btn"):
             self.assertTrue(hasattr(page, name), f"操作栏应把 {name} 登记到页面上")
         self.assertEqual(page.save_config_btn.text(), "保存配置")
+
+    def test_action_bar_does_not_offer_a_return_to_welcome_entry(self):
+        """返回欢迎页只留在仪表配置页；配置流程内不再提供这条捷径。"""
+        page = QWidget()
+
+        build_action_bar(page)
+
+        self.assertFalse(hasattr(page, "return_welcome_btn"))
 
 
 class InputFactoryTests(unittest.TestCase):

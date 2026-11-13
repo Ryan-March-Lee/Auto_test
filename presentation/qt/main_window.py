@@ -421,7 +421,6 @@ class MainWindow(QMainWindow):
         tab.finalize_run_requested.connect(self._finalize_run)
         tab.load_run_requested.connect(self.coordinator.load_prepared_run)
         tab.load_run_requested.connect(self._on_run_loaded)
-        tab.return_welcome_requested.connect(self._return_to_welcome)
         tab.connection_step_requested.connect(self._return_to_connection_page)
         tab.validation_failed.connect(
             lambda message: self.add_log_message(f"配置校验失败: {message}")

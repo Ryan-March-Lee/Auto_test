@@ -62,7 +62,7 @@ class ConfigurationPageTests(unittest.TestCase):
         self.assertFalse(page.driver_parameters_group.isEnabled())
         self.assertFalse(page.save_config_btn.isEnabled())
         self.assertFalse(page.finalize_run_btn.isEnabled())
-        self.assertTrue(page.return_welcome_btn.isEnabled())
+        self.assertTrue(page.previous_step_btn.isEnabled())
         page.request_save()
         self.assertEqual(saves, [])
 
@@ -1185,6 +1185,9 @@ class ConfigurationPageTests(unittest.TestCase):
 
         self.assertEqual(steps, [True])
         self.assertFalse(hasattr(page, "sg_address"))
+        # 配置流程内不提供返回欢迎页：按钮与页面信号都已删除，返回入口只在仪表配置页。
+        self.assertFalse(hasattr(page, "return_welcome_btn"))
+        self.assertFalse(hasattr(page, "return_welcome_requested"))
         # 旧连接入口（按钮、信号、请求方法）都已删除；连接只由最终按钮发起。
         self.assertFalse(hasattr(page, "connect_btn"))
         self.assertFalse(hasattr(page, "connect_requested"))

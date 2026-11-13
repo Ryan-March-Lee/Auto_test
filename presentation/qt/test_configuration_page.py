@@ -121,7 +121,6 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
     save_requested = Signal()
     finalize_run_requested = Signal()
     load_run_requested = Signal(str)
-    return_welcome_requested = Signal()
     connection_step_requested = Signal()
     validation_failed = Signal(str)
     driver_mode_changed = Signal(bool)
@@ -681,7 +680,7 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         return self.power_scan_plan_rows[0].step
 
     def _build_action_bar(self):
-        """页面底部固定操作栏：回到仪表配置、保存当前配置或返回欢迎页。"""
+        """页面底部固定操作栏：回到仪表配置或保存当前配置。"""
         return build_action_bar(self)
 
     def view_state(self):
@@ -765,7 +764,7 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
     def _build_run_widgets(self, layout):
         """最终动作入口：一次完成校验、保存配置、创建运行与完整连接检查。
 
-        保存配置与返回欢迎页放在页面底部固定操作栏（``_build_action_bar``），
+        保存配置放在页面底部固定操作栏（``_build_action_bar``），
         最终动作留在参数区下方，便于“改参数 → 完成配置并连接仪器”就近操作。
         """
         # 配置阶段入口：页面最终按钮。文案固定为“完成配置并连接仪器”；连接成功后
@@ -799,7 +798,6 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         self.save_config_btn.clicked.connect(self.request_save)
         self.finalize_run_btn.clicked.connect(self.request_finalize_run)
         self.load_run_btn.clicked.connect(self.request_load_run)
-        self.return_welcome_btn.clicked.connect(self.return_welcome_requested.emit)
         self.previous_step_btn.clicked.connect(self.connection_step_requested.emit)
         self.add_power_scan_plan_btn.clicked.connect(self.add_power_scan_plan)
         self.rebuild_power_scan_plan_btn.clicked.connect(self.rebuild_power_scan_plans)
@@ -855,7 +853,7 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         """按统一会话给出的版本结论切换只读态。
 
         1.0 编辑文档仍可查看参数与绑定，但不能改动测试参数、保存或进入最终动作；
-        “返回欢迎页/上一步”保持可用，操作者可以离开而不是被锁在页面里。原因只由
+        “上一步”保持可用，操作者可以离开而不是被锁在页面里。原因只由
         authoring 的版本门禁给出，页面不识别 ``schema_version``。
         """
         reason = (reason or "").strip() or None
@@ -900,7 +898,6 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
             self.finalize_run_btn,
             self.save_config_btn,
             self.previous_step_btn,
-            self.return_welcome_btn,
             self.load_run_btn,
             self.load_run_id_edit,
             self.test_parameters_group,

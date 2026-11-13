@@ -44,6 +44,8 @@ from presentation.qt.measurement_workspace import (  # noqa: E402
     MeasurementWorkspace,
     mode_text,
 )
+from presentation.qt.motion import RevealDirection, SlideFadeEffect  # noqa: E402
+from presentation.qt.theme import MOTION_SLIDE_PX, TOKENS  # noqa: E402
 
 
 def _destroy(widget):
@@ -655,6 +657,150 @@ class AnimationSwitchTests(_WorkspaceTestCase):
     def test_animation_switch_rejects_non_bool(self):
         with self.assertRaises(TypeError):
             self.workspace.set_animations_enabled("yes")
+
+
+class StageRevealDirectionTests(_WorkspaceTestCase):
+    """步骤 13：切页进入方向只由阶段顺序决定，非阶段切换不播放过渡。"""
+
+    def test_forward_switch_enters_from_the_right(self):
+        self.assertIs(
+            self.workspace.stage_reveal_direction("cable_loss", "amplifier"),
+            RevealDirection.FROM_RIGHT,
+            "向后切页（序号增大）从右侧轻移进来",
+        )
+        self.assertIs(
+            self.workspace.stage_reveal_direction(
+                "driver_mapping", "visualization"
+            ),
+            RevealDirection.FROM_RIGHT,
+            "跨阶段跳转同样按序号而不是相邻关系判断方向",
+        )
+
+    def test_backward_switch_enters_from_the_left(self):
+        self.assertIs(
+            self.workspace.stage_reveal_direction("visualization", "amplifier"),
+            RevealDirection.FROM_LEFT,
+        )
+        self.assertIs(
+            self.workspace.stage_reveal_direction("amplifier", "cable_loss"),
+            RevealDirection.FROM_LEFT,
+        )
+
+    def test_non_stage_switches_have_no_transition(self):
+        for previous, current in (
+            (None, "cable_loss"),
+            ("cable_loss", None),
+            ("test_configuration", "cable_loss"),
+            ("cable_loss", "test_configuration"),
+            ("cable_loss", "cable_loss"),
+            ("not_a_stage", "amplifier"),
+            (42, "amplifier"),
+        ):
+            with self.subTest(previous=previous, current=current):
+                self.assertIsNone(
+                    self.workspace.stage_reveal_direction(previous, current),
+                    "首次显示、配置页与未知 key 都必须瞬时切换，且不能抛异常",
+                )
+
+    def test_direction_uses_the_shells_own_stage_set(self):
+        workspace = MeasurementWorkspace(
+            (
+                StageDescriptor("first", 1, "第一段", "先做第一件事", None),
+                StageDescriptor("second", 2, "第二段", "再做第二件事", None),
+            )
+        )
+        workspace.resize(800, 400)
+        self.addCleanup(_destroy, workspace)
+
+        self.assertIs(
+            workspace.stage_reveal_direction("first", "second"),
+            RevealDirection.FROM_RIGHT,
+        )
+        self.assertIsNone(
+            workspace.stage_reveal_direction("cable_loss", "amplifier"),
+            "自定义阶段集合里查不到全局阶段，不能落到另一套顺序上",
+        )
+
+
+class PageRevealTests(_WorkspaceTestCase):
+    """步骤 13：过渡只作用于内容槽里进入的那一页，且可被一键关闭。"""
+
+    def setUp(self):
+        super().setUp()
+        self.content = QWidget()
+        self.workspace.set_content(self.content)
+        self.settle()
+
+    def test_reveal_current_page_fades_in_the_entering_page(self):
+        self.workspace.set_current_stage("cable_loss")
+        self.workspace.set_current_stage("amplifier")
+
+        handle = self.workspace.reveal_current_page()
+
+        effect = self.content.graphicsEffect()
+        self.assertIsInstance(effect, SlideFadeEffect)
+        self.assertIs(handle.effect(), effect)
+        self.assertIs(self.workspace.page_reveal_handle(), handle)
+        self.assertEqual(effect.offset(), float(MOTION_SLIDE_PX))
+        self.assertEqual(
+            effect.background().name(),
+            TOKENS["canvas"].lower(),
+            "淡入要先铺页面底色，matplotlib 画布才不会透出黑底",
+        )
+        self.assertTrue(handle.is_running())
+        self.assertIsNone(
+            self.workspace.stage_rail().graphicsEffect(),
+            "常驻阶段条不参与过渡",
+        )
+
+        handle.cancel()
+        self.assertIsNone(self.content.graphicsEffect())
+
+    def test_repeated_sync_does_not_replay_the_transition(self):
+        self.workspace.set_current_stage("cable_loss")
+        self.workspace.set_current_stage("amplifier")
+        first = self.workspace.reveal_current_page()
+
+        second = self.workspace.reveal_current_page()
+
+        self.assertIsNone(second, "同一页被重复同步时不再重播")
+        self.assertFalse(first.is_running())
+        self.assertIsNone(self.content.graphicsEffect())
+
+    def test_first_display_and_configuration_entries_have_no_transition(self):
+        self.workspace.set_current_stage("cable_loss")
+        self.assertIsNone(self.workspace.reveal_current_page())
+
+        self.workspace.show_utility("测试配置", "")
+        self.workspace.set_current_stage("amplifier")
+
+        self.assertIsNone(
+            self.workspace.reveal_current_page(),
+            "从测试配置页进入测量区不重演配置阶段的过场",
+        )
+        self.assertIsNone(self.content.graphicsEffect())
+
+    def test_animation_switch_and_active_measurement_skip_the_transition(self):
+        self.workspace.set_current_stage("cable_loss")
+        self.workspace.set_current_stage("amplifier")
+        self.assertIsNone(self.workspace.reveal_current_page(animate=False))
+
+        self.workspace.set_animations_enabled(False)
+
+        self.assertIsNone(self.workspace.reveal_current_page())
+        self.assertIsNone(self.content.graphicsEffect())
+
+    def test_replacing_content_stops_the_running_transition(self):
+        self.workspace.set_current_stage("cable_loss")
+        self.workspace.set_current_stage("amplifier")
+        handle = self.workspace.reveal_current_page()
+
+        replacement = QWidget()
+        self.workspace.set_content(replacement)
+
+        self.assertFalse(handle.is_running())
+        self.assertIsNone(self.content.graphicsEffect())
+        self.assertIsNone(self.workspace.page_reveal_handle())
 
 
 class StableFrameTests(_WorkspaceTestCase):

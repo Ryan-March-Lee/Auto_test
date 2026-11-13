@@ -5,7 +5,7 @@
 只做五件事，且每件都在同一处：
 
 - 阶段条点击 → 选中对应页面（:meth:`WorkspaceBinding.navigate`）；
-- 标签切换 → 同步页头与阶段条（:meth:`WorkspaceBinding.sync`）；
+- 标签切换 → 同步页头、阶段条与进入页过渡（:meth:`WorkspaceBinding.sync`）；
 - 无驱放测试 → 停用驱动映射阶段（:meth:`WorkspaceBinding.set_stage_enabled`）；
 - controller 生命周期 → 各阶段运行状态
   （:meth:`WorkspaceBinding.observe_measurement_state`），run 边界清空上一轮状态；
@@ -77,6 +77,7 @@ class WorkspaceBinding:
         self._run_state = run_state if run_state is not None else WorkspaceRunState()
         self._driver_mode: bool | None = None
         self._identity_run_id: str | None = None
+        self._controller = controller
         if controller is not None:
             controller.signals.state_changed.connect(
                 self.observe_measurement_state
@@ -105,6 +106,7 @@ class WorkspaceBinding:
     def sync(self) -> None:
         """把当前页写入外壳：阶段页点亮阶段，其余已登记页面显示工具页头。
 
+        切页完成后顺带播放进入页过渡（阶段 → 阶段时才有方向；测量进行中瞬时）；
         当前 widget 不在 ``pages`` 里（例如装配过程中的临时容器）时什么都不做：
         外壳留在上一个一致状态，既不猜阶段，也不清空页头。
         """
@@ -122,7 +124,14 @@ class WorkspaceBinding:
                 self._workspace.show_utility(
                     title, self._utility_subtitles.get(key, "")
                 )
+            # 进入页过渡的开关与“测量中瞬时切换”都在外壳里；本层只回答现在忙不忙。
+            self._workspace.reveal_current_page(animate=self._measurement_idle())
             return
+
+    def _measurement_idle(self) -> bool:
+        """当前没有活动测量；controller 缺失或没有状态快照时按空闲处理。"""
+        state = getattr(self._controller, "state", None)
+        return not bool(getattr(state, "is_active", False))
 
     def set_stage_enabled(self, key: str, enabled: bool) -> None:
         """启用/停用阶段条上的一个阶段；不改变当前阶段，也不切页。"""

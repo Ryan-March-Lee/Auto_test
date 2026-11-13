@@ -157,7 +157,69 @@ class SlideFadeEffectTests(_MotionTestCase):
         self.assert_color_close(pixel(145), QColor(255, 128, 128))
 
 
+    def test_background_fill_replaces_the_transparent_destination(self):
+        """给了底色就先铺满控件矩形：原生子窗口（matplotlib 画布）不会透出黑底。"""
+        container = QWidget()
+        container.resize(300, 200)
+        container.setStyleSheet("background: #FFFFFF;")
+        self.addCleanup(_destroy, container)
+        strip = _Strip(container)
+        strip.setGeometry(50, 50, 100, 50)
+        container.show()
+        self.app.processEvents()
+
+        effect = SlideFadeEffect(background=QColor(0, 255, 0))
+        effect.set_opacity(0.0)
+        effect.set_offset(0.0)
+        strip.setGraphicsEffect(effect)
+        self.app.processEvents()
+
+        image = container.grab().toImage()
+
+        # 完全透明也仍然铺底：整块控件矩形变成底色，而不是透出父容器。
+        self.assert_color_close(image.pixelColor(80, 60), QColor(0, 255, 0))
+        self.assert_color_close(image.pixelColor(52, 60), QColor(0, 255, 0))
+
+    def test_background_fill_blends_only_with_the_source(self):
+        container = QWidget()
+        container.resize(300, 200)
+        container.setStyleSheet("background: #FFFFFF;")
+        self.addCleanup(_destroy, container)
+        strip = _Strip(container)
+        strip.setGeometry(50, 50, 100, 50)
+        container.show()
+        self.app.processEvents()
+
+        effect = SlideFadeEffect(background=QColor(0, 255, 0))
+        effect.set_opacity(0.5)
+        effect.set_offset(0.0)
+        strip.setGraphicsEffect(effect)
+        self.app.processEvents()
+
+        image = container.grab().toImage()
+
+        # 红底以 50% 合成在绿底色上；若没有铺底会得到 127,127,127 的灰粉。
+        self.assert_color_close(image.pixelColor(80, 60), QColor(127, 127, 0))
+
+    def test_background_is_validated(self):
+        with self.assertRaises(TypeError):
+            SlideFadeEffect(background=123)
+        with self.assertRaises(ValueError):
+            SlideFadeEffect(background="not-a-colour")
+
+
 class RevealTests(_MotionTestCase):
+    def test_reveal_passes_the_background_to_the_effect(self):
+        widget = self._widget()
+        handle = reveal(
+            widget,
+            RevealDirection.FROM_RIGHT,
+            MOTION_REVEAL_MS,
+            background="#f5f7fa",
+        )
+
+        self.assertEqual(handle.effect().background().name(), "#f5f7fa")
+
     def test_reveal_starts_transparent_from_the_requested_edge(self):
         widget = self._widget()
         handle = reveal(widget, RevealDirection.FROM_RIGHT, MOTION_REVEAL_MS)

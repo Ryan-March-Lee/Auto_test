@@ -869,6 +869,155 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
             window.measurement_workspace.configuration_btn.isEnabled()
         )
 
+    # ---- 步骤 13：阶段切换动效 ------------------------------------------------
+
+    def test_stage_switch_reveals_the_entering_page_in_stage_order(self):
+        """向后切从右轻移、向前切从左轻移；配置页 → 01 不播放。"""
+        from presentation.qt.motion import RevealDirection
+        from presentation.qt.theme import MOTION_REVEAL_MS, TOKENS
+
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+
+        with patch("presentation.qt.measurement_workspace.reveal") as reveal_mock:
+            reveal_mock.return_value = None
+            window.tab_widget.setCurrentWidget(window.cable_loss_page)
+            self.app.processEvents()
+            reveal_mock.assert_not_called()
+
+            window.tab_widget.setCurrentWidget(window.amplifier_page)
+            self.app.processEvents()
+            page, direction, duration = reveal_mock.call_args.args
+            self.assertIs(page, window.amplifier_page, "只动画进入的页面")
+            self.assertIs(direction, RevealDirection.FROM_RIGHT)
+            self.assertEqual(duration, MOTION_REVEAL_MS)
+            self.assertEqual(
+                reveal_mock.call_args.kwargs["background"],
+                TOKENS["canvas"],
+                "过渡必须先铺页面底色，画布不会在半透明阶段透出黑底",
+            )
+
+            window.tab_widget.setCurrentWidget(window.cable_loss_page)
+            self.app.processEvents()
+            page, direction, _duration = reveal_mock.call_args.args
+            self.assertIs(page, window.cable_loss_page)
+            self.assertIs(direction, RevealDirection.FROM_LEFT)
+
+    def test_switching_to_the_configuration_page_never_plays_a_transition(self):
+        """配置页属于整屏叙事，测量区不重演它的大动画。"""
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+
+        with patch("presentation.qt.measurement_workspace.reveal") as reveal_mock:
+            reveal_mock.return_value = None
+            window.tab_widget.setCurrentWidget(window.cable_loss_page)
+            window.tab_widget.setCurrentWidget(window.amplifier_page)
+            self.app.processEvents()
+            self.assertEqual(reveal_mock.call_count, 1)
+
+            window.tab_widget.setCurrentWidget(window.test_config_page)
+            self.app.processEvents()
+
+            self.assertEqual(
+                reveal_mock.call_count, 1, "进入配置页不播放测量区过渡"
+            )
+
+    def test_disabling_animations_makes_stage_switches_instant(self):
+        """测试与排障用的唯一开关：关掉后切页不再请求过渡。"""
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+        window.measurement_workspace.set_animations_enabled(False)
+
+        with patch("presentation.qt.measurement_workspace.reveal") as reveal_mock:
+            reveal_mock.return_value = None
+            window.tab_widget.setCurrentWidget(window.cable_loss_page)
+            window.tab_widget.setCurrentWidget(window.amplifier_page)
+            self.app.processEvents()
+
+            reveal_mock.assert_not_called()
+
+        window.measurement_workspace.set_animations_enabled(True)
+
+    def test_an_active_measurement_switches_pages_without_a_transition(self):
+        """测量进行中切页必须瞬时，监控与数据不能被 220ms 过场推迟。"""
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+        window.tab_widget.setCurrentWidget(window.cable_loss_page)
+        self.app.processEvents()
+        busy_controller = SimpleNamespace(
+            state=SimpleNamespace(is_active=True)
+        )
+
+        with patch.object(
+            window.workspace_binding, "_controller", busy_controller
+        ), patch("presentation.qt.measurement_workspace.reveal") as reveal_mock:
+            reveal_mock.return_value = None
+            window.tab_widget.setCurrentWidget(window.amplifier_page)
+            self.app.processEvents()
+
+            reveal_mock.assert_not_called()
+
+    def test_a_new_switch_cancels_the_running_transition(self):
+        """同一时刻最多一个过渡：新切换开始前先停掉上一条。"""
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+        window.tab_widget.setCurrentWidget(window.cable_loss_page)
+        self.app.processEvents()
+        handle = MagicMock()
+
+        with patch(
+            "presentation.qt.measurement_workspace.reveal", return_value=handle
+        ) as reveal_mock:
+            window.tab_widget.setCurrentWidget(window.amplifier_page)
+            self.app.processEvents()
+            handle.cancel.assert_not_called()
+
+            window.tab_widget.setCurrentWidget(
+                window.visualization_page
+            )
+            self.app.processEvents()
+
+            self.assertEqual(reveal_mock.call_count, 2)
+            handle.cancel.assert_called()
+
+        # 收尾：仍挂着的效果要在窗口销毁前摘掉。
+        window.measurement_workspace.set_animations_enabled(False)
+
+    def test_the_transition_effect_is_removed_when_it_finishes(self):
+        """真实可见窗口的端到端检查：进入页有 220ms 过渡，结束不留效果。"""
+        from presentation.qt.motion import SlideFadeEffect
+        from presentation.qt.theme import MOTION_REVEAL_MS
+
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+        window.show()
+        window.view_stack.setCurrentWidget(window.workspace_page)
+        self.app.processEvents()
+
+        window.tab_widget.setCurrentWidget(window.cable_loss_page)
+        self.app.processEvents()
+        window.tab_widget.setCurrentWidget(window.amplifier_page)
+        self.app.processEvents()
+
+        effect = window.amplifier_page.graphicsEffect()
+        self.assertIsInstance(effect, SlideFadeEffect)
+        handle = window.measurement_workspace.page_reveal_handle()
+        self.assertIs(handle.effect(), effect)
+        self.assertTrue(handle.is_running())
+
+        handle.animation().setCurrentTime(MOTION_REVEAL_MS)
+
+        self.assertIsNone(
+            window.amplifier_page.graphicsEffect(),
+            "过渡结束后必须摘除效果，不能拖慢后续绘制",
+        )
+
     # ---- 步骤 8：controller 状态 → 阶段条 ------------------------------------
 
     def _connected_window(self):

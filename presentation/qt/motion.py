@@ -24,6 +24,11 @@
 实现细节：效果在**设备坐标**里合成，用 ``sourcePixmap(..., NoPad)`` 取控件快照后
 手工设置透明度并平移，而不是 ``drawSource()``——控件源会绕过调用方 painter 的
 透明度与坐标变换（Qt 直接在效果上下文里重画控件），那样既不会淡也不会移。
+
+测量页里有 matplotlib 画布这类原生子窗口：它们不会被效果的快照捕获，而是在效果
+输出下面直接绘制（半透明阶段会透出未初始化的黑底）。因此效果支持一个可选的
+``background``：合成前先用不透明底色铺满控件矩形，让淡入始终发生在页面底色上，
+而不是悬在一块黑板上。不传 ``background`` 时保持纯透明合成，与步骤 2 的契约一致。
 """
 
 from __future__ import annotations
@@ -35,10 +40,11 @@ from PySide6.QtCore import (
     QEasingCurve,
     QObject,
     QPoint,
+    QRect,
     Qt,
     QVariantAnimation,
 )
-from PySide6.QtGui import QPainter, QTransform
+from PySide6.QtGui import QColor, QPainter, QTransform
 from PySide6.QtWidgets import QGraphicsEffect, QWidget
 
 from .theme import MOTION_REVEAL_MS, MOTION_SLIDE_PX
@@ -92,12 +98,27 @@ class SlideFadeEffect(QGraphicsEffect):
     位移只改变绘制位置，不改变控件几何；效果不扩展自身边界，滑入时越过控件边缘的
     那一小条会被裁掉（页面本身有边距，淡入过程中看不出来），这样移除效果后不会在
     控件矩形外留下残影。
+
+    ``background`` 给出时，每一帧先用这张不透明底色铺满控件矩形，再把半透明快照
+    合成上去：matplotlib 画布这类原生子窗口不会被快照捕获、只在效果输出下面直接
+    绘制，不铺底色就会在半透明阶段透出黑底。不给底色时行为与步骤 2 完全一致。
     """
 
-    def __init__(self, parent: QObject | None = None) -> None:
+    def __init__(
+        self,
+        parent: QObject | None = None,
+        *,
+        background: QColor | str | None = None,
+    ) -> None:
         super().__init__(parent)
         self._opacity = 1.0
         self._offset = 0.0
+        if background is not None and not isinstance(background, (QColor, str)):
+            raise TypeError("background 必须是 QColor、颜色字符串或 None")
+        color = QColor(background) if background is not None else None
+        if color is not None and not color.isValid():
+            raise ValueError(f"无效的过渡底色: {background!r}")
+        self._background = color
 
     def opacity(self) -> float:
         """当前不透明度（0–1）。"""
@@ -106,6 +127,10 @@ class SlideFadeEffect(QGraphicsEffect):
     def offset(self) -> float:
         """当前水平偏移（逻辑像素）；正值向右，负值向左。"""
         return self._offset
+
+    def background(self) -> QColor | None:
+        """合成时铺在快照下面的不透明底色；``None`` 表示纯透明合成。"""
+        return self._background
 
     def set_opacity(self, opacity: float) -> None:
         """设置不透明度；超出 0–1 的值会被夹紧。"""
@@ -130,8 +155,8 @@ class SlideFadeEffect(QGraphicsEffect):
         的透明度与坐标变换都不生效，淡入和位移都不会落到像素上。这里按 Qt 自带透明度
         效果的写法取设备坐标快照，再手工合成。
         """
-        if self._opacity <= 0.0:
-            # 第一帧完全透明：不抓快照，省掉一次整页重绘。
+        if self._opacity <= 0.0 and self._background is None:
+            # 第一帧完全透明且没有底色：不抓快照，省掉一次整页重绘。
             return
         offset = QPoint()
         pixmap = self.sourcePixmap(
@@ -145,6 +170,8 @@ class SlideFadeEffect(QGraphicsEffect):
         shift = round(self._offset * pixmap.devicePixelRatio())
         painter.save()
         painter.setWorldTransform(QTransform())
+        if self._background is not None:
+            painter.fillRect(QRect(offset, pixmap.size()), self._background)
         painter.setOpacity(self._opacity)
         painter.drawPixmap(offset + QPoint(shift, 0), pixmap)
         painter.restore()
@@ -271,6 +298,8 @@ def reveal(
     widget: QWidget,
     direction: RevealDirection | str = RevealDirection.FROM_RIGHT,
     duration_ms: int = MOTION_REVEAL_MS,
+    *,
+    background: QColor | str | None = None,
 ) -> RevealHandle | None:
     """让 ``widget`` 从 ``direction`` 一侧淡入，返回本次过渡句柄。
 
@@ -279,6 +308,9 @@ def reveal(
     - 控件当前不可见：直接落到终态，返回 ``None``（窗口首次显示、页面还没切到前台）；
     - 已有本模块的过渡在播：先停止并摘除，再开始新的一次；
     - 效果在动画结束时自动摘除，控件不会带着 ``QGraphicsEffect`` 继续绘制。
+
+    ``background`` 是合成时铺在快照下面的不透明底色。测量页里有 matplotlib 画布
+    这类原生子窗口，它们不会被快照捕获；不铺底色时半透明阶段会透出黑底。
     """
     if not isinstance(widget, QWidget):
         raise TypeError("widget 必须是 QWidget")
@@ -298,7 +330,7 @@ def reveal(
     if resolved is RevealDirection.FROM_LEFT:
         start_offset = -start_offset
 
-    effect = SlideFadeEffect()
+    effect = SlideFadeEffect(background=background)
     effect.set_opacity(0.0)
     effect.set_offset(start_offset)
     widget.setGraphicsEffect(effect)

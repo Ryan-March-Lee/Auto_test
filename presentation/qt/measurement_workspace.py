@@ -15,6 +15,10 @@
   阶段（阶段条不点亮任何一项），页头显示工具页自己的标题与副标题；此时右侧
   “配置”动作没有去处，随之禁用，离开工具页后恢复。
 - 类名不带 ``Page`` 后缀，避免被页面注册门禁误登记为页面。
+- 阶段切换的进入方向由本模块按阶段顺序回答
+  （:meth:`MeasurementWorkspace.stage_reveal_direction`），过渡也由本模块在内容槽里
+  播放（:meth:`MeasurementWorkspace.reveal_current_page`）：只动标签宿主当前显示的
+  那一页，阶段条、页头与外壳本身不位移。窗口不参与动画细节。
 
 设计约束（见 ``docs/测量工作台重构计划.md`` 步骤 4）：
 
@@ -53,7 +57,8 @@ from .measurement_stage import (
     StageState,
 )
 from .measurement_stage_rail import MeasurementStageRail
-from .theme import set_button_variant
+from .motion import RevealDirection, RevealHandle, reveal
+from .theme import MOTION_REVEAL_MS, TOKENS, set_button_variant
 
 __all__ = ["MeasurementWorkspace", "mode_text"]
 
@@ -123,6 +128,9 @@ class MeasurementWorkspace(QWidget):
             {stage.key: stage for stage in self._stages}
         )
         self._current_stage_key: str | None = None
+        # 上一次同步到的阶段：只用于决定本次进入方向，不参与页头或阶段条。
+        self._previous_stage_key: str | None = None
+        self._page_reveal_handle: RevealHandle | None = None
         self._utility_view = False
         self._content: QWidget | None = None
         self._right_widgets: list[QWidget] = []
@@ -262,8 +270,84 @@ class MeasurementWorkspace(QWidget):
         return self._run_id, self._mode_text
 
     def animations_enabled(self) -> bool:
-        """外壳的动效开关（当前只作用于阶段条指示块）。"""
+        """外壳的动效开关：阶段条指示块与阶段切换过渡共用这一个开关。"""
         return self._animations_enabled
+
+    def stage_reveal_direction(
+        self, previous_key: str | None, current_key: str | None
+    ) -> RevealDirection | None:
+        """按阶段顺序给出切页时内容进入的方向；``None`` 表示瞬时切换。
+
+        只有“阶段 → 阶段”的切换才有过场：``previous_key`` 为 ``None``（首次显示，
+        或从测试配置这类工具页进入）时返回 ``None``，配置页的整屏叙事语言不会被带进
+        测量区。向后切（序号增大）从右向左轻移，向前切反之；同一个阶段、未知 key
+        同样返回 ``None``，不抛异常打断切页。
+
+        这里只回答方向，不播放动画：过渡由 :meth:`reveal_current_page` 在真正切页后
+        播放，动画开关与“测量进行中瞬时切换”也由那里统一判定（见
+        ``docs/测量工作台重构计划.md`` 步骤 13）。
+        """
+        if not isinstance(previous_key, str) or not isinstance(current_key, str):
+            return None
+        previous = self._stages_by_key.get(previous_key)
+        current = self._stages_by_key.get(current_key)
+        if previous is None or current is None or previous.key == current.key:
+            return None
+        if current.order > previous.order:
+            return RevealDirection.FROM_RIGHT
+        return RevealDirection.FROM_LEFT
+
+    def reveal_current_page(self, *, animate: bool = True) -> RevealHandle | None:
+        """对刚进入的内容页播放一次“淡入 + 10px 轻移”；返回本次过渡句柄。
+
+        只在“阶段 → 阶段”的切页后调用（通常是 :meth:`set_current_stage` 之后）：
+        首次显示、从测试配置页进入、``animate=False``（测量进行中）或外壳动效已
+        关闭时都直接返回 ``None``，页面的旧过渡也会被停止并摘除效果，保证同一时刻
+        最多一个过渡。只动画进入页，旧页由标签宿主立即隐藏。进入方向只消费一次：
+        同一页被重复同步不会重播。
+        """
+        self._cancel_page_reveal()
+        direction = self.stage_reveal_direction(
+            self._previous_stage_key, self._current_stage_key
+        )
+        # 进入方向只消费一次：同一页被重复同步时不会重播，下一次阶段切换仍按顺序判断。
+        self._previous_stage_key = self._current_stage_key
+        if direction is None or not animate or not self._animations_enabled:
+            return None
+        target = self._reveal_target()
+        if target is None:
+            return None
+        self._page_reveal_handle = reveal(
+            target,
+            direction,
+            MOTION_REVEAL_MS,
+            # 页面底色即工作区画布色：先铺不透明底色，matplotlib 画布在半透明阶段
+            # 才不会透出效果输出下面的黑底。
+            background=TOKENS["canvas"],
+        )
+        return self._page_reveal_handle
+
+    def page_reveal_handle(self) -> RevealHandle | None:
+        """当前切页过渡的句柄；收尾或没有过渡时为 ``None``。"""
+        return self._page_reveal_handle
+
+    def _reveal_target(self) -> QWidget | None:
+        """内容槽里真正要过渡的控件：宿主有当前页时动当前页，否则动宿主本身。"""
+        content = self._content
+        if content is None:
+            return None
+        current_widget = getattr(content, "currentWidget", None)
+        if callable(current_widget):
+            page = current_widget()
+            if isinstance(page, QWidget):
+                return page
+        return content
+
+    def _cancel_page_reveal(self) -> None:
+        """停止并摘除正在播放的切页过渡；重复调用是幂等的。"""
+        handle, self._page_reveal_handle = self._page_reveal_handle, None
+        if handle is not None:
+            handle.cancel()
 
     # ---- 写入：阶段与页头 ---------------------------------------------------
 
@@ -283,6 +367,7 @@ class MeasurementWorkspace(QWidget):
         except KeyError:
             raise KeyError(f"未知测量阶段: {key!r}") from None
         self.rail.set_current(descriptor.key)
+        self._previous_stage_key = self._current_stage_key
         self._current_stage_key = descriptor.key
         self._utility_view = False
         self.configuration_btn.setEnabled(True)
@@ -360,11 +445,13 @@ class MeasurementWorkspace(QWidget):
         self.rail.set_stage_enabled(key, enabled)
 
     def set_animations_enabled(self, enabled: bool) -> None:
-        """打开/关闭阶段条动效；关闭时指示块立即落到当前阶段。"""
+        """打开/关闭外壳动效；关闭时指示块立即落到当前阶段，切页也不再播放过渡。"""
         if not isinstance(enabled, bool):
             raise TypeError("enabled 必须是 bool")
         self._animations_enabled = enabled
         self.rail.set_animations_enabled(enabled)
+        if not enabled:
+            self._cancel_page_reveal()
 
     # ---- 写入：内容与右侧状态区 -----------------------------------------------
 
@@ -394,6 +481,8 @@ class MeasurementWorkspace(QWidget):
             raise TypeError("内容必须是 QWidget 或 None")
         if widget is self._content:
             return
+        # 旧内容即将离开展示区：正在播放的过渡必须一起收尾，不能留在已摘下的控件上。
+        self._cancel_page_reveal()
         if widget is not None:
             self._ensure_external_widget(widget, "内容")
 

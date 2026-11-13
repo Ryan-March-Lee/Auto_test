@@ -39,6 +39,11 @@ from presentation.qt.measurement_state import (  # noqa: E402
 from presentation.qt.measurement_workspace import (  # noqa: E402
     MeasurementWorkspace,
 )
+from presentation.qt.stage_summary import (  # noqa: E402
+    NOT_STARTED,
+    StageMetric,
+    StageSummary,
+)
 from presentation.qt.workspace_binding import WorkspaceBinding  # noqa: E402
 
 
@@ -51,7 +56,7 @@ class _FakeSignal:
     def connect(self, slot):
         self._slots.append(slot)
 
-    def emit(self, value):
+    def emit(self, value=None):
         for slot in tuple(self._slots):
             slot(value)
 
@@ -86,6 +91,24 @@ def _destroy(widget):
     widget.close()
     widget.deleteLater()
     QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+
+
+class _SummaryPage(QWidget):
+    """带阶段摘要的最小页面替身：绑定层只依赖 ``stage_summary`` 与变更信号。"""
+
+    def __init__(self, summary=None):
+        super().__init__()
+        self.stage_summary_changed = _FakeSignal()
+        self._summary = summary or StageSummary.not_started()
+
+    def set_summary(self, summary):
+        self._summary = summary
+
+    def stage_summary(self):
+        return self._summary
+
+    def notify_summary_changed(self):
+        self.stage_summary_changed.emit()
 
 
 class WorkspaceBindingTests(unittest.TestCase):
@@ -185,6 +208,92 @@ class WorkspaceBindingTests(unittest.TestCase):
         self.assertEqual(self.workspace.title_label.text(), "功放测试")
         self.assertIn("阶段 03 / 04", self.workspace.eyebrow_label.text())
         self.assertTrue(self.workspace.configuration_btn.isEnabled())
+
+    # ---- 阶段摘要（步骤 15） -------------------------------------------------
+
+    def _summary_binding(self, summary=None):
+        page = _SummaryPage(
+            summary
+            or StageSummary("6 频点", (StageMetric("频点", "6"),))
+        )
+        tabs = QTabWidget()
+        tabs.addTab(page, "线损测量")
+        tabs.setCurrentWidget(page)
+        self.addCleanup(_destroy, tabs)
+        binding = WorkspaceBinding(
+            self.workspace, tabs, {"cable_loss": page}
+        )
+        return page, binding
+
+    def test_sync_pulls_the_page_stage_summary(self):
+        _page, binding = self._summary_binding()
+
+        binding.sync()
+
+        self.assertEqual(self.workspace.current_stage(), "cable_loss")
+        self.assertEqual(
+            self.workspace.stage_rail().summary_for("cable_loss"), "6 频点"
+        )
+        self.assertIn("频点 6", self.workspace.summary_text())
+
+    def test_page_summary_signal_updates_the_rail_without_navigating(self):
+        page, binding = self._summary_binding()
+        binding.sync()
+
+        page.set_summary(StageSummary.not_started())
+        page.notify_summary_changed()
+
+        self.assertEqual(
+            self.workspace.stage_rail().summary_for("cable_loss"),
+            NOT_STARTED,
+        )
+        self.assertEqual(self.workspace.summary_text(), "")
+        self.assertEqual(self.workspace.current_stage(), "cable_loss")
+
+    def test_invalid_or_missing_summaries_leave_the_last_good_one(self):
+        page, binding = self._summary_binding()
+        binding.sync()
+
+        page.set_summary("不是摘要")
+        page.notify_summary_changed()
+
+        def explode():
+            raise RuntimeError("摘要读取失败")
+
+        page.stage_summary = explode
+        page.notify_summary_changed()
+        page.stage_summary = None
+        page.notify_summary_changed()
+        binding.refresh_stage_summary("not_a_stage")
+        binding.refresh_stage_summary(42)
+
+        self.assertEqual(
+            self.workspace.stage_rail().summary_for("cable_loss"), "6 频点"
+        )
+
+    def test_refresh_summaries_reads_every_stage_page(self):
+        cable = _SummaryPage(
+            StageSummary("6 频点", (StageMetric("频点", "6"),))
+        )
+        amplifier = _SummaryPage(
+            StageSummary("2 频点", (StageMetric("频点", "2"),))
+        )
+        tabs = QTabWidget()
+        tabs.addTab(cable, "线损测量")
+        tabs.addTab(amplifier, "功放测试")
+        tabs.setCurrentWidget(cable)
+        self.addCleanup(_destroy, tabs)
+        binding = WorkspaceBinding(
+            self.workspace,
+            tabs,
+            {"cable_loss": cable, "amplifier": amplifier},
+        )
+
+        binding.refresh_summaries()
+
+        rail = self.workspace.stage_rail()
+        self.assertEqual(rail.summary_for("cable_loss"), "6 频点")
+        self.assertEqual(rail.summary_for("amplifier"), "2 频点")
 
     # ---- 同步：工具页 -------------------------------------------------------
 

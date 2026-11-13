@@ -19,6 +19,7 @@ from presentation.qt.measurement_state import (
     MeasurementResultReference,
     MeasurementStatus,
 )
+from presentation.qt.stage_summary import NOT_STARTED, StageMetric
 
 
 class Signal:
@@ -427,6 +428,155 @@ class CableLossPageTests(unittest.TestCase):
         self.assertIs(page.status_slot.parentWidget(), control.parentWidget())
         self.assertGreaterEqual(page.status_slot.y(), control.y() + control.height())
         page.close()
+
+    def test_stage_summary_starts_at_not_started_without_a_fake_zero(self):
+        summary = self.page.stage_summary()
+
+        self.assertFalse(summary.has_data)
+        self.assertEqual(summary.headline, NOT_STARTED)
+        self.assertEqual(
+            summary.metrics, (StageMetric("频点", NOT_STARTED),)
+        )
+        self.assertEqual(self.page.stage_metrics_row.metrics(), summary.metrics)
+
+    def test_stage_summary_follows_the_displayed_table(self):
+        self.controller.signals.data_update.emit({
+            "frequency": "2.4",
+            "cable_losses": {"cable1": 1.234},
+        })
+        self.controller.signals.data_update.emit({
+            "frequency": "3.5",
+            "cable_losses": {"cable2": 2.345},
+        })
+
+        summary = self.page.stage_summary()
+
+        self.assertEqual(summary.headline, "2 频点")
+        self.assertEqual(
+            summary.metrics,
+            (
+                StageMetric("频点", "2"),
+                StageMetric("当前频点", "3.5 GHz"),
+                StageMetric("线缆", "2"),
+            ),
+        )
+        self.assertEqual(self.page.stage_metrics_row.metrics(), summary.metrics)
+
+    def test_selected_row_is_the_current_frequency(self):
+        for frequency in ("2.4", "3.5"):
+            self.controller.signals.data_update.emit({
+                "frequency": frequency,
+                "cable_losses": {"cable1": 1.0},
+            })
+
+        self.page.cable_loss_table.selectRow(0)
+
+        self.assertEqual(
+            self.page.stage_summary().metrics[1],
+            StageMetric("当前频点", "2.4 GHz"),
+        )
+
+    def test_empty_table_returns_to_not_started(self):
+        self.controller.signals.data_update.emit({
+            "frequency": "2.4",
+            "cable_losses": {"cable1": 1.234},
+        })
+
+        self.page.clear_results()
+
+        summary = self.page.stage_summary()
+        self.assertEqual(summary.headline, NOT_STARTED)
+        self.assertEqual(
+            self.page.stage_metrics_row.metrics(),
+            (StageMetric("频点", NOT_STARTED),),
+        )
+
+    def test_data_changes_announce_the_stage_summary(self):
+        events = []
+        self.page.stage_summary_changed.connect(lambda: events.append(True))
+
+        self.controller.signals.data_update.emit({
+            "frequency": "2.4",
+            "cable_losses": {"cable1": 1.234},
+        })
+        self.page.clear_results()
+
+        self.assertEqual(len(events), 2)
+
+    def test_selecting_a_row_updates_the_displayed_kpi_and_announces_it(self):
+        for frequency in ("2.4", "3.5"):
+            self.controller.signals.data_update.emit({
+                "frequency": frequency,
+                "cable_losses": {"cable1": 1.0},
+            })
+        events = []
+        self.page.stage_summary_changed.connect(lambda: events.append(True))
+
+        self.page.cable_loss_table.selectRow(0)
+
+        self.assertEqual(
+            self.page.stage_metrics_row.metrics()[1],
+            StageMetric("当前频点", "2.4 GHz"),
+        )
+        self.assertTrue(events, "选中行改变当前频点时必须通知工作台")
+
+    def test_clearing_the_selection_falls_back_to_the_last_frequency(self):
+        for frequency in ("2.4", "3.5"):
+            self.controller.signals.data_update.emit({
+                "frequency": frequency,
+                "cable_losses": {"cable1": 1.0},
+            })
+        self.page.cable_loss_table.selectRow(0)
+
+        self.page.cable_loss_table.clearSelection()
+
+        self.assertEqual(
+            self.page.stage_metrics_row.metrics()[1],
+            StageMetric("当前频点", "3.5 GHz"),
+            "取消选择后回落到最后一行，与实时追加顺序一致",
+        )
+
+    def test_repeated_identical_data_does_not_announce_twice(self):
+        events = []
+        self.page.stage_summary_changed.connect(lambda: events.append(True))
+        payload = {"frequency": "2.4", "cable_losses": {"cable1": 1.0}}
+
+        self.controller.signals.data_update.emit(payload)
+        self.controller.signals.data_update.emit(payload)
+
+        self.assertEqual(len(events), 1, "摘要没变化就不重复刷新阶段条/页头")
+
+    def test_batch_result_loading_refreshes_the_summary_once(self):
+        events = []
+        self.page.stage_summary_changed.connect(lambda: events.append(True))
+        reference = MeasurementResultReference(
+            "result-batch",
+            MeasurementKind.CABLE_LOSS,
+            CableLossMeasurementResult(
+                run_id="run-batch",
+                status=MeasurementStatus.COMPLETED,
+                points=(
+                    CableLossRow(
+                        frequency_ghz="2.4", cable_losses={"cable1": 1.0}
+                    ),
+                    CableLossRow(
+                        frequency_ghz="3.5", cable_losses={"cable1": 2.0}
+                    ),
+                ),
+            ),
+        )
+
+        self.controller.signals.result.emit(reference)
+
+        self.assertEqual(len(events), 1, "批量载入只在循环结束后刷新一次")
+        self.assertEqual(
+            self.page.stage_metrics_row.metrics(),
+            (
+                StageMetric("频点", "2"),
+                StageMetric("当前频点", "3.5 GHz"),
+                StageMetric("线缆", "1"),
+            ),
+        )
 
 
 if __name__ == "__main__":

@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Any, Mapping
 
 from .measurement_controller_contract import ControllerState
 from .measurement_workspace import MeasurementWorkspace, mode_text
+from .stage_summary import StageSummary
 from .workspace_state import WorkspaceRunState
 
 if TYPE_CHECKING:  # pragma: no cover - 只给类型检查器看，运行时不导入 Qt
@@ -53,6 +54,22 @@ def _clean_run_id(value: Any) -> str | None:
         return None
     cleaned = value.strip()
     return cleaned or None
+
+
+def _page_stage_summary(page: Any) -> StageSummary | None:
+    """读取页面的阶段摘要；页面没有该方法或返回非契约对象时静默放弃。
+
+    摘要是展示数据，不是业务事实：这里的读取失败不能让切页或数据更新中断，也不能
+    清掉上一个有效摘要。
+    """
+    method = getattr(page, "stage_summary", None)
+    if not callable(method):
+        return None
+    try:
+        summary = method()
+    except (TypeError, ValueError, RuntimeError, AttributeError):
+        return None
+    return summary if isinstance(summary, StageSummary) else None
 
 
 class WorkspaceBinding:
@@ -82,6 +99,10 @@ class WorkspaceBinding:
         self._driver_mode: bool | None = None
         self._identity_run_id: str | None = None
         self._controller = controller
+        # 页面在数据变化时发出摘要变更；绑定层只负责把摘要转发给外壳。保存槽引用，
+        # 避免 Qt 连接依赖临时 lambda 的生命周期。
+        self._summary_connections: list[tuple[Any, Any]] = []
+        self._connect_stage_summaries()
         if controller is not None:
             controller.signals.state_changed.connect(
                 self.observe_measurement_state
@@ -128,6 +149,8 @@ class WorkspaceBinding:
                 continue
             if self._workspace.has_stage(key):
                 self._workspace.set_current_stage(key)
+                # 页头与阶段条共用同一份摘要；切回该阶段时按页面当前数据显示。
+                self.refresh_stage_summary(key)
             else:
                 title = self._tabs.tabText(index).strip() or key
                 self._workspace.show_utility(
@@ -141,6 +164,40 @@ class WorkspaceBinding:
         """当前没有活动测量；controller 缺失或没有状态快照时按空闲处理。"""
         state = getattr(self._controller, "state", None)
         return not bool(getattr(state, "is_active", False))
+
+    # ---- 阶段摘要 -------------------------------------------------------------
+
+    def _connect_stage_summaries(self) -> None:
+        """连接页面自己的摘要变更信号；没有该信号的页面直接跳过。"""
+        for key, page in self._pages.items():
+            signal = getattr(page, "stage_summary_changed", None)
+            connect = getattr(signal, "connect", None)
+            if not callable(connect):
+                continue
+            slot = lambda _value=None, key=key: self.refresh_stage_summary(key)
+            connect(slot)
+            self._summary_connections.append((signal, slot))
+
+    def refresh_summaries(self) -> None:
+        """重新读取全部阶段页的摘要；只写展示，不触发页面导航或测量。"""
+        for key in list(self._pages):
+            self.refresh_stage_summary(key)
+
+    def refresh_stage_summary(self, key: str) -> None:
+        """把一个页面的 ``stage_summary()`` 写进阶段条与页头。
+
+        摘要由页面从已经显示的数据里取好；本层不统计、不读结果 DTO。未知 key、
+        非阶段页、页面没有该方法或载荷不符合契约时静默忽略，信号槽不抛异常。
+        """
+        if not isinstance(key, str):
+            return
+        page = self._pages.get(key)
+        if page is None or not self._workspace.has_stage(key):
+            return
+        summary = _page_stage_summary(page)
+        if summary is None:
+            return
+        self._workspace.set_stage_summary(key, summary)
 
     def set_stage_enabled(self, key: str, enabled: bool) -> None:
         """启用/停用阶段条上的一个阶段；不改变当前阶段，也不切页。"""

@@ -36,6 +36,7 @@ from .measurement_state import (
 from .measurement_surface import (
     CONTROL_SURFACE,
     RESULT_SURFACE,
+    StageMetricsRow,
     build_surface,
     hairline,
     section_caption,
@@ -43,6 +44,14 @@ from .measurement_surface import (
 from .pages import PageControllerBindingMixin
 from .realtime_buffer import RealtimeMeasurementBuffer
 from .realtime_page import RealtimePageMixin
+from .stage_summary import (
+    NOT_STARTED,
+    StageMetric,
+    StageSummary,
+    count_text,
+    frequency_headline,
+    frequency_text,
+)
 from .status_panel import StatusSlot
 from .theme import (
     MEASUREMENT_LEFT_PANEL_MAX_WIDTH,
@@ -59,6 +68,9 @@ class DriverMappingPage(
     # 页面只发出“用户想加载线损结果”的意图；打开文件选择器和应用层校验都由窗口
     # 负责，页面不持有路径服务，也不读取 JSON。
     load_cable_loss_requested = Signal()
+
+    #: 页面已显示的数据变化（新频点、清空）时发出；工作台据此刷新阶段摘要。
+    stage_summary_changed = Signal()
 
     def __init__(
         self,
@@ -90,6 +102,10 @@ class DriverMappingPage(
         self._log_callback = log_callback or (lambda _message: None)
         self._progress_callback = progress_callback or (lambda _value: None)
         self._error_callback = error_callback or self._show_error
+        # 批量载入结果期间先不逐行重算摘要，循环结束后只刷新一次。
+        self._suspend_stage_summary = False
+        # 上一份已展示的摘要：只有真正变化时才重排 KPI 行并通知工作台。
+        self._last_stage_summary: StageSummary | None = None
         self._setup_archival(
             MeasurementKind.DRIVER_MAPPING,
             location_provider=archival_location_provider,
@@ -165,6 +181,9 @@ class DriverMappingPage(
         # 结果面只承载“测量结果”这一块内容：频点浏览与四张图由绘图控件自带。
         result_surface = build_surface(RESULT_SURFACE, title="测量结果")
         result_layout = result_surface.layout()
+        # KPI 行只排版已有实时数据：频点数、当前频点与当前扫频点数。
+        self.stage_metrics_row = StageMetricsRow(result_surface)
+        result_layout.addWidget(self.stage_metrics_row)
         self.driver_plot_widget = self._plot_widget_factory(result_surface)
         self._realtime_plot_widget = self.driver_plot_widget
         prev_clicked = getattr(self.driver_plot_widget, "prev_clicked", None)
@@ -175,6 +194,7 @@ class DriverMappingPage(
             next_clicked.connect(self.next_frequency)
         result_layout.addWidget(self.driver_plot_widget, 1)
         layout.addWidget(result_surface, 1)
+        self._refresh_stage_summary()
         return self
 
     def _connect_controller_signals(self, controller: Any) -> None:
@@ -319,33 +339,101 @@ class DriverMappingPage(
             self._error_callback("驱动映射测量结果不是正式结果模型，无法显示")
             return
         invalid_rows = False
-        for row in rows:
-            frequency = str(row.get("frequency", ""))
-            if not frequency:
-                invalid_rows = True
-                continue
-            try:
-                input_power = float(row["input_power"])
-                output_power = float(row["output_power"])
-            except (KeyError, TypeError, ValueError):
-                invalid_rows = True
-                continue
-            sweep = self._realtime_data.get(frequency, {}).copy()
-            sweep["frequency"] = frequency
-            existing = sweep.get("sweep_data", {})
-            if not isinstance(existing, Mapping):
-                existing = {}
-            inputs = list(existing.get("input_power_sg", ()))
-            outputs = list(existing.get("output_power_driver", ()))
-            inputs.append(input_power)
-            outputs.append(output_power)
-            sweep["sweep_data"] = {
-                "input_power_sg": inputs,
-                "output_power_driver": outputs,
-            }
-            self.update_realtime(sweep)
+        self._suspend_stage_summary = True
+        try:
+            for row in rows:
+                frequency = str(row.get("frequency", ""))
+                if not frequency:
+                    invalid_rows = True
+                    continue
+                try:
+                    input_power = float(row["input_power"])
+                    output_power = float(row["output_power"])
+                except (KeyError, TypeError, ValueError):
+                    invalid_rows = True
+                    continue
+                sweep = self._realtime_data.get(frequency, {}).copy()
+                sweep["frequency"] = frequency
+                existing = sweep.get("sweep_data", {})
+                if not isinstance(existing, Mapping):
+                    existing = {}
+                inputs = list(existing.get("input_power_sg", ()))
+                outputs = list(existing.get("output_power_driver", ()))
+                inputs.append(input_power)
+                outputs.append(output_power)
+                sweep["sweep_data"] = {
+                    "input_power_sg": inputs,
+                    "output_power_driver": outputs,
+                }
+                self.update_realtime(sweep)
+        finally:
+            self._suspend_stage_summary = False
+            self._refresh_stage_summary()
         if invalid_rows:
             self._error_callback("驱动映射结果包含无效功率点，已跳过无效数据")
+
+    def stage_summary(self) -> StageSummary:
+        """从已显示的实时缓存里取摘要；不读结果 DTO，也不发起新的测量查询。"""
+        frequencies = self.realtime_buffer.frequencies
+        if not frequencies:
+            return StageSummary.not_started()
+        return StageSummary(
+            frequency_headline(len(frequencies)),
+            (
+                StageMetric("频点", count_text(len(frequencies))),
+                StageMetric(
+                    "当前频点",
+                    frequency_text(self._buffered_frequency()) or NOT_STARTED,
+                ),
+                StageMetric("扫频点", count_text(self._sweep_point_count())),
+            ),
+        )
+
+    def _buffered_frequency(self):
+        """当前浏览频点：优先取缓存当前项，索引失效时回落到频点列表。"""
+        current = self.realtime_buffer.current()
+        if isinstance(current, Mapping):
+            value = current.get("frequency")
+            if value is not None:
+                return value
+        index = self.realtime_buffer.current_index
+        frequencies = self.realtime_buffer.frequencies
+        if 0 <= index < len(frequencies):
+            return frequencies[index]
+        return None
+
+    def _sweep_point_count(self) -> int:
+        """已存储数据里最长的一条扫频曲线点数；没有扫描数据时为 0。"""
+        longest = 0
+        for value in self._realtime_data.values():
+            sweep = value.get("sweep_data")
+            if not isinstance(sweep, Mapping):
+                continue
+            for points in sweep.values():
+                if isinstance(points, (list, tuple)):
+                    longest = max(longest, len(points))
+        return longest
+
+    def _refresh_stage_summary(self) -> None:
+        """把当前摘要写进结果面 KPI 行，并通知工作台刷新阶段条/页头。
+
+        同一份摘要重复写入不重排控件、也不发信号：批量载入已经暂停逐行刷新，普通
+        刷新也只在该阶段摘要真的变化时才更新阶段条与页头。
+        """
+        if self._suspend_stage_summary:
+            return
+        summary = self.stage_summary()
+        if summary == self._last_stage_summary:
+            return
+        self._last_stage_summary = summary
+        row = getattr(self, "stage_metrics_row", None)
+        if row is not None:
+            row.set_metrics(summary.metrics)
+        self.stage_summary_changed.emit()
+
+    def _update_navigation(self) -> None:
+        super()._update_navigation()
+        self._refresh_stage_summary()
 
     def _update_plot(self, data: Mapping[str, Any]) -> None:
         update_plot = getattr(self.driver_plot_widget, "update_plot", None)

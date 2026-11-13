@@ -10,6 +10,7 @@ from presentation.qt.amplifier_page import AmplifierPage
 from presentation.qt.measurement_controller_contract import MeasurementCommand
 from presentation.qt.measurement_controls import MeasurementAction
 from presentation.qt.measurement_state import MeasurementKind, MeasurementStatus
+from presentation.qt.stage_summary import NOT_STARTED, StageMetric
 from presentation.qt.theme import MEASUREMENT_LEFT_PANEL_MIN_WIDTH
 
 
@@ -573,6 +574,64 @@ class AmplifierPageTests(unittest.TestCase):
         ]
         self.assertEqual(captions, ["测量结果"])
         self.assertFalse(hasattr(self.page, "amplifier_metric_label"))
+
+    def test_stage_summary_starts_at_not_started(self):
+        summary = self.page.stage_summary()
+
+        self.assertFalse(summary.has_data)
+        self.assertEqual(summary.headline, NOT_STARTED)
+        self.assertEqual(
+            summary.metrics, (StageMetric("频点", NOT_STARTED),)
+        )
+
+    def test_stage_summary_follows_the_displayed_frequencies_and_sweep(self):
+        self.page.update_realtime({
+            "frequency": "2.4",
+            "sweep_data": {
+                "input_power_sg": [1.0, 2.0, 3.0],
+                "output_power_driver": [4.0, 5.0, 6.0],
+            },
+        })
+
+        summary = self.page.stage_summary()
+
+        self.assertEqual(summary.headline, "1 频点")
+        self.assertEqual(
+            summary.metrics,
+            (
+                StageMetric("频点", "1"),
+                StageMetric("当前频点", "2.4 GHz"),
+                StageMetric("扫频点", "3"),
+            ),
+        )
+        self.assertEqual(self.page.stage_metrics_row.metrics(), summary.metrics)
+
+    def test_clearing_realtime_data_returns_to_not_started(self):
+        self.page.update_realtime({"frequency": "2.4"})
+
+        self.page.reset_realtime_data()
+
+        self.assertEqual(self.page.stage_summary().headline, NOT_STARTED)
+        self.assertEqual(
+            self.page.stage_metrics_row.metrics(),
+            (StageMetric("频点", NOT_STARTED),),
+        )
+
+    def test_repeated_identical_data_does_not_announce_twice(self):
+        events = []
+        self.page.stage_summary_changed.connect(lambda: events.append(True))
+        payload = {
+            "frequency": "2.4",
+            "sweep_data": {
+                "input_power_sg": [1.0],
+                "output_power_driver": [2.0],
+            },
+        }
+
+        self.page.update_realtime(payload)
+        self.page.update_realtime(payload)
+
+        self.assertEqual(len(events), 1, "摘要没变化就不重复刷新阶段条/页头")
 
     def test_close_disconnects_controller_signals(self):
         self.assertEqual(len(self.controller.signals.data_update.slots), 1)

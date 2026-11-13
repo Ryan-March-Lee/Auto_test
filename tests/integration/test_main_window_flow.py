@@ -833,6 +833,45 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIsNone(workspace.current_stage())
         self.assertEqual(workspace.title_label.text(), "测试配置")
 
+    def test_page_stage_summary_reaches_the_rail_and_header(self):
+        """步骤 15：页面已经显示的数据变成阶段条/页头摘要，空态不显示假数量。"""
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+        workspace = window.measurement_workspace
+        workspace.stage_rail().stage_button("cable_loss").click()
+        self.app.processEvents()
+
+        page = window.cable_loss_page
+        page.update_realtime({
+            "frequency": "2.4",
+            "cable_losses": {"cable1": 1.0},
+        })
+        page.update_realtime({
+            "frequency": "3.5",
+            "cable_losses": {"cable2": 2.0},
+        })
+        self.app.processEvents()
+
+        self.assertEqual(
+            workspace.stage_rail().summary_for("cable_loss"), "2 频点"
+        )
+        self.assertIn("频点 2", workspace.summary_text())
+
+        # 选中行决定“当前频点”：页头必须跟着选择走，而不是停在最新一行。
+        page.cable_loss_table.selectRow(0)
+        self.app.processEvents()
+
+        self.assertIn("当前频点 2.4 GHz", workspace.summary_text())
+
+        page.clear_results()
+        self.app.processEvents()
+
+        self.assertEqual(
+            workspace.stage_rail().summary_for("cable_loss"), "未开始"
+        )
+        self.assertEqual(workspace.summary_text(), "")
+
     def test_stage_rail_keyboard_navigation_still_switches_pages(self):
         """隐藏标签栏后键盘导航由阶段条接管：Space 必须能切页并同步页头。"""
         from PySide6.QtCore import Qt

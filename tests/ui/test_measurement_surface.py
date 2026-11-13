@@ -30,11 +30,13 @@ from presentation.qt.measurement_surface import (  # noqa: E402
     SURFACE_KINDS,
     SURFACE_MARGINS,
     SURFACE_SPACING,
+    StageMetricsRow,
     build_surface,
     hairline,
     metric_label,
     section_caption,
 )
+from presentation.qt.stage_summary import StageMetric  # noqa: E402
 from presentation.qt.theme import LABEL_ROLES, build_stylesheet  # noqa: E402
 
 
@@ -139,6 +141,89 @@ class MeasurementSurfaceTests(unittest.TestCase):
             metric.textInteractionFlags()
             & Qt.TextInteractionFlag.TextSelectableByMouse
         )
+
+
+class StageMetricsRowTests(unittest.TestCase):
+    """结果面 KPI 行：只排版页面传入的值，不做统计。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _track(self, widget):
+        self.addCleanup(_destroy, widget)
+        return widget
+
+    def test_starts_hidden_with_no_metrics(self):
+        row = self._track(StageMetricsRow())
+
+        self.assertEqual(row.metrics(), ())
+        self.assertTrue(row.isHidden())
+
+    def test_metrics_are_laid_out_as_label_and_value_pairs(self):
+        row = self._track(StageMetricsRow())
+        metrics = (
+            StageMetric("频点", "6"),
+            StageMetric("当前频点", "3.5 GHz"),
+        )
+
+        row.set_metrics(metrics)
+
+        self.assertEqual(row.metrics(), metrics)
+        self.assertFalse(row.isHidden())
+        labels = row.findChildren(QLabel)
+        self.assertEqual(
+            [label.text() for label in labels],
+            ["频点", "6", "当前频点", "3.5 GHz"],
+        )
+        caption_labels = [
+            label
+            for label in labels
+            if label.property("role") == "sectionCaption"
+        ]
+        self.assertEqual(
+            caption_labels,
+            [],
+            "KPI 标签使用 hint 角色，不能混进结果面的小标题",
+        )
+        values = [
+            label for label in labels if label.objectName() == "measurementMetric"
+        ]
+        self.assertEqual(
+            [value.text() for value in values], ["6", "3.5 GHz"]
+        )
+
+    def test_updating_with_fewer_metrics_reuses_and_hides_cells(self):
+        row = self._track(StageMetricsRow())
+        row.set_metrics(
+            (StageMetric("频点", "6"), StageMetric("线缆", "3"))
+        )
+        before = tuple((container, label) for container, label, _ in row._cells)
+
+        row.set_metrics((StageMetric("频点", "7"),))
+
+        after = tuple((container, label) for container, label, _ in row._cells)
+        self.assertEqual(after, before, "单元复用，不随每次数据更新重建控件")
+        self.assertEqual(row.metrics(), (StageMetric("频点", "7"),))
+        self.assertEqual(row._cells[0][1].text(), "频点")
+        self.assertEqual(row._cells[0][2].text(), "7")
+        self.assertTrue(row._cells[1][0].isHidden())
+
+    def test_empty_metrics_hide_the_whole_row(self):
+        row = self._track(StageMetricsRow())
+        row.set_metrics((StageMetric("频点", "6"),))
+
+        row.set_metrics(())
+
+        self.assertEqual(row.metrics(), ())
+        self.assertTrue(row.isHidden())
+
+    def test_invalid_payloads_are_rejected(self):
+        row = self._track(StageMetricsRow())
+        for payload in ("6", b"6", {"频点": "6"}, ("6",)):
+            with self.subTest(payload=payload):
+                with self.assertRaises(TypeError):
+                    row.set_metrics(payload)
 
 
 class MeasurementSurfaceThemeTests(unittest.TestCase):

@@ -46,6 +46,11 @@ from presentation.qt.measurement_workspace import (  # noqa: E402
     mode_text,
 )
 from presentation.qt.motion import RevealDirection, SlideFadeEffect  # noqa: E402
+from presentation.qt.stage_summary import (  # noqa: E402
+    NOT_STARTED,
+    StageMetric,
+    StageSummary,
+)
 from presentation.qt.theme import MOTION_SLIDE_PX, TOKENS  # noqa: E402
 
 
@@ -278,6 +283,97 @@ class StageSubsetTests(_WorkspaceTestCase):
                     "阶段集合之外的 key 不能留下半更新的页头",
                 )
                 self.assertEqual(self.workspace.title_label.text(), "")
+
+
+class StageSummaryTests(_WorkspaceTestCase):
+    """步骤 15：摘要由页面传入，外壳只排版到阶段条与页头。"""
+
+    SUMMARY = StageSummary(
+        "6 频点",
+        (
+            StageMetric("频点", "6"),
+            StageMetric("当前频点", "3.5 GHz"),
+            StageMetric("线缆", "4"),
+        ),
+    )
+
+    def test_summary_is_written_to_the_rail_and_the_current_header(self):
+        self.workspace.set_current_stage("cable_loss")
+
+        self.workspace.set_stage_summary("cable_loss", self.SUMMARY)
+
+        rail = self.workspace.stage_rail()
+        self.assertEqual(rail.summary_for("cable_loss"), "6 频点")
+        self.assertEqual(
+            self.workspace.summary_text(),
+            "频点 6 · 当前频点 3.5 GHz · 线缆 4",
+        )
+        self.assertFalse(self.workspace.summary_label.isHidden())
+
+    def test_summary_is_kept_for_a_stage_that_is_not_current(self):
+        self.workspace.set_current_stage("amplifier")
+
+        self.workspace.set_stage_summary("cable_loss", self.SUMMARY)
+
+        self.assertEqual(
+            self.workspace.stage_rail().summary_for("cable_loss"), "6 频点"
+        )
+        self.assertEqual(
+            self.workspace.summary_text(),
+            "",
+            "页头只显示当前阶段的摘要",
+        )
+        self.assertTrue(self.workspace.summary_label.isHidden())
+
+        self.workspace.set_current_stage("cable_loss")
+
+        self.assertEqual(
+            self.workspace.summary_text(),
+            "频点 6 · 当前频点 3.5 GHz · 线缆 4",
+            "切回该阶段时页头重新显示它保存的摘要",
+        )
+
+    def test_not_started_summary_keeps_the_header_empty(self):
+        self.workspace.set_current_stage("cable_loss")
+
+        self.workspace.set_stage_summary(
+            "cable_loss", StageSummary.not_started()
+        )
+
+        self.assertEqual(
+            self.workspace.stage_rail().summary_for("cable_loss"), NOT_STARTED
+        )
+        self.assertEqual(self.workspace.summary_text(), "")
+        self.assertTrue(self.workspace.summary_label.isHidden())
+
+    def test_clearing_a_summary_removes_it_from_the_rail_and_header(self):
+        self.workspace.set_current_stage("cable_loss")
+        self.workspace.set_stage_summary("cable_loss", self.SUMMARY)
+
+        self.workspace.set_stage_summary("cable_loss", None)
+
+        self.assertIsNone(self.workspace.stage_summary("cable_loss"))
+        self.assertEqual(
+            self.workspace.stage_rail().summary_for("cable_loss"), ""
+        )
+        self.assertEqual(self.workspace.summary_text(), "")
+
+    def test_utility_view_hides_the_header_summary(self):
+        self.workspace.set_current_stage("cable_loss")
+        self.workspace.set_stage_summary("cable_loss", self.SUMMARY)
+
+        self.workspace.show_utility("测试配置", "")
+
+        self.assertEqual(self.workspace.summary_text(), "")
+        self.assertTrue(self.workspace.summary_label.isHidden())
+
+    def test_unknown_stage_and_invalid_payloads_are_rejected(self):
+        with self.assertRaises(KeyError):
+            self.workspace.set_stage_summary("not_a_stage", self.SUMMARY)
+        with self.assertRaises(TypeError):
+            self.workspace.set_stage_summary(42, self.SUMMARY)
+        with self.assertRaises(TypeError):
+            self.workspace.set_stage_summary("cable_loss", "6 频点")
 
 
 class UtilityViewTests(_WorkspaceTestCase):

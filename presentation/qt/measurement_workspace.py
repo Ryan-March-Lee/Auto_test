@@ -22,6 +22,9 @@
 - 页头下方的 2px 发丝线（:class:`MeasurementProgressHairline`）只确认“测量在推进”：
   数值来自已有的 ``signals.progress``，有活动测量时显示、空闲时保持空白；它固定占
   2px，不推动内容区，也不替代状态面板里的详细进度条。
+- 阶段摘要（:meth:`MeasurementWorkspace.set_stage_summary`）由页面从已经显示的数据
+  里取好再交给外壳：阶段条显示一句话，页头右侧显示同一份 KPI 的紧凑文本。外壳不
+  统计频点、不读结果 DTO，也不在工具页上显示摘要。
 
 设计约束（见 ``docs/测量工作台重构计划.md`` 步骤 4）：
 
@@ -64,6 +67,7 @@ from .measurement_stage import (
 )
 from .measurement_stage_rail import MeasurementStageRail
 from .motion import RevealDirection, RevealHandle, reveal
+from .stage_summary import StageSummary
 from .theme import MOTION_REVEAL_MS, TOKENS, set_button_variant
 
 __all__ = [
@@ -237,6 +241,8 @@ class MeasurementWorkspace(QWidget):
         self._run_id: str | None = None
         self._mode_text: str | None = None
         self._animations_enabled = True
+        # 阶段摘要按 key 保存：切回某个阶段时页头能重新显示它，而不用窗口再推一次。
+        self._stage_summaries: dict[str, StageSummary] = {}
 
         self._build_ui()
         self.set_run_identity(None, None)
@@ -306,6 +312,17 @@ class MeasurementWorkspace(QWidget):
         )
         self._right_layout.addWidget(self.run_identity_label)
 
+        # 当前阶段的 KPI 紧凑文本：只在有数据时出现，占据页头已有的一行，不新增行高。
+        self.summary_label = QLabel("", right_panel)
+        self.summary_label.setObjectName("measurementWorkspaceSummary")
+        self.summary_label.setProperty("role", "hint")
+        self.summary_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.summary_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.summary_label.hide()
+        self._right_layout.addWidget(self.summary_label)
+
         self.configuration_btn = QPushButton("配置", right_panel)
         self.configuration_btn.setObjectName("measurementWorkspaceConfigButton")
         self.configuration_btn.setAccessibleName("打开测试配置")
@@ -370,6 +387,16 @@ class MeasurementWorkspace(QWidget):
     def run_identity(self) -> tuple[str | None, str | None]:
         """页头展示的 ``(run_id, mode_text)``；未设置的部分为 ``None``。"""
         return self._run_id, self._mode_text
+
+    def stage_summary(self, key: str) -> StageSummary | None:
+        """某阶段最近一次写入的摘要；从未写入时为 ``None``。"""
+        if not isinstance(key, str):
+            raise TypeError("阶段 key 必须是字符串")
+        return self._stage_summaries.get(key)
+
+    def summary_text(self) -> str:
+        """页头右侧当前显示的摘要文本；没有数据时为空字符串。"""
+        return self.summary_label.text()
 
     def progress_value(self) -> int:
         """页头发丝线的当前进度（0–100）；没有活动测量时为 0。"""
@@ -505,6 +532,7 @@ class MeasurementWorkspace(QWidget):
         self.eyebrow_label.setText(_UTILITY_EYEBROW)
         self.title_label.setText(cleaned_title)
         self.subtitle_label.setText(subtitle.strip())
+        self._apply_header_summary(None)
 
     def set_run_identity(
         self, run_id: str | None, mode_label: str | None
@@ -533,6 +561,20 @@ class MeasurementWorkspace(QWidget):
         )
         self.title_label.setText(descriptor.title)
         self.subtitle_label.setText(descriptor.subtitle)
+        self._apply_header_summary(self._stage_summaries.get(descriptor.key))
+
+    def _apply_header_summary(self, summary: StageSummary | None) -> None:
+        """把阶段摘要折成页头右侧的一行紧凑文本；空态和工具页不显示。"""
+        if summary is None or not summary.has_data or not summary.metrics:
+            self.summary_label.clear()
+            self.summary_label.hide()
+            return
+        self.summary_label.setText(
+            " · ".join(
+                f"{metric.label} {metric.value}" for metric in summary.metrics
+            )
+        )
+        self.summary_label.show()
 
     def _enter_no_stage_view(self) -> None:
         """没有当前阶段：阶段条收起指示块，页头回到空的工作区状态。"""
@@ -543,8 +585,35 @@ class MeasurementWorkspace(QWidget):
         self.eyebrow_label.setText(_UTILITY_EYEBROW)
         self.title_label.setText("")
         self.subtitle_label.setText("")
+        self._apply_header_summary(None)
 
     # ---- 写入：阶段状态与动效 -------------------------------------------------
+
+    def set_stage_summary(
+        self, key: str, summary: StageSummary | None
+    ) -> None:
+        """写入一个阶段的摘要；``None`` 清空该阶段的摘要。
+
+        摘要由页面从已经显示的数据里取好（见 :mod:`presentation.qt.stage_summary`），
+        外壳只把它放到阶段条与页头：阶段条显示 ``headline``，页头右侧显示同一份 KPI 的
+        紧凑文本；工具页与空态不显示页头摘要。key 必须是构造时接收的阶段集合里的 key。
+        """
+        if not isinstance(key, str):
+            raise TypeError("阶段 key 必须是字符串")
+        if key not in self._stages_by_key:
+            raise KeyError(f"未知测量阶段: {key!r}")
+        if summary is None:
+            self._stage_summaries.pop(key, None)
+            self.rail.set_summary(key, "")
+            if self._current_stage_key == key:
+                self._apply_header_summary(None)
+            return
+        if not isinstance(summary, StageSummary):
+            raise TypeError("阶段摘要必须是 StageSummary 或 None")
+        self._stage_summaries[key] = summary
+        self.rail.set_summary(key, summary.headline)
+        if self._current_stage_key == key:
+            self._apply_header_summary(summary)
 
     def set_stage_state(self, key: str, state: StageState | str) -> None:
         """更新一个阶段的运行状态；只接受五个运行状态，``DISABLED`` 由启用状态派生。"""

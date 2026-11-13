@@ -2,11 +2,13 @@
 
 测量区的外观由 :class:`~presentation.qt.measurement_workspace.MeasurementWorkspace`
 承担，页面注册与生命周期仍归 ``QTabWidget`` 和 :mod:`presentation.qt.pages`。这一层
-只做四件事，且每件都在同一处：
+只做五件事，且每件都在同一处：
 
 - 阶段条点击 → 选中对应页面（:meth:`WorkspaceBinding.navigate`）；
 - 标签切换 → 同步页头与阶段条（:meth:`WorkspaceBinding.sync`）；
 - 无驱放测试 → 停用驱动映射阶段（:meth:`WorkspaceBinding.set_stage_enabled`）；
+- controller 生命周期 → 各阶段运行状态
+  （:meth:`WorkspaceBinding.observe_measurement_state`），run 边界清空上一轮状态；
 - 测试模式与运行身份 → 徽标、驱动映射标签页、阶段条和页头
   （:meth:`WorkspaceBinding.start_session` /
   :meth:`WorkspaceBinding.bind_run_identity`）。
@@ -31,7 +33,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Mapping
 
+from .measurement_controller_contract import ControllerState
 from .measurement_workspace import MeasurementWorkspace, mode_text
+from .workspace_state import WorkspaceRunState
 
 if TYPE_CHECKING:  # pragma: no cover - 只给类型检查器看，运行时不导入 Qt
     from PySide6.QtWidgets import QTabWidget
@@ -58,6 +62,8 @@ class WorkspaceBinding:
         *,
         utility_subtitles: Mapping[str, str] | None = None,
         mode_badge: Any | None = None,
+        controller: Any | None = None,
+        run_state: WorkspaceRunState | None = None,
     ) -> None:
         self._workspace = workspace
         self._tabs = tabs
@@ -66,8 +72,15 @@ class WorkspaceBinding:
         self._utility_subtitles = dict(utility_subtitles or {})
         # 徽标是窗口创建、挂在页头右侧的控件；绑定层只写文本，不拥有它。
         self._mode_badge = mode_badge
+        # 阶段运行状态模型是纯 Python：controller 只暴露“当前这一次测量”，
+        # 上一个阶段的完成态必须由这里记住，不能从 controller 的当前快照推断。
+        self._run_state = run_state if run_state is not None else WorkspaceRunState()
         self._driver_mode: bool | None = None
         self._identity_run_id: str | None = None
+        if controller is not None:
+            controller.signals.state_changed.connect(
+                self.observe_measurement_state
+            )
 
     # ---- 导航 ---------------------------------------------------------------
 
@@ -115,6 +128,23 @@ class WorkspaceBinding:
         """启用/停用阶段条上的一个阶段；不改变当前阶段，也不切页。"""
         self._workspace.set_stage_enabled(key, enabled)
 
+    def observe_measurement_state(self, state: ControllerState) -> None:
+        """把 controller 状态折叠成阶段条状态；不改页头，也不切换页面。
+
+        这是 controller 与外壳之间唯一的阶段状态入口：完成/失败/停止由
+        :class:`~presentation.qt.workspace_state.WorkspaceRunState` 记住，写穿的只有
+        真正发生变化的阶段。非 ``ControllerState`` 的载荷静默忽略，信号分发不因
+        接线错误中断。
+        """
+        if not isinstance(state, ControllerState):
+            return
+        for key, stage_state in self._run_state.observe(state).items():
+            self._workspace.set_stage_state(key, stage_state)
+
+    def run_state(self) -> WorkspaceRunState:
+        """当前 run 的阶段状态模型；供窗口与测试读取，不转移所有权。"""
+        return self._run_state
+
     # ---- 会话模式与运行身份 ---------------------------------------------------
 
     def start_session(self, driver_enabled: bool | None) -> None:
@@ -122,11 +152,12 @@ class WorkspaceBinding:
 
         ``None`` 表示尚未选择测试模式：驱动映射页隐藏、02 阶段停用、徽标显示
         “未选择测试模式”。会话一开始就解除旧运行与页头的关联，之后
-        :meth:`sync_run_identity` 不会把上一轮运行重新挂回来。
+        :meth:`sync_run_identity` 不会把上一轮运行重新挂回来；阶段状态也一起清空。
         """
         self._identity_run_id = None
         self._apply_driver_mode(driver_enabled)
         self._workspace.set_run_identity(None, None)
+        self._sync_run_state(None)
 
     def bind_run_identity(
         self, run_id: str | None, driver_enabled: bool | None
@@ -141,17 +172,20 @@ class WorkspaceBinding:
         self.sync_run_identity(run_id)
 
     def sync_run_identity(self, run_id: str | None) -> None:
-        """只刷新页头运行身份，不改变模式、标签页或阶段条。
+        """刷新页头运行身份并处理 run 边界，不改变模式或标签页。
 
         只有仍与本次会话关联的 run 才显示；返回欢迎页后再进入配置流程，旧 run
-        不会被重新写回页头，也不会把它的模式带回徽标。
+        不会被重新写回页头，也不会把它的模式带回徽标。关联的 run 变化时清空上一轮
+        的完成/失败状态；同一 run 的普通刷新不动阶段条。
         """
         cleaned = _clean_run_id(run_id)
-        if cleaned is None or cleaned != self._identity_run_id:
+        associated = cleaned is not None and cleaned == self._identity_run_id
+        if not associated:
             self._workspace.set_run_identity(None, None)
-            return
-        label = mode_text(self._driver_mode) if self._driver_mode is not None else None
-        self._workspace.set_run_identity(cleaned, label)
+        else:
+            label = mode_text(self._driver_mode) if self._driver_mode is not None else None
+            self._workspace.set_run_identity(cleaned, label)
+        self._sync_run_state(cleaned if associated else None)
 
     def reset_identity(self) -> None:
         """回到未选择状态：清页头，并让徽标、驱动页与阶段条一起复位。"""
@@ -160,6 +194,14 @@ class WorkspaceBinding:
     def driver_mode(self) -> bool | None:
         """当前会话模式；``None`` 表示尚未选择测试模式。"""
         return self._driver_mode
+
+    def _sync_run_state(self, run_id: str | None) -> None:
+        """run 变化时把上一轮阶段状态清回未开始；同一 run 保持不变。"""
+        cleaned = _clean_run_id(run_id)
+        if self._run_state.run_id() == cleaned:
+            return
+        for key, stage_state in self._run_state.reset_run(cleaned).items():
+            self._workspace.set_stage_state(key, stage_state)
 
     def _apply_driver_mode(self, driver_enabled: bool | None) -> None:
         """把会话模式写穿到徽标、驱动映射标签页和阶段条。

@@ -25,6 +25,14 @@ from domain.run.models import RunStatus
 from infrastructure.filesystem.paths import PathService
 from infrastructure.persistence.run_repository import RunRepository
 from presentation.qt.application_coordinator import RunFlowState
+from presentation.qt.measurement_controller_contract import ControllerState
+from presentation.qt.measurement_stage import StageState
+from presentation.qt.measurement_state import (
+    MeasurementKind,
+    MeasurementResultReference,
+    MeasurementStatus,
+    MeasurementViewState,
+)
 from tests.integration.test_gui_two_phase_flow import _fully_valid_gui_config
 from tests.ui.test_gui_import import gui_dependencies_available
 
@@ -45,6 +53,36 @@ class _StaticReportLocation:
     def report_for_result(self, result_id):
         self.result_ids.append(result_id)
         return self.report
+
+
+def _measurement_state(kind: MeasurementKind, status: MeasurementStatus):
+    """构造 controller 真正会发出的状态快照，供真实窗口的信号接线使用。"""
+    base = MeasurementViewState(kind)
+    if status is MeasurementStatus.PREPARING:
+        view = base.prepare()
+    elif status is MeasurementStatus.RUNNING:
+        view = base.prepare().run()
+    elif status is MeasurementStatus.WAITING_FOR_CONTINUE:
+        view = base.prepare().run().wait_for_continue("等待继续")
+    elif status is MeasurementStatus.STOPPING:
+        view = base.prepare().run().stop("用户停止", stopping=True)
+    elif status is MeasurementStatus.COMPLETED:
+        view = base.prepare().run().finish(
+            MeasurementResultReference("result-id", kind, {"value": 1})
+        )
+    elif status is MeasurementStatus.FAILED:
+        view = base.prepare().run().fail("测量失败")
+    elif status is MeasurementStatus.CANCELLED:
+        view = base.prepare().run().stop("用户停止")
+    elif status is MeasurementStatus.EMERGENCY_STOPPED:
+        view = MeasurementViewState(
+            kind,
+            status=MeasurementStatus.EMERGENCY_STOPPED,
+            stop_reason="急停",
+        )
+    else:
+        raise AssertionError(f"未覆盖的状态: {status}")
+    return ControllerState(kind, status, view)
 
 
 def _loaded_amplifier_result() -> LoadedResultDto:
@@ -830,6 +868,158 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertFalse(
             window.measurement_workspace.configuration_btn.isEnabled()
         )
+
+    # ---- 步骤 8：controller 状态 → 阶段条 ------------------------------------
+
+    def _connected_window(self):
+        """完成一次真实“连接提交”，返回停在 01 线损页的窗口。"""
+        window = self._window()
+        window._enter_test_mode(False)
+        self._finalize_with_fake_worker(window)
+        window.on_instrument_controller_ready(_ConnectedPort())
+        window.on_instrument_connected()
+        return window
+
+    def _emit_measurement_state(self, window, kind, status):
+        """像真实 controller 一样推送状态快照，让窗口的信号接线自己折叠。"""
+        window.measurement_controller.signals.state_changed.emit(
+            _measurement_state(kind, status)
+        )
+        self.app.processEvents()
+
+    def test_running_measurement_marks_its_stage_active(self):
+        self._silence_dialogs()
+        window = self._connected_window()
+        rail = window.measurement_workspace.stage_rail()
+        current_page = window.tab_widget.currentWidget()
+
+        self._emit_measurement_state(
+            window, MeasurementKind.CABLE_LOSS, MeasurementStatus.PREPARING
+        )
+        self.assertIs(rail.state_for("cable_loss"), StageState.ACTIVE)
+
+        self._emit_measurement_state(
+            window, MeasurementKind.CABLE_LOSS, MeasurementStatus.RUNNING
+        )
+        self.assertIs(rail.state_for("cable_loss"), StageState.ACTIVE)
+        self.assertIs(
+            window.tab_widget.currentWidget(),
+            current_page,
+            "阶段状态变化不能顺带切页",
+        )
+
+    def test_completed_stage_is_kept_when_the_next_stage_starts(self):
+        self._silence_dialogs()
+        window = self._connected_window()
+        rail = window.measurement_workspace.stage_rail()
+
+        self._emit_measurement_state(
+            window, MeasurementKind.CABLE_LOSS, MeasurementStatus.COMPLETED
+        )
+        self._emit_measurement_state(
+            window, MeasurementKind.AMPLIFIER, MeasurementStatus.RUNNING
+        )
+
+        self.assertIs(rail.state_for("cable_loss"), StageState.COMPLETED)
+        self.assertIs(rail.state_for("amplifier"), StageState.ACTIVE)
+
+    def test_failure_and_stop_map_to_distinct_stage_states(self):
+        self._silence_dialogs()
+        window = self._connected_window()
+        rail = window.measurement_workspace.stage_rail()
+
+        self._emit_measurement_state(
+            window, MeasurementKind.CABLE_LOSS, MeasurementStatus.FAILED
+        )
+        self._emit_measurement_state(
+            window, MeasurementKind.AMPLIFIER, MeasurementStatus.CANCELLED
+        )
+        self._emit_measurement_state(
+            window,
+            MeasurementKind.DRIVER_MAPPING,
+            MeasurementStatus.EMERGENCY_STOPPED,
+        )
+
+        self.assertIs(rail.state_for("cable_loss"), StageState.FAILED)
+        self.assertIs(rail.state_for("amplifier"), StageState.STOPPED)
+        self.assertIs(
+            rail.state_for("driver_mapping"),
+            StageState.STOPPED,
+            "无驱放测试停用的阶段仍保留已停止运行状态，重新启用后不会丢",
+        )
+        self.assertIs(
+            rail.display_state_for("driver_mapping"),
+            StageState.DISABLED,
+            "停用显示仍由 enabled 派生，不是运行状态",
+        )
+
+    def test_stage_states_survive_page_switches(self):
+        self._silence_dialogs()
+        window = self._connected_window()
+        rail = window.measurement_workspace.stage_rail()
+        self._emit_measurement_state(
+            window, MeasurementKind.CABLE_LOSS, MeasurementStatus.COMPLETED
+        )
+
+        rail.stage_button("amplifier").click()
+        self.app.processEvents()
+        window.measurement_workspace.configuration_btn.click()
+        self.app.processEvents()
+
+        self.assertIs(window.tab_widget.currentWidget(), window.test_config_page)
+        self.assertIs(rail.state_for("cable_loss"), StageState.COMPLETED)
+        self.assertIs(rail.state_for("amplifier"), StageState.PENDING)
+
+    def test_a_new_run_resets_the_previous_stage_states(self):
+        """换 run 由步骤 6 的身份同步入口驱动：新 run 的第一件事是清空阶段状态。"""
+        self._silence_dialogs()
+        window = self._connected_window()
+        first_run_id = window.coordinator.current_run_id()
+        rail = window.measurement_workspace.stage_rail()
+        self._emit_measurement_state(
+            window, MeasurementKind.CABLE_LOSS, MeasurementStatus.COMPLETED
+        )
+        self.assertIs(rail.state_for("cable_loss"), StageState.COMPLETED)
+
+        # 修改频点并保存会产生第二份后台上下文；再次最终化提交的是新 run。
+        changed = copy.deepcopy(window.coordinator.config)
+        changed["test_frequencies"] = [2.5]
+        window.test_config_page.apply_config(changed)
+        window.power_page.apply_config(changed)
+        window.save_config()
+        newer = window.coordinator.background_run
+        self.assertNotEqual(newer.run_id, first_run_id)
+
+        window._finalize_run()
+        window.on_instrument_controller_ready(_ConnectedPort())
+        window.on_instrument_connected()
+
+        self.assertEqual(window.coordinator.current_run_id(), newer.run_id)
+        run_state = window.workspace_binding.run_state()
+        self.assertEqual(run_state.run_id(), newer.run_id)
+        self.assertIs(
+            rail.state_for("cable_loss"),
+            StageState.PENDING,
+            "上一轮 run 的完成态不能带进新 run",
+        )
+        self.assertEqual(
+            dict(run_state.snapshot()),
+            {key: StageState.PENDING for key in run_state.stage_keys()},
+        )
+
+    def test_returning_to_welcome_clears_stage_states(self):
+        self._silence_dialogs()
+        window = self._connected_window()
+        rail = window.measurement_workspace.stage_rail()
+        self._emit_measurement_state(
+            window, MeasurementKind.CABLE_LOSS, MeasurementStatus.COMPLETED
+        )
+
+        window._return_to_welcome()
+
+        self.assertIs(window.view_stack.currentWidget(), window.welcome_page)
+        self.assertIsNone(window.workspace_binding.run_state().run_id())
+        self.assertIs(rail.state_for("cable_loss"), StageState.PENDING)
 
     def test_connected_run_shows_its_identity_in_the_header(self):
         """步骤 6：连接成功后页头显示本次 run 与测试模式，而不只是徽标。"""

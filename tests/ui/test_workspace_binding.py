@@ -16,20 +16,66 @@
 
 import os
 import unittest
+from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QCoreApplication, QEvent  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel, QTabWidget, QWidget  # noqa: E402
 
+from presentation.qt.measurement_controller_contract import (  # noqa: E402
+    ControllerState,
+)
 from presentation.qt.measurement_stage import (  # noqa: E402
     MEASUREMENT_STAGES,
     StageState,
+)
+from presentation.qt.measurement_state import (  # noqa: E402
+    MeasurementKind,
+    MeasurementResultReference,
+    MeasurementStatus,
+    MeasurementViewState,
 )
 from presentation.qt.measurement_workspace import (  # noqa: E402
     MeasurementWorkspace,
 )
 from presentation.qt.workspace_binding import WorkspaceBinding  # noqa: E402
+
+
+class _FakeSignal:
+    """最小 Qt 信号替身：只记录槽并把载荷同步分发出去。"""
+
+    def __init__(self):
+        self._slots = []
+
+    def connect(self, slot):
+        self._slots.append(slot)
+
+    def emit(self, value):
+        for slot in tuple(self._slots):
+            slot(value)
+
+
+def _fake_controller():
+    return SimpleNamespace(signals=SimpleNamespace(state_changed=_FakeSignal()))
+
+
+def _state(kind, status):
+    """构造 controller 会发出的状态快照，供阶段状态接线使用。"""
+    running = MeasurementViewState(kind).prepare().run()
+    if status is MeasurementStatus.RUNNING:
+        view = running
+    elif status is MeasurementStatus.COMPLETED:
+        view = running.finish(
+            MeasurementResultReference("result-id", kind, {"value": 1})
+        )
+    elif status is MeasurementStatus.FAILED:
+        view = running.fail("测量失败")
+    elif status is MeasurementStatus.CANCELLED:
+        view = running.stop("用户停止")
+    else:
+        raise AssertionError(f"未覆盖的状态: {status}")
+    return ControllerState(kind, status, view)
 
 
 def _destroy(widget):
@@ -217,6 +263,104 @@ class WorkspaceBindingTests(unittest.TestCase):
         self.assertIs(
             rail.display_state_for("driver_mapping"), StageState.PENDING
         )
+
+    # ---- 阶段运行状态 -------------------------------------------------------
+
+    def _state_binding(self):
+        controller = _fake_controller()
+        binding = WorkspaceBinding(
+            self.workspace, self.tabs, self.pages, controller=controller
+        )
+        return controller, binding
+
+    def test_controller_states_are_written_to_the_rail(self):
+        controller, binding = self._state_binding()
+        rail = self.workspace.stage_rail()
+
+        controller.signals.state_changed.emit(
+            _state(MeasurementKind.CABLE_LOSS, MeasurementStatus.RUNNING)
+        )
+        self.assertIs(rail.state_for("cable_loss"), StageState.ACTIVE)
+
+        controller.signals.state_changed.emit(
+            _state(MeasurementKind.CABLE_LOSS, MeasurementStatus.COMPLETED)
+        )
+        self.assertIs(rail.state_for("cable_loss"), StageState.COMPLETED)
+        self.assertIsNone(
+            self.workspace.current_stage(),
+            "阶段状态变化不改页头或导航",
+        )
+        self.assertEqual(binding.run_state().run_id(), None)
+
+    def test_non_controller_payloads_are_ignored(self):
+        controller, _binding = self._state_binding()
+        rail = self.workspace.stage_rail()
+
+        controller.signals.state_changed.emit(object())
+        controller.signals.state_changed.emit(None)
+
+        self.assertIs(rail.state_for("cable_loss"), StageState.PENDING)
+
+    def test_new_run_clears_the_previous_stage_states(self):
+        controller, binding = self._state_binding()
+        rail = self.workspace.stage_rail()
+        binding.bind_run_identity("run-1", True)
+        controller.signals.state_changed.emit(
+            _state(MeasurementKind.CABLE_LOSS, MeasurementStatus.COMPLETED)
+        )
+        self.assertIs(rail.state_for("cable_loss"), StageState.COMPLETED)
+
+        binding.bind_run_identity("run-2", True)
+
+        self.assertEqual(binding.run_state().run_id(), "run-2")
+        self.assertIs(
+            rail.state_for("cable_loss"),
+            StageState.PENDING,
+            "上一轮 run 的完成态不能带进新 run",
+        )
+
+    def test_refreshing_the_same_run_keeps_terminal_states(self):
+        controller, binding = self._state_binding()
+        rail = self.workspace.stage_rail()
+        binding.bind_run_identity("run-1", True)
+        controller.signals.state_changed.emit(
+            _state(MeasurementKind.AMPLIFIER, MeasurementStatus.FAILED)
+        )
+
+        binding.sync_run_identity("run-1")
+
+        self.assertIs(rail.state_for("amplifier"), StageState.FAILED)
+
+    def test_a_stale_run_identity_clears_the_stage_states(self):
+        controller, binding = self._state_binding()
+        rail = self.workspace.stage_rail()
+        binding.bind_run_identity("run-1", True)
+        controller.signals.state_changed.emit(
+            _state(MeasurementKind.CABLE_LOSS, MeasurementStatus.CANCELLED)
+        )
+
+        binding.sync_run_identity("run-old")
+
+        self.assertEqual(self.workspace.run_identity(), (None, None))
+        self.assertIsNone(binding.run_state().run_id())
+        self.assertIs(rail.state_for("cable_loss"), StageState.PENDING)
+        self.assertTrue(
+            self._driver_tab_visible(),
+            "阶段状态清空不能改变会话模式或驱动映射标签页",
+        )
+
+    def test_starting_a_session_clears_the_stage_states(self):
+        controller, binding = self._state_binding()
+        rail = self.workspace.stage_rail()
+        binding.bind_run_identity("run-1", True)
+        controller.signals.state_changed.emit(
+            _state(MeasurementKind.CABLE_LOSS, MeasurementStatus.COMPLETED)
+        )
+
+        binding.start_session(False)
+
+        self.assertIsNone(binding.run_state().run_id())
+        self.assertIs(rail.state_for("cable_loss"), StageState.PENDING)
 
     # ---- 会话模式与运行身份 -------------------------------------------------
 

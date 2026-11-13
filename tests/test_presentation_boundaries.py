@@ -47,6 +47,7 @@ QT_FREE_PRESENTATION_MODULES = (
     "pages.py",
     "measurement_state.py",
     "measurement_stage.py",
+    "workspace_state.py",
 )
 QT_BINDING_ROOTS = frozenset({"PySide6", "PyQt5", "PyQt6", "PySide2"})
 PAGE_REGISTRY_MODULE = "presentation.qt.pages"

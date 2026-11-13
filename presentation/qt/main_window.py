@@ -161,7 +161,7 @@ class MainWindow(QMainWindow):
             self.tab_widget,
             self.pages,
             utility_subtitles={"test_configuration": "参数、频点与连接"},
-            mode_badge=self.mode_badge,
+            mode_badge=self.mode_badge, controller=self.measurement_controller,
         )
         self.measurement_workspace.stage_selected.connect(
             self.workspace_binding.navigate

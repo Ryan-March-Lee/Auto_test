@@ -1,36 +1,38 @@
-"""测量工作台外壳：常驻阶段条 + 页头 + 单个内容槽。
+"""测量工作台外壳：阶段条 + 状态簇共用顶栏，下面是单个内容槽。
 
-测量区的连续感来自“一个始终不动的框架”：阶段条和页头在切页时保持原位置，
+测量区的连续感来自“一个始终不动的框架”：顶栏和进度发丝线在切页时保持原位置，
 只有内容槽里的内容在换。本模块只负责这块框架的组装与展示，不拥有页面栈，也
 不导入任何页面类型：
 
 - 内容由窗口通过 :meth:`MeasurementWorkspace.set_content` 注入，第一步继续由
   窗口里的 ``QTabWidget`` 承载页面；外壳不调用页面的 ``on_activated`` /
   ``on_deactivated``，也不决定页面生命周期。
-- 页头只展示调用方传入的文本（run 标识、模式文本与阶段摘要），不读配置、不读
-  运行服务，避免在表现层形成第二个业务真相源。阶段编号与标题只由阶段条表达，
-  页头不再重复三段文字（eyebrow / 标题 / 副标题）。
+- 阶段条与状态簇共用一条 52px 顶栏：左侧是 01–04 阶段，右侧是运行标识、模式徽标
+  与“配置”入口。状态簇只展示调用方传入的文本，不读配置、不读运行服务，避免在
+  表现层形成第二个业务真相源。阶段编号与标题只由阶段条表达。
 - 阶段条仍是受控视图：点击阶段只经 :attr:`MeasurementWorkspace.stage_selected`
   发出导航请求，窗口切页完成后调用 :meth:`set_current_stage` 同步。
 - ``show_utility`` 用于不属于 01–04 阶段的工具页（例如“测试配置”）：它清空当前
-  阶段（阶段条不点亮任何一项），页头也不显示工具页标题；此时右侧“配置”动作
+  阶段（阶段条不点亮任何一项），顶栏也不显示工具页标题；此时右侧“配置”动作
   没有去处，随之禁用，离开工具页后恢复。
 - 类名不带 ``Page`` 后缀，避免被页面注册门禁误登记为页面。
 - 阶段切换的进入方向由本模块按阶段顺序回答
   （:meth:`MeasurementWorkspace.stage_reveal_direction`），过渡也由本模块在内容槽里
   播放（:meth:`MeasurementWorkspace.reveal_current_page`）：只动标签宿主当前显示的
-  那一页，阶段条、页头与外壳本身不位移。窗口不参与动画细节。
-- 页头下方的 2px 发丝线（:class:`MeasurementProgressHairline`）只确认“测量在推进”：
+  那一页，顶栏、发丝线与外壳本身不位移。窗口不参与动画细节。
+- 阶段条下方的 2px 发丝线（:class:`MeasurementProgressHairline`）只确认“测量在推进”：
   数值来自已有的 ``signals.progress``，有活动测量时显示、空闲时保持空白；它固定占
   2px，不推动内容区，也不替代状态面板里的详细进度条。
 - 阶段摘要（:meth:`MeasurementWorkspace.set_stage_summary`）由页面从已经显示的数据
-  里取好再交给外壳：阶段条显示一句话，页头右侧显示同一份 KPI 的紧凑文本。外壳不
-  统计频点、不读结果 DTO，也不在工具页上显示摘要。
+  里取好再交给外壳：阶段条显示 ``headline`` 一句话。页头不再另存一份 KPI 文本，
+  避免同一份摘要出现两个展示位。外壳不统计频点、不读结果 DTO，也不在工具页上
+  显示摘要。
 
 设计约束（见 ``docs/测量工作台重构计划.md`` 步骤 4）：
 
 - 外壳不拥有内容栈、不导入页面类、不调用页面生命周期；
-- 页头只做展示，``run_id`` 与模式文本由窗口传入；无运行时显示“未连接”；
+- 状态簇只做展示，``run_id`` 与模式文本由窗口传入；无运行时显示“未连接”；
+  模式文本只由徽标显示，运行标识不再重复拼一遍模式；
 - 内容槽只接受一个 widget；替换时从布局移除旧 widget，**不销毁**它，页面所有权
   仍归窗口/标签页；
 - 颜色与字号只取 :mod:`presentation.qt.theme` 的既有语义角色，不在本模块写
@@ -38,9 +40,9 @@
 
 阶段集合由构造参数决定：外壳接受 ``stages`` 时，当前阶段的查找也只在这个集合里
 进行，不再回落到全局 :data:`~presentation.qt.measurement_stage.MEASUREMENT_STAGES`，
-否则自定义阶段会出现“画得出、同步不了”的半成品状态。内容槽与右侧状态区只接受
-调用方自己的控件；外壳的结构控件（阶段条、页头、进度发丝线、内容宿主及其子控件）
-不能被搬进自己里面，否则会拆掉常驻框架。
+否则自定义阶段会出现“画得出、同步不了”的半成品状态。内容槽与状态簇只接受
+调用方自己的控件；外壳的结构控件（阶段条、顶栏、状态簇、进度发丝线、内容宿主及
+其子控件）不能被搬进自己里面，否则会拆掉常驻框架。
 """
 
 from __future__ import annotations
@@ -49,7 +51,7 @@ import math
 from types import MappingProxyType
 from typing import Mapping
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QFrame,
@@ -77,20 +79,24 @@ __all__ = [
     "mode_text",
 ]
 
-#: 没有 run 标识时页头显示的固定文案；步骤 6 只传入文本，不在外壳判断连接状态。
+#: 没有 run 标识时顶栏显示的固定文案；步骤 6 只传入文本，不在外壳判断连接状态。
 _UNCONNECTED_RUN_TEXT = "未连接"
 
-#: 驱动模式文案：页头与测试模式徽标共用同一份来源，避免三处字面量各自漂移。
+#: 驱动模式文案：状态簇与测试模式徽标共用同一份来源，避免三处字面量各自漂移。
 _MODE_TEXT_DRIVER = "有驱放测试"
 _MODE_TEXT_NO_DRIVER = "无驱放测试"
 _MODE_TEXT_UNSET = "未选择测试模式"
 
-_HEADER_MARGINS = (16, 12, 16, 8)
+#: 顶栏：阶段条与状态簇共用一行。左右 16px 与此前页头的外边距保持一致；阶段条
+#: 固定 52px 高，状态簇垂直居中，整条顶栏不会因为按钮更高而变高。
+_TOP_BAR_MARGINS = (16, 0, 16, 0)
+#: 阶段条与状态簇之间的细分隔线高度。
+_TOP_BAR_DIVIDER_HEIGHT = 22
 _CONTENT_MARGINS = (16, 0, 12, 12)
 
 
 def mode_text(driver_enabled: bool | None) -> str:
-    """把驱动模式折成页头与徽标共用的唯一文案。
+    """把驱动模式折成状态簇与徽标共用的唯一文案。
 
     ``None`` 表示还没有选择测试模式（欢迎页或刚返回欢迎页）；``True`` / ``False``
     分别表示有驱放测试与无驱放测试。这是纯展示格式，不读取配置，也不决定页面状态。
@@ -112,10 +118,59 @@ def _clean_text(value: str | None) -> str | None:
     return cleaned or None
 
 
-class MeasurementProgressHairline(QWidget):
-    """页头下方的 2px 进度发丝线：只确认“测量在走”，不承担详细进度。
+class _ElidedLabel(QLabel):
+    """单行状态文本：按可用宽度中间省略，tooltip 保留完整值。
 
-    它是阶段条与页头之间的常驻一条线，高度固定（不显示时也占位，避免测量开始/
+    ``text()`` 仍返回当前显示文本，``full_text()`` 返回完整值；布局按完整文本的
+    宽度申请空间，窗口不够宽时由布局压缩再到 ``resizeEvent`` 里省略。
+    """
+
+    def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
+        super().__init__("", parent)
+        self._full_text = ""
+        self.setMinimumWidth(0)
+        self.setText(text)
+
+    def setText(self, text: str) -> None:  # noqa: N802 - Qt 覆盖方法
+        self._full_text = text
+        self._apply_elision(allow_growth=True)
+
+    def full_text(self) -> str:
+        return self._full_text
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt 覆盖方法
+        metrics = self.fontMetrics()
+        width = metrics.horizontalAdvance(self._full_text)
+        return QSize(width + 2, metrics.height())
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt 覆盖方法
+        super().resizeEvent(event)
+        self._apply_elision()
+
+    def _apply_elision(self, *, allow_growth: bool = False) -> None:
+        width = self.contentsRect().width()
+        if allow_growth:
+            # 文本刚写入时布局还没走到新宽度：先按 sizeHint 展示全文，避免在旧宽度
+            # 上提前省略。真正的窗口宽度由随后的 resizeEvent 收敛。
+            width = max(width, self.sizeHint().width())
+        if width <= 0:
+            QLabel.setText(self, self._full_text)
+            self.setToolTip("")
+            return
+        shown = self.fontMetrics().elidedText(
+            self._full_text, Qt.TextElideMode.ElideMiddle, width
+        )
+        QLabel.setText(self, shown)
+        if shown != self._full_text:
+            self.setToolTip(self._full_text)
+        else:
+            self.setToolTip("")
+
+
+class MeasurementProgressHairline(QWidget):
+    """顶栏下方的 2px 进度发丝线：只确认“测量在走”，不承担详细进度。
+
+    它是阶段条与内容区之间的常驻一条线，高度固定（不显示时也占位，避免测量开始/
     结束时内容区上下跳 2px）。只在有活动测量时绘制轨道与进度，空闲时整块保持空白；
     数值来自已有的 ``signals.progress``，不新增数值来源，也不替代状态面板里的进度条。
 
@@ -202,12 +257,13 @@ class MeasurementProgressHairline(QWidget):
 
 
 class MeasurementWorkspace(QWidget):
-    """测量工作台的常驻外壳：阶段条、页头、进度发丝线与内容槽。
+    """测量工作台的常驻外壳：顶栏、进度发丝线与内容槽。
 
-    调用方只负责写入“当前在哪、各阶段什么状态、页头显示什么、测量是否在走、走到
-    多少”，外壳不读配置、不读控制器、也不切换页面。点击阶段只发出
-    :attr:`stage_selected`；右侧“配置”动作只发出 :attr:`configuration_requested`，
-    由窗口决定导航到哪一页。
+    顶栏左侧是阶段条，右侧是运行标识、模式徽标与“配置”入口，两者共用同一条
+    52px 行。调用方只负责写入“当前在哪、各阶段什么状态、运行标识是什么、测量
+    是否在走、走到多少”，外壳不读配置、不读控制器、也不切换页面。点击阶段只发出
+    :attr:`stage_selected`；状态簇的“配置”动作只发出
+    :attr:`configuration_requested`，由窗口决定导航到哪一页。
     """
 
     #: 用户请求进入某个测量阶段；载荷是阶段 key，窗口负责真正切页。
@@ -224,12 +280,12 @@ class MeasurementWorkspace(QWidget):
         super().__init__(parent)
         self._stages = tuple(stages)
         # 当前阶段的查找表与阶段条同源（同一份 ``stages``），不回落全局默认阶段：
-        # 自定义阶段必须既能画出来，也能同步页头。
+        # 自定义阶段必须既能画出来，也能同步顶栏。
         self._stages_by_key: Mapping[str, StageDescriptor] = MappingProxyType(
             {stage.key: stage for stage in self._stages}
         )
         self._current_stage_key: str | None = None
-        # 上一次同步到的阶段：只用于决定本次进入方向，不参与页头或阶段条。
+        # 上一次同步到的阶段：只用于决定本次进入方向，不参与顶栏文本或阶段条。
         self._previous_stage_key: str | None = None
         self._page_reveal_handle: RevealHandle | None = None
         self._utility_view = False
@@ -238,7 +294,7 @@ class MeasurementWorkspace(QWidget):
         self._run_id: str | None = None
         self._mode_text: str | None = None
         self._animations_enabled = True
-        # 阶段摘要按 key 保存：切回某个阶段时页头能重新显示它，而不用窗口再推一次。
+        # 阶段摘要按 key 保存：切回某个阶段时阶段条能重新显示它，而不用窗口再推一次。
         self._stage_summaries: dict[str, StageSummary] = {}
 
         self._build_ui()
@@ -247,40 +303,59 @@ class MeasurementWorkspace(QWidget):
     # ---- 构造 ---------------------------------------------------------------
 
     def _build_ui(self) -> None:
-        """自上而下：阶段条 → 页头 → 进度发丝线 → 内容槽；四段都是常驻框架。"""
+        """自上而下：顶栏（阶段条 + 状态簇）→ 进度发丝线 → 内容槽。"""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        self.rail = MeasurementStageRail(self._stages, self)
-        self.rail.setObjectName("measurementWorkspaceRail")
-        self.rail.stage_selected.connect(self._on_rail_stage_selected)
-        layout.addWidget(self.rail)
-
-        layout.addWidget(self._build_header())
+        layout.addWidget(self._build_top_bar())
         self.progress_hairline = MeasurementProgressHairline(self)
         layout.addWidget(self.progress_hairline)
         layout.addWidget(self._build_content_host(), 1)
 
-    def _build_header(self) -> QWidget:
-        """页头：右侧运行标识、阶段摘要与配置入口。
+    def _build_top_bar(self) -> QWidget:
+        """阶段条与状态簇共用的一条顶栏，高度只由阶段条决定。"""
+        self.top_bar = QWidget(self)
+        self.top_bar.setObjectName("measurementWorkspaceTopBar")
+        top_layout = QHBoxLayout(self.top_bar)
+        top_layout.setContentsMargins(*_TOP_BAR_MARGINS)
+        top_layout.setSpacing(12)
 
-        阶段编号、标题与副标题由阶段条表达，页头不再重复三段文字；页头高度只由
-        右侧这一行内容决定。
+        self.rail = MeasurementStageRail(self._stages, self.top_bar)
+        self.rail.setObjectName("measurementWorkspaceRail")
+        self.rail.stage_selected.connect(self._on_rail_stage_selected)
+        top_layout.addWidget(self.rail, 1)
+
+        self.top_bar_divider = QFrame(self.top_bar)
+        self.top_bar_divider.setObjectName("measurementWorkspaceTopBarDivider")
+        self.top_bar_divider.setFixedSize(1, _TOP_BAR_DIVIDER_HEIGHT)
+        top_layout.addWidget(
+            self.top_bar_divider,
+            0,
+            Qt.AlignmentFlag.AlignVCenter,
+        )
+
+        self.header = self._build_status_cluster()
+        top_layout.addWidget(
+            self.header,
+            0,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+        )
+        return self.top_bar
+
+    def _build_status_cluster(self) -> QWidget:
+        """顶栏右端的状态簇：运行标识、外部状态控件与配置入口。
+
+        阶段编号、标题与副标题由阶段条表达，状态簇只保留会话级信息；模式文本由
+        窗口写入徽标（:meth:`add_right_widget`），运行标识不再重复拼一遍模式。
         """
-        self.header = QFrame(self)
-        self.header.setObjectName("measurementWorkspaceHeader")
-        header_layout = QHBoxLayout(self.header)
-        header_layout.setContentsMargins(*_HEADER_MARGINS)
-        header_layout.setSpacing(16)
-
-        right_panel = QWidget(self.header)
-        right_panel.setObjectName("measurementWorkspaceStatusArea")
-        self._right_layout = QHBoxLayout(right_panel)
+        self.header = QFrame(self.top_bar)
+        self.header.setObjectName("measurementWorkspaceStatus")
+        self._right_layout = QHBoxLayout(self.header)
         self._right_layout.setContentsMargins(0, 0, 0, 0)
         self._right_layout.setSpacing(8)
 
-        self.run_identity_label = QLabel("", right_panel)
+        self.run_identity_label = _ElidedLabel("", self.header)
         self.run_identity_label.setObjectName("measurementWorkspaceRunIdentity")
         self.run_identity_label.setProperty("role", "hint")
         self.run_identity_label.setTextFormat(Qt.TextFormat.PlainText)
@@ -289,18 +364,7 @@ class MeasurementWorkspace(QWidget):
         )
         self._right_layout.addWidget(self.run_identity_label)
 
-        # 当前阶段的 KPI 紧凑文本：只在有数据时出现，占据页头已有的一行，不新增行高。
-        self.summary_label = QLabel("", right_panel)
-        self.summary_label.setObjectName("measurementWorkspaceSummary")
-        self.summary_label.setProperty("role", "hint")
-        self.summary_label.setTextFormat(Qt.TextFormat.PlainText)
-        self.summary_label.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
-        self.summary_label.hide()
-        self._right_layout.addWidget(self.summary_label)
-
-        self.configuration_btn = QPushButton("配置", right_panel)
+        self.configuration_btn = QPushButton("配置", self.header)
         self.configuration_btn.setObjectName("measurementWorkspaceConfigButton")
         self.configuration_btn.setAccessibleName("打开测试配置")
         self.configuration_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -308,14 +372,9 @@ class MeasurementWorkspace(QWidget):
         self.configuration_btn.clicked.connect(
             self._emit_configuration_requested
         )
-        # “配置”始终是右侧状态区的最后一个动作；add_right_widget 插在它前面。
+        # “配置”始终是状态簇的最后一个动作；add_right_widget 插在它前面。
         self._right_layout.addWidget(self.configuration_btn)
 
-        header_layout.addWidget(
-            right_panel,
-            0,
-            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-        )
         return self.header
 
     def _build_content_host(self) -> QWidget:
@@ -338,14 +397,14 @@ class MeasurementWorkspace(QWidget):
         return self._current_stage_key
 
     def is_utility_view(self) -> bool:
-        """页头当前是否显示工具页（不点亮任何阶段）。"""
+        """顶栏当前是否显示工具页（不点亮任何阶段）。"""
         return self._utility_view
 
     def has_stage(self, key: str) -> bool:
         """``key`` 是否属于构造时接收的阶段集合。
 
         窗口的 :class:`~presentation.qt.workspace_binding.WorkspaceBinding` 用它分流
-        页头：阶段页走 :meth:`set_current_stage`，其余已登记页面（例如测试配置）走
+        顶栏：阶段页走 :meth:`set_current_stage`，其余已登记页面（例如测试配置）走
         :meth:`show_utility`。非字符串抛 ``TypeError``；未知 key 只返回 ``False``，
         不在查询里抛异常。
         """
@@ -358,11 +417,11 @@ class MeasurementWorkspace(QWidget):
         return self._content
 
     def right_widgets(self) -> tuple[QWidget, ...]:
-        """右侧状态区里由调用方添加的 widget，按添加顺序返回。"""
+        """顶栏状态簇里由调用方添加的 widget，按添加顺序返回。"""
         return tuple(self._right_widgets)
 
     def run_identity(self) -> tuple[str | None, str | None]:
-        """页头展示的 ``(run_id, mode_text)``；未设置的部分为 ``None``。"""
+        """顶栏展示的 ``(run_id, mode_text)``；未设置的部分为 ``None``。"""
         return self._run_id, self._mode_text
 
     def stage_summary(self, key: str) -> StageSummary | None:
@@ -371,16 +430,12 @@ class MeasurementWorkspace(QWidget):
             raise TypeError("阶段 key 必须是字符串")
         return self._stage_summaries.get(key)
 
-    def summary_text(self) -> str:
-        """页头右侧当前显示的摘要文本；没有数据时为空字符串。"""
-        return self.summary_label.text()
-
     def progress_value(self) -> int:
-        """页头发丝线的当前进度（0–100）；没有活动测量时为 0。"""
+        """顶栏发丝线的当前进度（0–100）；没有活动测量时为 0。"""
         return self.progress_hairline.value()
 
     def progress_active(self) -> bool:
-        """页头发丝线是否显示（有活动测量）。"""
+        """顶栏发丝线是否显示（有活动测量）。"""
         return self.progress_hairline.is_active()
 
     def animations_enabled(self) -> bool:
@@ -463,13 +518,13 @@ class MeasurementWorkspace(QWidget):
         if handle is not None:
             handle.cancel()
 
-    # ---- 写入：阶段与页头 ---------------------------------------------------
+    # ---- 写入：阶段与状态簇 -------------------------------------------------
 
     def set_current_stage(self, key: str | None) -> None:
-        """设置当前阶段并同步页头摘要；``None`` 表示没有当前阶段。
+        """设置当前阶段；``None`` 表示没有当前阶段。
 
         阶段条是受控视图：这里由窗口在真正切页后调用。key 必须是构造时传入的阶段
-        集合里的 key；未知 key 抛 ``KeyError``，且不会改动任何页头文本。
+        集合里的 key；未知 key 抛 ``KeyError``，且不会改动顶栏任何文本。
         """
         if key is None:
             self._enter_no_stage_view()
@@ -485,27 +540,26 @@ class MeasurementWorkspace(QWidget):
         self._current_stage_key = descriptor.key
         self._utility_view = False
         self.configuration_btn.setEnabled(True)
-        self._apply_header_summary(self._stage_summaries.get(descriptor.key))
 
     def show_utility(self) -> None:
         """显示一个不属于 01–04 阶段的工具页（例如“测试配置”）。
 
-        阶段条不点亮任何一项；页头不显示工具页标题与副标题，只保留运行身份、
-        摘要（工具页不显示）与“配置”动作。工具页的说明由页面内容自己承担。
+        阶段条不点亮任何一项；状态簇不显示工具页标题，只保留运行标识与“配置”
+        动作。工具页的说明由页面内容自己承担。
         """
         self.rail.set_current(None)
         self._current_stage_key = None
         self._utility_view = True
         # 已经站在工具页上时“配置”没有去处：按钮保留位置但不可用，离开后恢复。
         self.configuration_btn.setEnabled(False)
-        self._apply_header_summary(None)
 
     def set_run_identity(
         self, run_id: str | None, mode_label: str | None
     ) -> None:
-        """写入页头展示的 run 标识与模式文本；只展示，不判断连接状态。
+        """写入状态簇展示的 run 标识与模式文本；只展示，不判断连接状态。
 
-        ``run_id`` 为空时显示“未连接”；模式文本为空时只显示 run 部分。
+        ``run_id`` 为空时显示“未连接”。模式文本只由徽标展示，运行标识不再重复
+        拼一遍；文本超出可见宽度时中间省略，完整值放进 tooltip。
         """
         self._run_id = _clean_text(run_id)
         self._mode_text = _clean_text(mode_label)
@@ -515,30 +569,14 @@ class MeasurementWorkspace(QWidget):
         # 没有运行标识时只写“未连接”；不能拼成“本次运行 未连接”这类自相矛盾的文案。
         if self._run_id is None:
             return _UNCONNECTED_RUN_TEXT
-        if self._mode_text:
-            return f"本次运行 {self._run_id} · {self._mode_text}"
         return f"本次运行 {self._run_id}"
 
-    def _apply_header_summary(self, summary: StageSummary | None) -> None:
-        """把阶段摘要折成页头右侧的一行紧凑文本；空态和工具页不显示。"""
-        if summary is None or not summary.has_data or not summary.metrics:
-            self.summary_label.clear()
-            self.summary_label.hide()
-            return
-        self.summary_label.setText(
-            " · ".join(
-                f"{metric.label} {metric.value}" for metric in summary.metrics
-            )
-        )
-        self.summary_label.show()
-
     def _enter_no_stage_view(self) -> None:
-        """没有当前阶段：阶段条收起指示块，页头回到空的工作区状态。"""
+        """没有当前阶段：阶段条收起指示块，状态簇停在空的工作区状态。"""
         self.rail.set_current(None)
         self._current_stage_key = None
         self._utility_view = False
         self.configuration_btn.setEnabled(False)
-        self._apply_header_summary(None)
 
     # ---- 写入：阶段状态与动效 -------------------------------------------------
 
@@ -548,8 +586,8 @@ class MeasurementWorkspace(QWidget):
         """写入一个阶段的摘要；``None`` 清空该阶段的摘要。
 
         摘要由页面从已经显示的数据里取好（见 :mod:`presentation.qt.stage_summary`），
-        外壳只把它放到阶段条与页头：阶段条显示 ``headline``，页头右侧显示同一份 KPI 的
-        紧凑文本；工具页与空态不显示页头摘要。key 必须是构造时接收的阶段集合里的 key。
+        外壳只把它放到阶段条：``headline`` 是顶部唯一展示位，不再另存一份 KPI 文本。
+        key 必须是构造时接收的阶段集合里的 key。
         """
         if not isinstance(key, str):
             raise TypeError("阶段 key 必须是字符串")
@@ -558,15 +596,11 @@ class MeasurementWorkspace(QWidget):
         if summary is None:
             self._stage_summaries.pop(key, None)
             self.rail.set_summary(key, "")
-            if self._current_stage_key == key:
-                self._apply_header_summary(None)
             return
         if not isinstance(summary, StageSummary):
             raise TypeError("阶段摘要必须是 StageSummary 或 None")
         self._stage_summaries[key] = summary
         self.rail.set_summary(key, summary.headline)
-        if self._current_stage_key == key:
-            self._apply_header_summary(summary)
 
     def set_stage_state(self, key: str, state: StageState | str) -> None:
         """更新一个阶段的运行状态；只接受五个运行状态，``DISABLED`` 由启用状态派生。"""
@@ -577,7 +611,7 @@ class MeasurementWorkspace(QWidget):
         self.rail.set_stage_enabled(key, enabled)
 
     def set_progress(self, value: int | float) -> None:
-        """写入页头发丝线的进度；数值来自已有的 ``signals.progress``。"""
+        """写入顶栏发丝线的进度；数值来自已有的 ``signals.progress``。"""
         self.progress_hairline.set_value(value)
 
     def set_measurement_active(self, active: bool) -> None:
@@ -597,11 +631,12 @@ class MeasurementWorkspace(QWidget):
         if not enabled:
             self._cancel_page_reveal()
 
-    # ---- 写入：内容与右侧状态区 -----------------------------------------------
+    # ---- 写入：内容与状态簇 ---------------------------------------------------
 
     def _structural_widgets(self) -> tuple[QWidget, ...]:
-        """常驻框架自己的控件：它们不能被搬进内容槽或右侧状态区。"""
+        """常驻框架自己的控件：它们不能被搬进内容槽或状态簇。"""
         return (
+            self.top_bar,
             self.rail,
             self.header,
             self.progress_hairline,
@@ -612,7 +647,7 @@ class MeasurementWorkspace(QWidget):
         """拒绝把外壳自己、它的结构控件（含子控件）或它的祖先交给外壳摆放。
 
         ``set_content`` / ``add_right_widget`` 只负责摆放调用方的控件；把常驻框架
-        的一部分重新挂进去会拆掉阶段条或页头，属于调用错误而不是显示选择。
+        的一部分重新挂进去会拆掉阶段条或状态簇，属于调用错误而不是显示选择。
         """
         if widget is self or widget.isAncestorOf(self):
             raise ValueError(f"{usage}不能是工作台本身或它的祖先")
@@ -647,7 +682,7 @@ class MeasurementWorkspace(QWidget):
             widget.show()
 
     def add_right_widget(self, widget: QWidget) -> None:
-        """把一个状态 widget 追加到页头右侧；“配置”动作保持在最右端。
+        """把一个状态 widget 追加到顶栏状态簇；“配置”动作保持在最右端。
 
         重复添加同一个 widget 是幂等的；widget 原来属于别的父控件时由 Qt 重新
         挂接，调用方仍持有它，外壳不销毁。

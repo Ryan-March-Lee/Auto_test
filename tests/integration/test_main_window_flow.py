@@ -854,13 +854,23 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertEqual(
             workspace.stage_rail().summary_for("cable_loss"), "2 频点"
         )
-        self.assertIn("频点 2", workspace.summary_text())
+        summary = workspace.stage_summary("cable_loss")
+        self.assertIsNotNone(summary)
+        self.assertIn(
+            ("频点", "2"),
+            [(metric.label, metric.value) for metric in summary.metrics],
+        )
 
-        # 选中行决定“当前频点”：页头必须跟着选择走，而不是停在最新一行。
+        # 选中行决定“当前频点”：阶段摘要必须跟着选择走，而不是停在最新一行。
         page.cable_loss_table.selectRow(0)
         self.app.processEvents()
 
-        self.assertIn("当前频点 2.4 GHz", workspace.summary_text())
+        summary = workspace.stage_summary("cable_loss")
+        self.assertIsNotNone(summary)
+        self.assertIn(
+            ("当前频点", "2.4 GHz"),
+            [(metric.label, metric.value) for metric in summary.metrics],
+        )
 
         page.clear_results()
         self.app.processEvents()
@@ -868,7 +878,9 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertEqual(
             workspace.stage_rail().summary_for("cable_loss"), "未开始"
         )
-        self.assertEqual(workspace.summary_text(), "")
+        summary = workspace.stage_summary("cable_loss")
+        self.assertIsNotNone(summary)
+        self.assertEqual(summary.headline, "未开始")
 
     def test_stage_rail_keyboard_navigation_still_switches_pages(self):
         """隐藏标签栏后键盘导航由阶段条接管：Space 必须能切页并同步页头。"""
@@ -1333,7 +1345,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIs(rail.state_for("cable_loss"), StageState.PENDING)
 
     def test_connected_run_shows_its_identity_in_the_header(self):
-        """步骤 6：连接成功后页头显示本次 run 与测试模式，而不只是徽标。"""
+        """步骤 6：连接成功后顶栏显示本次 run 与测试模式，而不只是徽标。"""
         self._silence_dialogs()
         window = self._window()
         window._enter_test_mode(False)
@@ -1347,8 +1359,14 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertEqual(
             workspace.run_identity(), (prepared.run_id, "无驱放测试")
         )
-        self.assertIn(prepared.run_id, workspace.run_identity_label.text())
-        self.assertIn("无驱放测试", workspace.run_identity_label.text())
+        self.assertIn(
+            prepared.run_id, workspace.run_identity_label.full_text()
+        )
+        self.assertNotIn(
+            "无驱放测试",
+            workspace.run_identity_label.full_text(),
+            "模式只由徽标显示，运行标识不再重复拼一遍",
+        )
         self.assertEqual(window.mode_badge.text(), "无驱放测试")
 
     def test_returning_to_welcome_clears_the_header_identity_and_mode(self):

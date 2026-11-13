@@ -415,7 +415,7 @@ QMenu::separator {
     margin: 4px 8px;
 }
 
-/* ===== 测试模式徽标（标签栏右侧） ===== */
+/* ===== 测试模式徽标（顶栏状态簇） ===== */
 QLabel#appModeBadge {
     background-color: $primary_soft;
     border: 1px solid $primary_soft_border;
@@ -424,6 +424,12 @@ QLabel#appModeBadge {
     font-size: $font_small;
     font-weight: 600;
     padding: 3px 10px;
+}
+
+/* 阶段条与状态簇之间的细分隔线：只做分区，不抢注意力。 */
+QWidget#measurementWorkspaceTopBarDivider {
+    background-color: $border;
+    border: none;
 }
 
 /* ===== 欢迎页 =====

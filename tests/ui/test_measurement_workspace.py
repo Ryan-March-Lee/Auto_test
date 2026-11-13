@@ -131,9 +131,58 @@ class ConstructionTests(_WorkspaceTestCase):
             "没有运行时不能拼成“本次运行 未连接”这种自相矛盾的文案",
         )
 
+    def test_stage_rail_and_status_cluster_share_one_top_bar(self):
+        self.settle()
+
+        self.assertIs(
+            self.workspace.stage_rail().parentWidget(),
+            self.workspace.top_bar,
+        )
+        self.assertIs(
+            self.workspace.header.parentWidget(), self.workspace.top_bar
+        )
+        self.assertIs(
+            self.workspace.top_bar.layout().itemAt(
+                self.workspace.top_bar.layout().count() - 1
+            ).widget(),
+            self.workspace.header,
+            "状态簇必须是顶栏的最后一项",
+        )
+        self.assertEqual(
+            self.workspace.top_bar.height(),
+            self.workspace.stage_rail().height(),
+            "状态簇与阶段条共用一行，不能再多占一行高度",
+        )
+        self.assertLessEqual(
+            self.workspace.header.height(),
+            self.workspace.stage_rail().height(),
+        )
+
+    def test_run_identity_does_not_repeat_the_mode(self):
+        self.workspace.set_run_identity("run-1", "有驱放测试")
+
+        self.assertEqual(
+            self.workspace.run_identity_label.text(), "本次运行 run-1"
+        )
+        self.assertNotIn(
+            "有驱放测试",
+            self.workspace.run_identity_label.text(),
+            "模式只由徽标显示，运行标识不再重复一遍",
+        )
+
+    def test_a_long_run_identity_is_elided_with_the_full_value_in_tooltip(self):
+        run_id = "20261113T010203Z_" + "a" * 80
+        self.workspace.set_run_identity(run_id, None)
+        self.settle()
+
+        label = self.workspace.run_identity_label
+        self.assertIn("…", label.text(), "超出上限的 run id 必须中间省略")
+        self.assertEqual(label.full_text(), f"本次运行 {run_id}")
+        self.assertEqual(label.toolTip(), f"本次运行 {run_id}")
+
 
 class CurrentStageTests(_WorkspaceTestCase):
-    def test_set_current_stage_syncs_rail_and_header_summary(self):
+    def test_set_current_stage_syncs_the_rail(self):
         self.workspace.set_current_stage("cable_loss")
 
         rail = self.workspace.stage_rail()
@@ -141,12 +190,12 @@ class CurrentStageTests(_WorkspaceTestCase):
         self.assertTrue(rail.indicator_visible())
         self.assertEqual(self.workspace.current_stage(), "cable_loss")
         self.assertFalse(self.workspace.is_utility_view())
-        self.assertEqual(self.workspace.summary_text(), "")
+        self.assertIsNone(self.workspace.stage_summary("cable_loss"))
 
         self.workspace.set_current_stage("amplifier")
 
         self.assertEqual(rail.current_key(), "amplifier")
-        self.assertEqual(self.workspace.summary_text(), "")
+        self.assertIsNone(self.workspace.stage_summary("amplifier"))
 
     def test_visualization_is_shown_as_a_read_only_view(self):
         self.workspace.set_current_stage("visualization")
@@ -167,14 +216,15 @@ class CurrentStageTests(_WorkspaceTestCase):
         with self.assertRaises(TypeError):
             self.workspace.has_stage(None)
 
-    def test_unknown_stage_key_is_rejected_without_touching_the_header(self):
+    def test_unknown_stage_key_is_rejected_without_touching_the_top_bar(self):
         self.workspace.set_current_stage("cable_loss")
         self.workspace.set_stage_summary(
             "cable_loss", StageSummary("6 频点", (StageMetric("频点", "6"),))
         )
         before = (
             self.workspace.current_stage(),
-            self.workspace.summary_text(),
+            self.workspace.stage_rail().current_key(),
+            self.workspace.stage_summary("cable_loss"),
         )
 
         with self.assertRaises(KeyError):
@@ -183,10 +233,11 @@ class CurrentStageTests(_WorkspaceTestCase):
         self.assertEqual(
             (
                 self.workspace.current_stage(),
-                self.workspace.summary_text(),
+                self.workspace.stage_rail().current_key(),
+                self.workspace.stage_summary("cable_loss"),
             ),
             before,
-            "未知阶段不能把页头留在半更新状态",
+            "未知阶段不能把顶栏留在半更新状态",
         )
 
     def test_programmatic_sync_does_not_emit_navigation(self):
@@ -246,7 +297,7 @@ class StageSubsetTests(_WorkspaceTestCase):
         )
         self.assertEqual(self.workspace.current_stage(), "overview")
         self.assertFalse(self.workspace.is_utility_view())
-        self.assertEqual(self.workspace.summary_text(), "")
+        self.assertIsNone(self.workspace.stage_summary("overview"))
 
     def test_default_stage_keys_are_unknown_in_a_custom_stage_set(self):
         for key in ("cable_loss", "visualization"):
@@ -256,9 +307,9 @@ class StageSubsetTests(_WorkspaceTestCase):
                     self.workspace.set_current_stage(key)
                 self.assertIsNone(
                     self.workspace.current_stage(),
-                    "阶段集合之外的 key 不能留下半更新的页头",
+                    "阶段集合之外的 key 不能留下半更新的顶栏",
                 )
-                self.assertEqual(self.workspace.summary_text(), "")
+                self.assertIsNone(self.workspace.stage_summary(key))
 
 
 class StageSummaryTests(_WorkspaceTestCase):
@@ -273,18 +324,18 @@ class StageSummaryTests(_WorkspaceTestCase):
         ),
     )
 
-    def test_summary_is_written_to_the_rail_and_the_current_header(self):
+    def test_summary_is_written_to_the_rail_only(self):
         self.workspace.set_current_stage("cable_loss")
 
         self.workspace.set_stage_summary("cable_loss", self.SUMMARY)
 
         rail = self.workspace.stage_rail()
         self.assertEqual(rail.summary_for("cable_loss"), "6 频点")
-        self.assertEqual(
-            self.workspace.summary_text(),
-            "频点 6 · 当前频点 3.5 GHz · 线缆 4",
+        self.assertIs(self.workspace.stage_summary("cable_loss"), self.SUMMARY)
+        self.assertFalse(
+            hasattr(self.workspace, "summary_label"),
+            "顶部只能有一个摘要展示位：页头副本已经删除",
         )
-        self.assertFalse(self.workspace.summary_label.isHidden())
 
     def test_summary_is_kept_for_a_stage_that_is_not_current(self):
         self.workspace.set_current_stage("amplifier")
@@ -294,22 +345,20 @@ class StageSummaryTests(_WorkspaceTestCase):
         self.assertEqual(
             self.workspace.stage_rail().summary_for("cable_loss"), "6 频点"
         )
-        self.assertEqual(
-            self.workspace.summary_text(),
-            "",
-            "页头只显示当前阶段的摘要",
+        self.assertIs(
+            self.workspace.stage_summary("cable_loss"),
+            self.SUMMARY,
+            "没有显示的阶段也要保留摘要，切回时不用窗口再推一次",
         )
-        self.assertTrue(self.workspace.summary_label.isHidden())
 
         self.workspace.set_current_stage("cable_loss")
 
         self.assertEqual(
-            self.workspace.summary_text(),
-            "频点 6 · 当前频点 3.5 GHz · 线缆 4",
-            "切回该阶段时页头重新显示它保存的摘要",
+            self.workspace.stage_rail().summary_for("cable_loss"), "6 频点"
         )
+        self.assertEqual(self.workspace.current_stage(), "cable_loss")
 
-    def test_not_started_summary_keeps_the_header_empty(self):
+    def test_not_started_summary_still_reads_as_not_started(self):
         self.workspace.set_current_stage("cable_loss")
 
         self.workspace.set_stage_summary(
@@ -319,10 +368,11 @@ class StageSummaryTests(_WorkspaceTestCase):
         self.assertEqual(
             self.workspace.stage_rail().summary_for("cable_loss"), NOT_STARTED
         )
-        self.assertEqual(self.workspace.summary_text(), "")
-        self.assertTrue(self.workspace.summary_label.isHidden())
+        summary = self.workspace.stage_summary("cable_loss")
+        self.assertIsNotNone(summary)
+        self.assertEqual(summary.headline, NOT_STARTED)
 
-    def test_clearing_a_summary_removes_it_from_the_rail_and_header(self):
+    def test_clearing_a_summary_removes_it_from_the_rail(self):
         self.workspace.set_current_stage("cable_loss")
         self.workspace.set_stage_summary("cable_loss", self.SUMMARY)
 
@@ -332,16 +382,15 @@ class StageSummaryTests(_WorkspaceTestCase):
         self.assertEqual(
             self.workspace.stage_rail().summary_for("cable_loss"), ""
         )
-        self.assertEqual(self.workspace.summary_text(), "")
 
-    def test_utility_view_hides_the_header_summary(self):
+    def test_utility_view_shows_no_stage_but_keeps_the_stored_summary(self):
         self.workspace.set_current_stage("cable_loss")
         self.workspace.set_stage_summary("cable_loss", self.SUMMARY)
 
         self.workspace.show_utility()
 
-        self.assertEqual(self.workspace.summary_text(), "")
-        self.assertTrue(self.workspace.summary_label.isHidden())
+        self.assertIsNone(self.workspace.stage_rail().current_key())
+        self.assertIs(self.workspace.stage_summary("cable_loss"), self.SUMMARY)
 
     def test_unknown_stage_and_invalid_payloads_are_rejected(self):
         with self.assertRaises(KeyError):
@@ -367,7 +416,6 @@ class UtilityViewTests(_WorkspaceTestCase):
         )
         self.assertIsNone(self.workspace.current_stage())
         self.assertTrue(self.workspace.is_utility_view())
-        self.assertEqual(self.workspace.summary_text(), "")
 
     def test_returning_from_a_utility_view_restores_the_stage_header(self):
         self.workspace.set_current_stage("cable_loss")
@@ -613,7 +661,7 @@ class ModeTextTests(unittest.TestCase):
 
 
 class RunIdentityTests(_WorkspaceTestCase):
-    def test_run_identity_shows_run_id_and_mode_text(self):
+    def test_run_identity_shows_the_run_id_while_mode_stays_in_the_badge(self):
         self.workspace.set_run_identity("20261112T101010", "有驱放测试")
 
         self.assertEqual(
@@ -622,7 +670,7 @@ class RunIdentityTests(_WorkspaceTestCase):
         )
         text = self.workspace.run_identity_label.text()
         self.assertIn("20261112T101010", text)
-        self.assertIn("有驱放测试", text)
+        self.assertNotIn("有驱放测试", text, "模式只由徽标显示")
         self.assertNotIn("未连接", text)
 
     def test_clearing_run_identity_falls_back_to_unconnected(self):
@@ -779,12 +827,13 @@ class ProgressHairlineTests(_WorkspaceTestCase):
             self.hairline_pixel().name(), TOKENS["primary"].lower()
         )
 
-    def test_hairline_sits_between_the_header_and_the_content(self):
-        header = self.workspace.header
+    def test_hairline_sits_between_the_top_bar_and_the_content(self):
+        top_bar = self.workspace.top_bar
         hairline = self.workspace.progress_hairline
         content = self.workspace.content_host
 
-        self.assertGreaterEqual(hairline.geometry().top(), header.geometry().bottom())
+        top_bar_bottom = top_bar.geometry().bottom()
+        self.assertGreaterEqual(hairline.geometry().top(), top_bar_bottom)
         self.assertLessEqual(hairline.geometry().bottom(), content.geometry().top())
 
     def test_toggling_activity_and_progress_does_not_move_the_frame(self):
@@ -806,7 +855,7 @@ class ProgressHairlineTests(_WorkspaceTestCase):
                 self.workspace.content_host.geometry(),
             ),
             frame,
-            "发丝线不能因为显示/隐藏推动阶段条、页头或内容槽",
+            "发丝线不能因为显示/隐藏推动阶段条、状态簇或内容槽",
         )
 
     def test_progress_is_clamped_and_rejects_non_numbers(self):

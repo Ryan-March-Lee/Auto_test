@@ -204,7 +204,7 @@ class WorkspaceBindingTests(unittest.TestCase):
         rail = self.workspace.stage_rail()
         self.assertEqual(self.workspace.current_stage(), "amplifier")
         self.assertEqual(rail.current_key(), "amplifier")
-        self.assertEqual(self.workspace.summary_text(), "")
+        self.assertIsNone(self.workspace.stage_summary("amplifier"))
         self.assertTrue(self.workspace.configuration_btn.isEnabled())
 
     # ---- 阶段摘要（步骤 15） -------------------------------------------------
@@ -232,7 +232,9 @@ class WorkspaceBindingTests(unittest.TestCase):
         self.assertEqual(
             self.workspace.stage_rail().summary_for("cable_loss"), "6 频点"
         )
-        self.assertIn("频点 6", self.workspace.summary_text())
+        summary = self.workspace.stage_summary("cable_loss")
+        self.assertIsNotNone(summary)
+        self.assertEqual(summary.headline, "6 频点")
 
     def test_page_summary_signal_updates_the_rail_without_navigating(self):
         page, binding = self._summary_binding()
@@ -245,7 +247,9 @@ class WorkspaceBindingTests(unittest.TestCase):
             self.workspace.stage_rail().summary_for("cable_loss"),
             NOT_STARTED,
         )
-        self.assertEqual(self.workspace.summary_text(), "")
+        summary = self.workspace.stage_summary("cable_loss")
+        self.assertIsNotNone(summary)
+        self.assertEqual(summary.headline, NOT_STARTED)
         self.assertEqual(self.workspace.current_stage(), "cable_loss")
 
     def test_invalid_or_missing_summaries_leave_the_last_good_one(self):
@@ -301,28 +305,23 @@ class WorkspaceBindingTests(unittest.TestCase):
         self.assertTrue(self.workspace.is_utility_view())
         self.assertIsNone(self.workspace.current_stage())
         self.assertIsNone(self.workspace.stage_rail().current_key())
-        self.assertEqual(
-            self.workspace.summary_text(),
-            "",
-            "工具页不显示测量摘要",
-        )
+        self.assertFalse(self.workspace.configuration_btn.isEnabled())
 
     def test_a_registered_non_stage_page_becomes_a_utility_page(self):
-        """新增报告/历史这类页面时，页头只保留运行身份，不能抛 KeyError。"""
+        """新增报告/历史这类页面时，顶栏只保留运行身份，不能抛 KeyError。"""
         self._select(self.report_page)
 
         self.binding.sync()
 
         self.assertTrue(self.workspace.is_utility_view())
         self.assertIsNone(self.workspace.current_stage())
-        self.assertEqual(self.workspace.summary_text(), "")
 
     def test_an_unregistered_widget_leaves_the_header_untouched(self):
         self._select(self.cable_loss_page)
         self.binding.sync()
         before = (
             self.workspace.current_stage(),
-            self.workspace.summary_text(),
+            self.workspace.stage_rail().current_key(),
             self.workspace.run_identity_label.text(),
         )
 
@@ -336,7 +335,7 @@ class WorkspaceBindingTests(unittest.TestCase):
         self.assertEqual(
             (
                 self.workspace.current_stage(),
-                self.workspace.summary_text(),
+                self.workspace.stage_rail().current_key(),
                 self.workspace.run_identity_label.text(),
             ),
             before,

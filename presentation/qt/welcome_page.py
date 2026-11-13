@@ -26,7 +26,6 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
-    QMessageBox,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -49,19 +48,6 @@ def apply_test_mode(config: dict, driver_enabled: bool) -> dict:
     mode["enabled"] = bool(driver_enabled)
     config["driver_mode"] = mode
     return config
-
-
-def confirm_leave_configuration(parent, is_dirty: bool) -> bool:
-    """返回欢迎页前的确认：只有配置被改动过才询问，避免丢失未保存的修改。"""
-    if not is_dirty:
-        return True
-    reply = QMessageBox.question(
-        parent,
-        "返回欢迎页",
-        "返回欢迎页将丢失当前未保存的配置，是否返回？",
-        QMessageBox.Yes | QMessageBox.No,
-    )
-    return reply == QMessageBox.Yes
 
 
 # ---- 随窗口缩放的版式基准 ----------------------------------------------------

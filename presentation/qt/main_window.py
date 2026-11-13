@@ -45,7 +45,7 @@ from presentation.qt.stage_result_selection import (
 from presentation.qt.status_panel import StatusPanel
 from presentation.qt.theme import apply_theme, build_stylesheet
 from presentation.qt.visualization_page import VisualizationPage
-from presentation.qt.welcome_page import WelcomePage, apply_test_mode, confirm_leave_configuration
+from presentation.qt.welcome_page import WelcomePage, apply_test_mode
 from presentation.qt.window_geometry import fit_window_to_screen
 from presentation.qt.workspace_binding import WorkspaceBinding
 
@@ -310,9 +310,9 @@ class MainWindow(QMainWindow):
         self._sync_finalize_entry()
 
     def _return_to_welcome(self) -> None:
-        if confirm_leave_configuration(self, self.configuration_editor.is_dirty()):
-            self.view_stack.setCurrentWidget(self.welcome_page)
-            self.workspace_binding.reset_identity()
+        """返回欢迎页：只接受仪表配置页的请求，配置流程内没有这条捷径。"""
+        self.view_stack.setCurrentWidget(self.welcome_page)
+        self.workspace_binding.reset_identity()
 
     def _register_pages(self):
         """构造标签页并登记；测量页面通过共享 controller 连接。

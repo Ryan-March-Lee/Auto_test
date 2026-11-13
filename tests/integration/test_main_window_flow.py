@@ -1152,20 +1152,18 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
             "现场配置没有本机驱动供电通道：计划留空即驱放自带供电",
         )
 
-    def test_return_to_welcome_confirms_only_when_configuration_is_dirty(self):
+    def test_instrument_setup_page_return_link_routes_to_welcome(self):
+        """步骤 4：返回欢迎页只保留仪表配置页入口，不再有脏配置确认。"""
         dialogs = self._silence_dialogs()
         window = self._window()
         window._enter_test_mode(False)
-
-        window._return_to_welcome()
-        dialogs["question"].assert_not_called()
-        self.assertIs(window.view_stack.currentWidget(), window.welcome_page)
-
-        window._enter_test_mode(False)
         window.test_config_page.freq_start.setValue(9.0)
         window.test_config_page.freq_stop.setValue(9.0)
-        window._return_to_welcome()
-        dialogs["question"].assert_called_once()
+
+        window.connection_page.return_welcome_requested.emit()
+        self.app.processEvents()
+
+        dialogs["question"].assert_not_called()
         self.assertIs(window.view_stack.currentWidget(), window.welcome_page)
 
     def test_no_driver_mode_hides_the_driver_mapping_tab(self):

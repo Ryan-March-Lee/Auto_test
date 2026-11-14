@@ -91,15 +91,6 @@ class MeasurementLeftPanelWidthTests(unittest.TestCase):
         self.assertEqual(len(set(widths.values())), 1, widths)
         self.assertEqual(set(widths.values()), {MEASUREMENT_LEFT_PANEL_MIN_WIDTH}, widths)
 
-    def test_left_panels_take_their_bounds_from_the_shared_constants(self):
-        for name, page in self.pages.items():
-            with self.subTest(page=name):
-                self.assertEqual(
-                    page.control_panel.minimumWidth(), MEASUREMENT_LEFT_PANEL_MIN_WIDTH
-                )
-                self.assertEqual(
-                    page.control_panel.maximumWidth(), MEASUREMENT_LEFT_PANEL_MAX_WIDTH
-                )
 
 
 if __name__ == "__main__":

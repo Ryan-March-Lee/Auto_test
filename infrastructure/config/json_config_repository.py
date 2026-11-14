@@ -173,9 +173,8 @@ class JsonConfigurationRepository(ConfigurationRepositoryPort):
         """写入正式用户配置文件。
 
         这是生产代码里**唯一**的配置写入实现：GUI 配置适配器（
-        :class:`infrastructure.gui_data_service.JsonConfigurationAdapter`）与旧电源配置
-        迁移器（:func:`infrastructure.config.legacy_power_supply_migration.save_migrated_configuration`）
-        都只委托本方法，因此正式格式（``indent=4``、UTF-8、非 ASCII 原样保留）与
+        :class:`infrastructure.gui_data_service.JsonConfigurationAdapter`）只委托本方法，
+        因此正式格式（``indent=4``、UTF-8、非 ASCII 原样保留）与
         “临时文件 + fsync + 原子替换”的失败语义只有一份实现。
 
         本方法只负责持久化：它不解释配置 schema，也不做任何修复或降级；写入内容必须

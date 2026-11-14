@@ -14,13 +14,11 @@ from pathlib import Path
 
 from presentation.qt import config_form_bindings as bindings_module
 from presentation.qt.config_form_bindings import (
-    LEGACY_BINDING_SOURCE,
     POWER_SUPPLY_BINDINGS,
     binding_address,
     binding_records,
     bound_power_supplies,
     bound_power_supply_entries,
-    effective_device_bindings,
     power_supply_binding_problems,
     power_supply_bindings,
 )
@@ -81,78 +79,12 @@ class BindingReadTests(unittest.TestCase):
             [key for key, _record in records], ["signal_generator", "DP8B1519"]
         )
 
-    def test_legacy_config_addresses_become_unconfirmed_bindings_for_single_devices(self):
-        """只有地址的旧配置迁移成信号源/频谱仪绑定；电源地址不是身份，要求重新扫描。"""
-        config = {
-            "instruments": {
-                "signal_generator": {"address": "TCPIP0::192.168.1.201::inst0::INSTR"},
-                "spectrum_analyzer": {
-                    "address": "TCPIP0::192.168.1.202::inst0::INSTR",
-                    "enabled": False,
-                },
-                "power_supplies": {
-                    "PS1": {"address": "TCPIP0::192.168.1.101::inst0::INSTR", "enabled": True},
-                    "PS2": {"address": "TCPIP0::192.168.1.102::inst0::INSTR", "enabled": False},
-                },
-            }
-        }
 
-        bindings = effective_device_bindings(config)
-
-        # 启用且地址非空的项被迁移；禁用项不会被迁移动作重新启用。
-        self.assertEqual(
-            bindings["signal_generator"]["visa_address"], "TCPIP0::192.168.1.201::inst0::INSTR"
-        )
-        self.assertEqual(bindings["signal_generator"]["source"], LEGACY_BINDING_SOURCE)
-        self.assertNotIn("spectrum_analyzer", bindings)
-        self.assertNotIn(POWER_SUPPLY_BINDINGS, bindings)
-        self.assertEqual(bound_power_supplies(bindings), [])
-
-    def test_explicit_empty_bindings_do_not_resurrect_legacy_addresses(self):
-        """配置里已有（空的）device_bindings 时，旧地址不得再被当成绑定。"""
-        config = {
-            "device_bindings": {},
-            "instruments": {
-                "signal_generator": {"address": "TCPIP0::192.168.1.201::inst0::INSTR"}
-            },
-        }
-
-        self.assertEqual(effective_device_bindings(config), {})
 
 
 class BindingNormalizationTests(unittest.TestCase):
     """规范化：可用集合的成员、顺序与不合格记录的诊断。"""
 
-    def test_legacy_power_bindings_migrate_by_identity_and_label(self):
-        """步骤 5 的过渡绑定（按旧槽位落键、记录内带短标签与身份）折叠成 supply_id 集合。"""
-        bindings = effective_device_bindings(
-            {
-                "device_bindings": {
-                    "PS3": {
-                        "role": "power_supply",
-                        "label": "DP8B1519",
-                        "supply_id": "DP8B1519",
-                        "full_code": "DP8B214901519",
-                        "device_key": "rigol technologies:dp8b214901519",
-                        "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
-                        "source": "scan",
-                    },
-                    "PS1": {
-                        # 只有地址的旧绑定：没有序列号也没有短标签，不迁移。
-                        "visa_address": "TCPIP0::192.168.1.101::inst0::INSTR",
-                        "source": LEGACY_BINDING_SOURCE,
-                    },
-                }
-            }
-        )
-
-        self.assertEqual(list(bindings[POWER_SUPPLY_BINDINGS]), ["DP8B1519"])
-        record = bindings[POWER_SUPPLY_BINDINGS]["DP8B1519"]
-        self.assertEqual(record["device_key"], "rigol technologies:dp8b214901519")
-        # 集合的键就是引用 ID：记录里不再重复写 role/label/supply_id。
-        for field in ("role", "label", "supply_id"):
-            self.assertNotIn(field, record)
-        self.assertEqual(bound_power_supplies(bindings), ["DP8B1519"])
 
     def test_duplicate_power_bindings_for_one_device_keep_the_first(self):
         """同一台设备不能出现两次：手改文件造出的重复身份只保留第一条。"""

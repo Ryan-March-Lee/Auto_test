@@ -16,7 +16,7 @@
    ``pa_auto_test`` logger 树下，才能真正写进 ``setup_logging()`` 的日志文件（裸
    ``logging.getLogger(__name__)`` 只会落到 stderr）。
 
-历史页面的无效运行、部分运行与产物缺失展示由 ``tests/test_run_history_page.py`` 覆盖；
+历史运行服务的无效运行、部分运行与产物缺失状态由 ``tests/integration/test_run_history_service.py`` 覆盖；
 产物生成适配器自身的输入/输出边界由 ``tests/test_csv_artifact_generator.py`` 与
 ``tests/test_report_artifact_generator.py`` 覆盖，本文件不重复实现层细节。
 """

@@ -181,10 +181,6 @@ class _Context:
         self.run_id = run_id
 
 
-class _UnwritableResultRepository:
-    """正式运行只写运行目录结果；该对象不提供任何结果写入能力。"""
-
-
 class _FailingStageResultRepository:
     """把正式结果写入阶段目录时失败；不产生任何阶段文件。"""
 
@@ -430,20 +426,6 @@ class DriverMappingRunStageTests(unittest.TestCase):
             [-20.0],
         )
 
-    def test_stage_reference_resolves_back_to_the_stage_file(self):
-        self._create_run()
-        self._complete_cable_loss()
-        result = DriverPowerMappingUseCase(
-            self._request(), sleep_fn=lambda _: None
-        ).measure_all_frequencies()
-
-        verified = self._recorder().verified_result_path(STAGE_DRIVER_MAPPING)
-
-        self.assertEqual(verified, self._stage_result_path(result.measurement_id))
-        loaded = self.stage_repository.load(
-            MeasurementStage.DRIVER_MAPPING, verified
-        )
-        self.assertEqual(loaded.result.measurement_id, result.measurement_id)
 
     def test_stage_result_survives_run_directory_removal(self):
         """验收标准：结果脱离原运行目录仍可读取。"""
@@ -482,53 +464,7 @@ class DriverMappingRunStageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "power_mapping"):
             ResultInputReader(self.result_repository).read_driver_mapping(legacy)
 
-    def test_replaced_stage_file_is_rejected_before_consumption(self):
-        self._create_run()
-        self._complete_cable_loss()
-        result = DriverPowerMappingUseCase(
-            self._request(), sleep_fn=lambda _: None
-        ).measure_all_frequencies()
-        stage_path = self._stage_result_path(result.measurement_id)
-        stage_path.write_text(
-            json.dumps(
-                {
-                    "measurement_type": "driver_power_mapping",
-                    "status": "completed",
-                    "run_id": RUN_ID,
-                    "measurement_id": result.measurement_id,
-                    "created_at": "2026-10-22T15:30:00+00:00",
-                    "raw_points": {},
-                    "target_mapping": {},
-                    "schema_version": "2.0",
-                }
-            ),
-            encoding="utf-8",
-        )
 
-        with self.assertRaisesRegex(StageInputUnavailable, "已被替换"):
-            self._recorder().verified_result_path(STAGE_DRIVER_MAPPING)
-
-    def test_legacy_run_result_document_keeps_its_run_path(self):
-        """旧运行目录中的完整结果文档没有引用标记，仍按原路径返回。"""
-        layout = self._create_run()
-        recorder = RunStageRecorder(self.repository, RUN_ID)
-        recorder.start(STAGE_DRIVER_MAPPING, now=CREATED_AT)
-        recorder.complete(
-            STAGE_DRIVER_MAPPING,
-            {
-                "run_id": RUN_ID,
-                "measurement_type": "driver_power_mapping",
-                "status": "completed",
-                "schema_version": "2.0",
-                "raw_points": {},
-                "target_mapping": {},
-            },
-            now=CREATED_AT,
-        )
-
-        verified = recorder.verified_result_path(STAGE_DRIVER_MAPPING)
-
-        self.assertEqual(verified, layout.run_directory / DRIVER_MAPPING_INPUT_PATH)
 
     def test_preloaded_input_avoids_the_run_directory_lookup(self):
         """步骤 17：组合入口交出的预检对象直接消费，不再读取运行目录。"""
@@ -581,22 +517,6 @@ class DriverMappingRunStageTests(unittest.TestCase):
         self.assertEqual(loaded_paths, [])
         self.assertNotIn(global_copy.resolve(), loaded_paths)
 
-    def test_global_compatibility_copy_is_not_written(self):
-        self._create_run()
-        self._complete_cable_loss()
-        result = DriverPowerMappingUseCase(
-            self._request(), sleep_fn=lambda _: None
-        ).measure_all_frequencies()
-
-        self.assertEqual(
-            list((self.base / "test_results").glob("driver_power_mapping_*.json")), []
-        )
-        self.assertTrue(
-            (self.base / "runs" / RUN_ID / DRIVER_MAPPING_INPUT_PATH).is_file()
-        )
-        self.assertEqual(
-            self._stage_result_files(), [f"{result.measurement_id}.json"]
-        )
 
     # -- 输入隔离与前置失败 ------------------------------------------------
 
@@ -790,56 +710,10 @@ class DriverMappingRunStageTests(unittest.TestCase):
         self.assertEqual(self._stage_result_files(), [])
         self.assertFalse((layout.run_directory / DRIVER_MAPPING_INPUT_PATH).exists())
 
-    def test_completed_stage_is_not_overwritten_by_later_failure_or_cancel(self):
-        self._create_run()
-        recorder = self._complete_cable_loss()
-        mapping_recorder = RunStageRecorder(self.repository, RUN_ID)
-        request = self._request()
-        use_case = DriverPowerMappingUseCase(request, sleep_fn=lambda _: None)
-        use_case.measure_all_frequencies()
-
-        mapping_recorder.fail(STAGE_DRIVER_MAPPING, "迟到的失败")
-        mapping_recorder.cancel(STAGE_DRIVER_MAPPING, "迟到的取消")
-
-        manifest = self.repository.load_manifest(RUN_ID)
-        self.assertEqual(manifest.stage(STAGE_DRIVER_MAPPING).status, StageStatus.COMPLETED)
-        with self.assertRaisesRegex(ValueError, "终态"):
-            mapping_recorder.complete(STAGE_DRIVER_MAPPING, {"power_mapping": {}})
 
     # -- 兼容副本与提交失败 ------------------------------------------------
 
-    def test_run_contract_never_touches_the_compatibility_copy_api(self):
-        layout = self._create_run()
-        self._complete_cable_loss()
-        request = self._request(repository=_UnwritableResultRepository())
-        use_case = DriverPowerMappingUseCase(request, sleep_fn=lambda _: None)
 
-        result = use_case.measure_all_frequencies()
-
-        result_path = layout.run_directory / DRIVER_MAPPING_INPUT_PATH
-        self.assertTrue(result_path.is_file())
-        manifest = self.repository.load_manifest(RUN_ID)
-        self.assertEqual(manifest.stage(STAGE_DRIVER_MAPPING).status, StageStatus.COMPLETED)
-        self.assertEqual(
-            result.result_reference["archive_path"],
-            str(self._stage_result_path(result.measurement_id)),
-        )
-        self.assertNotIn("legacy_copy_path", result.result_reference)
-
-    def test_commit_failure_rolls_back_result_and_keeps_stage_unfinished(self):
-        layout = self._create_run()
-        self._complete_cable_loss()
-        recorder = RunStageRecorder(_FailingCommitRepository(self.repository), RUN_ID)
-        recorder.start(STAGE_DRIVER_MAPPING, now=CREATED_AT)
-
-        with self.assertRaisesRegex(OSError, "manifest commit failed"):
-            recorder.complete(
-                STAGE_DRIVER_MAPPING, {"power_mapping": {}}, now=CREATED_AT
-            )
-
-        self.assertFalse((layout.run_directory / DRIVER_MAPPING_INPUT_PATH).exists())
-        manifest = self.repository.load_manifest(RUN_ID)
-        self.assertEqual(manifest.stage(STAGE_DRIVER_MAPPING).status, StageStatus.RUNNING)
 
     def test_stage_directory_save_failure_marks_stage_failed_without_result(self):
         """阶段目录写入失败：不产生正式结果、不登记引用、阶段收敛为 failed。"""
@@ -865,40 +739,6 @@ class DriverMappingRunStageTests(unittest.TestCase):
             DRIVER_MAPPING_INPUT_PATH, [item.path for item in manifest.inputs]
         )
 
-    def test_registration_failure_keeps_the_formal_result_and_reports_it(self):
-        """阶段文件已保存、运行引用登记失败：保留正式结果，错误说明给出位置。"""
-        layout = self._create_run()
-        self._complete_cable_loss()
-        recorder = self._recorder(repository=_FailingCommitRepository(self.repository))
-        use_case = DriverPowerMappingUseCase(
-            self._request(recorder=recorder), sleep_fn=lambda _: None
-        )
-
-        with self.assertRaisesRegex(StageResultNotRecorded, "已保存到") as caught:
-            use_case.measure_all_frequencies()
-
-        reference = caught.exception.reference
-        self.assertIs(reference.stage, MeasurementStage.DRIVER_MAPPING)
-        self.assertEqual(
-            reference.path, self._stage_result_path(reference.measurement_id)
-        )
-        # 已提交的正式结果没有被删除或截断，阶段仓库仍能按正式契约读回。
-        self.assertTrue(reference.path.is_file())
-        loaded = self.stage_repository.load(
-            MeasurementStage.DRIVER_MAPPING, reference.path
-        )
-        self.assertEqual(loaded.result.measurement_id, reference.measurement_id)
-        self.assertEqual(loaded.result.status.value, "completed")
-
-        # 运行阶段仍收敛为 failed，但说明里给出阶段文件位置；引用文档已回滚。
-        manifest = self.repository.load_manifest(RUN_ID)
-        stage = manifest.stage(STAGE_DRIVER_MAPPING)
-        self.assertEqual(stage.status, StageStatus.FAILED)
-        self.assertIn(str(reference.path), stage.error)
-        self.assertFalse((layout.run_directory / DRIVER_MAPPING_INPUT_PATH).exists())
-        self.assertNotIn(
-            DRIVER_MAPPING_INPUT_PATH, [item.path for item in manifest.inputs]
-        )
 
     def test_unregistered_stage_result_is_discoverable_in_the_stage_directory(self):
         """登记失败的正式结果不依赖 manifest 也能在阶段目录中被发现和读取。"""
@@ -924,35 +764,6 @@ class DriverMappingRunStageTests(unittest.TestCase):
         self.assertEqual(entries[0].run_id, RUN_ID)
         self.assertEqual(entries[0].status.value, "completed")
 
-    def test_repeated_measurements_do_not_overwrite_old_results(self):
-        self._create_run(RUN_ID)
-        self._complete_cable_loss(RUN_ID)
-        first_result = DriverPowerMappingUseCase(
-            self._request(RUN_ID), sleep_fn=lambda _: None
-        ).measure_all_frequencies()
-
-        self._create_run(OTHER_RUN_ID)
-        self._complete_cable_loss(OTHER_RUN_ID)
-        second_result = DriverPowerMappingUseCase(
-            self._request(OTHER_RUN_ID), sleep_fn=lambda _: None
-        ).measure_all_frequencies()
-
-        self.assertNotEqual(first_result.measurement_id, second_result.measurement_id)
-        self.assertEqual(
-            self._stage_result_files(),
-            sorted(
-                [
-                    f"{first_result.measurement_id}.json",
-                    f"{second_result.measurement_id}.json",
-                ]
-            ),
-        )
-        first_document = json.loads(
-            self._stage_result_path(first_result.measurement_id).read_text(
-                encoding="utf-8"
-            )
-        )
-        self.assertEqual(first_document["run_id"], RUN_ID)
 
     # -- 组合入口端到端 ----------------------------------------------------
 

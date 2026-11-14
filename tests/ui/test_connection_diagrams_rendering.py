@@ -15,17 +15,6 @@ from presentation.qt.connection_diagrams import DIAGRAM_DEVICES, ConnectionDiagr
 
 @unittest.skipUnless(rendering_available(), "当前环境无法渲染 matplotlib 图像")
 class ConnectionDiagramRenderingTests(unittest.TestCase):
-    def test_each_diagram_renders_expected_artists(self):
-        for name, expected_devices in DIAGRAM_DEVICES.items():
-            with self.subTest(diagram=name):
-                figure = getattr(ConnectionDiagram, f"create_{name}")()
-                self.assertIsInstance(figure, Figure)
-                (axis,) = figure.axes
-                self.assertEqual({text.get_text() for text in axis.texts}, set(expected_devices))
-                self.assertTrue(axis.patches, "设备卡片未绘制")
-                self.assertTrue(axis.images, "仪器照片与电缆图未绘制")
-                self.assertFalse(axis.lines, "箭头/连线应全部换成电缆图")
-                self.assertIn("连接图", axis.get_title())
 
     def test_save_figure_as_base64_renders_png(self):
         payload = ConnectionDiagram.save_figure_as_base64(

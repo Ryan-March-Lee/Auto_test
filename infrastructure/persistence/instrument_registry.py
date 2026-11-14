@@ -44,12 +44,10 @@
   ``power_supply``），不含“第几台”：多台电源共用 ``power_supply``，靠各自的缩写设备码
   （``label``）区分。现场每台仪器只承担一种类别，因此角色随设备登记一次，界面不再让用户
   逐台选择；空值与未知角色都视为“未分配角色”，不允许绑定。
-- 读写分工：**读取兼容旧 schema**（``schema_version`` 1/2/3、``role: "PS1".."PS4"``、
-  没有 ``label``、以 ``serial`` 保存完整设备码、带 ``name`` / ``model_index``）。旧字段只在
-  读取边界被识别，读入后立即投影为 ``full_code`` 并丢弃资产名与型号序号；**保存统一写新
-  字段**，写盘前由 :func:`_canonical_document` 迁移：旧槽位经
-  ``domain.instruments.models.canonical_role`` 折叠成 ``power_supply``，没有缩写码的设备按
-  完整设备码补生成 ``label``（规则见 :mod:`domain.instruments.labels`）。
+- 读写分工：只接受当前 schema（``schema_version == 4``），不再读取旧版本设备表。旧字段
+  ``serial`` / ``name`` / ``model_index`` 与旧槽位角色都会被明确拒绝。**保存统一写新字段**，
+  写盘前由 :func:`_canonical_document` 补齐 ``label``（规则见
+  :mod:`domain.instruments.labels`）；没有缩写码的设备按完整设备码补生成。
 - **缩写码对所有登记设备生效**：它只由完整设备码派生，与角色无关，因此换角色、换 IP、改
   型号都不会换码。界面上凡是显示这台设备，都用“型号（缩写设备码）”，例如
   ``DP832A（DP8B1519）``、``SMW200A（5462）``。
@@ -95,11 +93,6 @@ from infrastructure.filesystem.atomic_json import read_json, write_json_atomic
 from infrastructure.filesystem.paths import DEFAULT_PATHS, PathLike
 
 SCHEMA_VERSION = 4
-# 读得动的旧版本：1/2 缺 ``label`` 且电源用槽位编号 ``PS1``..``PS4``；1/2/3 用 ``serial``
-# 保存完整设备码，并带 ``name`` / ``model_index``。读取时立即投影成 ``full_code`` 并丢弃
-# 资产名与序号，保存时由 :func:`_canonical_document` 写回新 schema；比当前版本更新的文件
-# 直接报错，避免降级覆盖。
-LEGACY_SCHEMA_VERSIONS = (1, 2, 3)
 DEFAULT_REGISTRY_FILENAME = "instruments.json"
 MAX_KNOWN_IPS = 3
 
@@ -127,39 +120,20 @@ def _empty_document() -> dict[str, Any]:
 
 
 def _entry_full_code(entry: Mapping[str, Any]) -> str:
-    """读取条目的完整设备码。
-
-    历史读取边界：schema 1/2/3 把它保存在 ``serial`` 里。``full_code`` 优先；旧键只在读取
-    时被识别，读入后调用方看到的是 ``full_code``，新文档不再写出旧键。
-    """
-    value = entry.get("full_code")
-    if value is None:
-        value = entry.get("serial")
-    return normalize_full_code(value)
+    """读取条目的完整设备码；只认当前字段 ``full_code``。"""
+    return normalize_full_code(entry.get("full_code"))
 
 
 def _entry_device_key(entry: Mapping[str, Any]) -> str:
     return make_device_key(entry.get("vendor"), _entry_full_code(entry))
 
 
-def _strip_legacy_identity_fields(entry: dict[str, Any]) -> None:
-    """把旧条目投影成当前身份字段：``serial`` -> ``full_code``，删除资产名与型号序号。
-
-    只改这三个字段，其余内容（地址、选件、备注、未知手写字段）逐字节保留。
-    """
-    if "full_code" not in entry:
-        entry["full_code"] = entry.get("serial")
-    entry.pop("serial", None)
-    entry.pop("name", None)
-    entry.pop("model_index", None)
-
-
 def _declared_entry_role(entry: Mapping[str, Any]) -> str | None:
     """设备表条目写回时的 ``role`` 取值。
 
-    旧槽位 ``PS1``..``PS4`` 经 :func:`canonical_role` 折叠成 ``power_supply``；未登记角色写
-    ``None``；**认不出来的角色原样返回**，交给 :func:`_validate_document` 报错——
-    迁移不能顺手把写错的角色丢掉，否则手改 JSON 的错误会静默消失。
+    只接受当前类别；未登记角色写 ``None``；**认不出来的角色原样返回**，交给
+    :func:`_validate_document` 报错——迁移不能顺手把写错的角色丢掉，否则手改 JSON 的错误
+    会静默消失。
     """
     raw = entry.get("role")
     role = canonical_role(raw)
@@ -185,20 +159,18 @@ def _existing_label(entry: Mapping[str, Any]) -> Any:
 
 
 def _canonical_document(document: Mapping[str, Any]) -> dict[str, Any]:
-    """返回迁移到当前 schema 的设备表副本：投影身份字段、折叠旧角色、补生成缩写码。
+    """返回保存到当前 schema 的设备表副本：规范角色、补生成缩写码。
 
-    只改身份相关字段（``full_code`` / ``role`` / ``label``）并删除 ``name`` /
-    ``model_index`` / ``serial``，其余内容（地址、选件、备注、未知字段）原样保留。规则：
+    只改身份相关字段（``role`` / ``label``），其余内容（地址、选件、备注、未知字段）原样
+    保留。规则：
 
-    1. 身份：旧 ``serial`` 的值写进 ``full_code``，``name`` 与 ``model_index`` 删除；
-    2. ``role``：旧槽位折叠成 ``power_supply``，未登记角色写 ``null``，未知角色原样留下
-       等校验报错；
-    3. ``label``：每条记录都写这个字段（没有缩写码写 ``null``）；已有缩写码原样保留，
+    1. ``role``：未登记角色写 ``null``，未知角色原样留下等校验报错；
+    2. ``label``：每条记录都写这个字段（没有缩写码写 ``null``）；已有缩写码原样保留，
        不裁剪、不改大小写；**有完整设备码却没有缩写码的设备按完整设备码补生成一个**
        （不分角色——缩写码只由完整设备码派生），冲突按同一模块的规则依次加宽，全部候选
        都被占用时抛 :class:`InstrumentRegistryError`。补生成的顺序是电源优先，其余按文件
        顺序：电源的缩写码就是 ``supply_id``，先挑就先占住首选候选；
-    4. 补生成失败分两档：电源没有缩写码就没有 ``supply_id``，配置与路由会失配，因此一律抛
+    3. 补生成失败分两档：电源没有缩写码就没有 ``supply_id``，配置与路由会失配，因此一律抛
        :class:`InstrumentRegistryError`；其它角色与未登记角色的设备缩写码只用于展示，派生
        失败时留 ``null``，显示退回型号，不阻断保存。
 
@@ -211,7 +183,6 @@ def _canonical_document(document: Mapping[str, Any]) -> dict[str, Any]:
         return migrated
     for entry in entries:
         if isinstance(entry, dict):
-            _strip_legacy_identity_fields(entry)
             entry["role"] = _declared_entry_role(entry)
             # 已有缩写码原样冻结，空值才写 ``null``：每条记录都带这个字段，文件自身就能说明
             # “这台还没有缩写码”。
@@ -258,21 +229,6 @@ def _canonical_document(document: Mapping[str, Any]) -> dict[str, Any]:
             ) from error
         entry["label"] = label
         taken.append(label)
-    return migrated
-
-
-def _migrate_legacy_document(document: Mapping[str, Any]) -> dict[str, Any]:
-    """读取边界：把旧 schema 的身份字段投影成当前字段，不做补标签等写盘动作。
-
-    校验要求 ``full_code``，因此旧文件必须在进入校验前完成 ``serial`` -> ``full_code`` 的
-    投影；投影只作用于内存副本，原文件直到显式 :meth:`InstrumentRegistry.save` 才会改写。
-    """
-    migrated = copy.deepcopy(dict(document))
-    entries = migrated.get("instruments")
-    if isinstance(entries, list):
-        for entry in entries:
-            if isinstance(entry, dict):
-                _strip_legacy_identity_fields(entry)
     return migrated
 
 
@@ -357,20 +313,18 @@ def _validate_document(document: Mapping[str, Any]) -> None:
     只由 ``device_key`` 回答，用户可见的稳定性只由全局唯一的 ``label`` 回答。
     """
     declared_version = document.get("schema_version")
-    if declared_version is not None:
-        if (
-            not isinstance(declared_version, int)
-            or isinstance(declared_version, bool)
-            or declared_version < 1
-        ):
-            raise InstrumentRegistryError(
-                f"设备表 schema_version 必须是正整数，实际 {declared_version!r}"
-            )
-        if declared_version > SCHEMA_VERSION:
-            raise InstrumentRegistryError(
-                f"设备表 schema_version={declared_version} 高于本版本支持的 "
-                f"{SCHEMA_VERSION}；请升级程序后再读取"
-            )
+    if (
+        not isinstance(declared_version, int)
+        or isinstance(declared_version, bool)
+    ):
+        raise InstrumentRegistryError(
+            f"设备表缺少有效的 schema_version，实际 {declared_version!r}"
+        )
+    if declared_version != SCHEMA_VERSION:
+        raise InstrumentRegistryError(
+            f"设备表 schema_version={declared_version} 不受支持；"
+            f"当前只接受 {SCHEMA_VERSION}，请重新扫描并保存设备表"
+        )
     entries = document.get("instruments")
     if not isinstance(entries, list):
         raise InstrumentRegistryError("设备表的 instruments 字段必须是数组")
@@ -455,8 +409,7 @@ class InstrumentRegistry:
     def __init__(self, path: PathLike | None = None, document: dict[str, Any] | None = None) -> None:
         self.path = Path(path) if path is not None else default_registry_path()
         source = copy.deepcopy(document) if document is not None else _empty_document()
-        # 读取边界：旧 schema 的 serial / name / model_index 在进入校验前投影成当前字段。
-        self._document = _migrate_legacy_document(source)
+        self._document = source
         self._validate()
 
     # ---------- 加载与保存 ----------
@@ -493,7 +446,7 @@ class InstrumentRegistry:
             payload = read_json(self.path)
             if not isinstance(payload, dict):
                 raise InstrumentRegistryError(f"设备表根节点必须是对象: {self.path}")
-            self._document = _migrate_legacy_document(payload)
+            self._document = payload
         else:
             self._document = _empty_document()
         self._validate()
@@ -748,7 +701,6 @@ __all__ = [
     "DEFAULT_REGISTRY_FILENAME",
     "InstrumentRegistry",
     "InstrumentRegistryError",
-    "LEGACY_SCHEMA_VERSIONS",
     "MAX_KNOWN_IPS",
     "SCHEMA_VERSION",
     "default_registry_path",

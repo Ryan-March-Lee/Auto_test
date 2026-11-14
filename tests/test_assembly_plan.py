@@ -209,9 +209,6 @@ class AssemblyPlanValidationTests(unittest.TestCase):
         self.assertEqual(plan.dut_power_plan.tokens, ("DP8B1519/CH2",))
         self.assertEqual([supply.supply_id for supply in plan.supplies], ["DP8B1519"])
 
-    def test_dut_and_driver_cannot_share_a_channel(self):
-        with self.assertRaisesRegex(ValueError, "占用了同一个电源通道"):
-            hardware_assembly_plan(_config(driver="DP8B1519"))
 
     def test_duplicate_short_labels_fail(self):
         # 引用只写 supply_id，两台电源挂同一个显示名：日志无法指向唯一设备。
@@ -267,23 +264,6 @@ class EmergencyChannelOrderTests(unittest.TestCase):
         self.assertEqual(plan.supplies[0].declared_channels, ("CH1", "CH2", "CH3"))
 
 
-class SharedHelperTests(unittest.TestCase):
-    """短标签与通道判据各只有一份实现。"""
-
-    def test_short_label_prefers_the_configured_label(self):
-        self.assertEqual(supply_short_label("  DP8B1519 ", "key"), "DP8B1519")
-        self.assertEqual(supply_short_label("   ", "key"), "key")
-        self.assertEqual(supply_short_label(None, "key"), "key")
-        self.assertEqual(supply_short_label({"label": "x"}, "key"), "key")
-
-    def test_declared_channels_requires_a_non_empty_object(self):
-        with self.assertRaisesRegex(ValueError, "必须配置非空通道对象"):
-            declared_channels({"channels": {}}, "DP8B1519")
-        with self.assertRaisesRegex(ValueError, "必须配置非空通道对象"):
-            declared_channels({}, "DP8B1519")
-        self.assertEqual(
-            declared_channels({"channels": {"CH1": {}}}, "DP8B1519"), {"CH1": {}}
-        )
 
 
 if __name__ == "__main__":

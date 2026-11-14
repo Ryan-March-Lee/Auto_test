@@ -37,7 +37,7 @@ CEYEAR_IDN = "Ceyear Technologies,4082F,QZNI000866,1.12.04"
 # 设备表里登记的固定角色：界面不再让用户选择，发现结果直接按它显示与写入。
 DEVICE_ROLES = {
     SMW_IDN: "signal_generator",
-    DP832A_IDN: "PS3",
+    DP832A_IDN: "power_supply",
     CEYEAR_IDN: "spectrum_analyzer",
 }
 

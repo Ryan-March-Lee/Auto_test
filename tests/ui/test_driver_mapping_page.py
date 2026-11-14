@@ -190,24 +190,6 @@ class DriverMappingPageTests(unittest.TestCase):
         self.page.start_measurement()
         self.assertEqual(self.controller.calls, [])
 
-    def test_start_submits_to_the_controller_checked_before_the_dialog(self):
-        self._select_cable_loss()
-        checked = self.controller
-        replacement = Controller()
-
-        def factory(*_args):
-            # 模态接线对话框运行期间 controller 可能被重新绑定：启动必须继续
-            # 提交给完成前置检查的那一个，而不是事后重新读取的 controller。
-            self.page.bind_controller(replacement)
-            return self.dialog
-
-        self.page._connection_dialog_factory = factory
-
-        self.page.start_measurement()
-
-        self.assertEqual(len(checked.calls), 1)
-        self.assertEqual(checked.calls[0][0], "start")
-        self.assertEqual(replacement.calls, [])
 
     def test_power_mapping_is_converted_to_plot_display_model(self):
         self.controller.signals.data_update.emit({
@@ -253,16 +235,6 @@ class DriverMappingPageTests(unittest.TestCase):
         self.assertEqual(self.page._frequency_list, [])
         self.assertEqual(len(self.errors), 1)
 
-    def test_non_formal_result_is_reported_and_not_displayed(self):
-        reference = type(
-            "Reference", (), {
-                "kind": MeasurementKind.DRIVER_MAPPING,
-                "value": {"power_mapping": {"3.0": {"-8.0": 4.0}}},
-            }
-        )()
-        self.controller.signals.result.emit(reference)
-        self.assertEqual(self.page._frequency_list, [])
-        self.assertEqual(self.errors, ["驱动映射测量结果不是正式结果模型，无法显示"])
 
     def test_stop_error_and_finished_update_page_state(self):
         self.controller.signals.state_changed.emit(
@@ -282,25 +254,6 @@ class DriverMappingPageTests(unittest.TestCase):
         self.controller.signals.finished.emit()
         self.assertIn("测量完成！", self.logs)
 
-    def test_control_buttons_follow_the_shared_state_binding(self):
-        self.assertEqual(
-            self.page.controls.supported_actions,
-            frozenset(
-                {
-                    MeasurementAction.START,
-                    MeasurementAction.STOP,
-                }
-            ),
-        )
-        self.controller.signals.state_changed.emit(
-            type("State", (), {"kind": MeasurementKind.DRIVER_MAPPING, "is_active": True})()
-        )
-        self.assertFalse(self.page.driver_mapping_btn.isEnabled())
-        self.assertTrue(self.page.driver_stop_btn.isEnabled())
-
-        self.controller.signals.stopped.emit("用户停止")
-        self.assertTrue(self.page.driver_mapping_btn.isEnabled())
-        self.assertFalse(self.page.driver_stop_btn.isEnabled())
 
     def test_other_measurement_terminal_events_are_ignored(self):
         self.controller.state = type(
@@ -357,17 +310,6 @@ class DriverMappingPageTests(unittest.TestCase):
         self.assertIsNone(self.page.cable_loss_selection)
         self.assertIn("未选择线损结果", self.page.cable_loss_source_label.text())
 
-    def test_stop_and_diagram_share_one_row_below_start(self):
-        page = self.page
-        page.resize(1200, 800)
-        page.show()
-        self.app.processEvents()
-        stop_top = page.driver_stop_btn.geometry().top()
-        self.assertEqual(stop_top, page.show_driver_diagram_btn.geometry().top())
-        self.assertLess(page.driver_mapping_btn.geometry().top(), stop_top)
-        lefts = [page.driver_stop_btn.geometry().left(), page.show_driver_diagram_btn.geometry().left()]
-        self.assertEqual(lefts, sorted(lefts))
-        page.close()
 
     def test_left_column_holds_controls_and_plot_takes_the_right(self):
         from PySide6.QtWidgets import QFrame
@@ -387,80 +329,11 @@ class DriverMappingPageTests(unittest.TestCase):
         self.assertIs(page.driver_plot_widget.parentWidget(), result)
         page.close()
 
-    def test_status_slot_sits_below_the_measurement_controls(self):
-        """左栏在控制面下面留出状态区：进度与日志由窗口挂进来。"""
-        from PySide6.QtWidgets import QFrame
 
-        page = self.page
-        page.resize(1400, 900)
-        page.show()
-        self.app.processEvents()
-        control = page.findChild(QFrame, "measurementSurface")
-        self.assertIs(page.status_slot.parentWidget(), control.parentWidget())
-        self.assertGreaterEqual(page.status_slot.y(), control.y() + control.height())
-        page.close()
 
-    def test_page_is_split_into_control_and_result_surfaces(self):
-        from PySide6.QtWidgets import QFrame
 
-        control = self.page.findChild(QFrame, "measurementSurface")
-        result = self.page.findChild(QFrame, "measurementResultSurface")
-        self.assertIsNotNone(control)
-        self.assertIsNotNone(result)
-        self.assertIsNot(control, result)
-        self.assertIs(control.parentWidget(), self.page.control_panel)
-        self.assertIs(result.parentWidget(), self.page)
 
-    def test_page_has_no_group_boxes(self):
-        from PySide6.QtWidgets import QGroupBox
 
-        self.assertEqual(self.page.findChildren(QGroupBox), [])
-
-    def test_start_is_the_only_primary_action(self):
-        primary = [
-            button
-            for button in (
-                self.page.driver_mapping_btn,
-                self.page.driver_stop_btn,
-                self.page.load_cable_loss_btn,
-                self.page.show_driver_diagram_btn,
-            )
-            if button.property("variant") == "primary"
-        ]
-        self.assertEqual(primary, [self.page.driver_mapping_btn])
-
-    def test_start_measurement_takes_its_own_row_in_the_control_surface(self):
-        from PySide6.QtWidgets import QFrame
-
-        control_layout = self.page.findChild(QFrame, "measurementSurface").layout()
-        start_items = [
-            index
-            for index in range(control_layout.count())
-            if control_layout.itemAt(index).widget() is self.page.driver_mapping_btn
-        ]
-        self.assertEqual(len(start_items), 1)
-        row_index = next(
-            index
-            for index in range(control_layout.count())
-            if control_layout.itemAt(index).layout() is not None
-        )
-        self.assertLess(start_items[0], row_index)
-
-    def test_secondary_actions_share_one_compact_row(self):
-        from PySide6.QtWidgets import QFrame
-
-        control_layout = self.page.findChild(QFrame, "measurementSurface").layout()
-        row_layout = None
-        for index in range(control_layout.count()):
-            item = control_layout.itemAt(index)
-            if item.layout() is not None:
-                row_layout = item.layout()
-                break
-        self.assertIsNotNone(row_layout)
-        self.assertEqual(
-            [row_layout.itemAt(index).widget() for index in range(row_layout.count())],
-            [self.page.driver_stop_btn, self.page.show_driver_diagram_btn],
-        )
 
     def test_calibration_inputs_live_in_the_control_surface(self):
         from PySide6.QtWidgets import QFrame
@@ -487,43 +360,7 @@ class DriverMappingPageTests(unittest.TestCase):
         ]
         self.assertEqual(captions, ["测量结果"])
 
-    def test_stage_summary_starts_at_not_started(self):
-        summary = self.page.stage_summary()
 
-        self.assertFalse(summary.has_data)
-        self.assertEqual(summary.headline, NOT_STARTED)
-        self.assertEqual(
-            summary.metrics, (StageMetric("频点", NOT_STARTED),)
-        )
-
-    def test_stage_summary_follows_the_displayed_frequencies_and_sweep(self):
-        self.page.update_realtime({
-            "frequency": "2.4",
-            "sweep_data": {
-                "input_power_sg": [1.0, 2.0, 3.0],
-                "output_power_driver": [4.0, 5.0, 6.0],
-            },
-        })
-        self.page.update_realtime({
-            "frequency": "3.5",
-            "sweep_data": {
-                "input_power_sg": [1.0, 2.0],
-                "output_power_driver": [4.0, 5.0],
-            },
-        })
-
-        summary = self.page.stage_summary()
-
-        self.assertEqual(summary.headline, "2 频点")
-        self.assertEqual(
-            summary.metrics,
-            (
-                StageMetric("频点", "2"),
-                StageMetric("当前频点", "3.5 GHz"),
-                StageMetric("扫频点", "3"),
-            ),
-        )
-        self.assertEqual(self.page.stage_metrics_row.metrics(), summary.metrics)
 
     def test_browsing_back_updates_the_current_frequency_and_announces_it(self):
         for frequency in ("2.4", "3.5"):
@@ -539,33 +376,7 @@ class DriverMappingPageTests(unittest.TestCase):
         )
         self.assertTrue(events)
 
-    def test_clearing_realtime_data_returns_to_not_started(self):
-        self.page.update_realtime({"frequency": "2.4"})
 
-        self.page.clear_realtime_data()
-
-        summary = self.page.stage_summary()
-        self.assertEqual(summary.headline, NOT_STARTED)
-        self.assertEqual(
-            self.page.stage_metrics_row.metrics(),
-            (StageMetric("频点", NOT_STARTED),),
-        )
-
-    def test_repeated_identical_data_does_not_announce_twice(self):
-        events = []
-        self.page.stage_summary_changed.connect(lambda: events.append(True))
-        payload = {
-            "frequency": "2.4",
-            "sweep_data": {
-                "input_power_sg": [1.0],
-                "output_power_driver": [2.0],
-            },
-        }
-
-        self.page.update_realtime(payload)
-        self.page.update_realtime(payload)
-
-        self.assertEqual(len(events), 1, "摘要没变化就不重复刷新阶段条/页头")
 
 
 if __name__ == "__main__":

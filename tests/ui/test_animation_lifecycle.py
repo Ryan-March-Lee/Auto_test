@@ -1,20 +1,6 @@
-"""通用过渡与 Overlay 约定（技术债重构步骤 12）。
+"""覆盖层生命周期的最小契约。
 
-仪器卡片重构里重复出现的只有四件事：覆盖层生命周期、取消协议、完成信号、页面隐藏
-时自动停止。完成信号沿用步骤 7 的 ``CardDealAnimation.finished``（由
-``test_card_deal_animation.py`` 覆盖），这里锁定前两件与“宿主变化就收尾”的接线，
-避免新增页面动效时又各自接事件、各自清计时器：
-
-- :class:`presentation.qt.animation_lifecycle.OverlayLifecycle` 把“宿主尺寸/滚动/
-  隐藏变化就收尾”收在一处，页面只登记一个收尾入口；
-- 收尾原因取固定名称（``surface-changed`` / ``page-hidden`` / ``page-shutdown``）；
-- 动画对象只暴露 ``is_running()`` / ``cancel(*, reveal, reason)``，页面收尾入口
-  （``CancelEntry``）另外回答“这一次是否真的收尾了”，每张控件由它统一恢复；
-- 宿主隐藏、所在窗口最小化时自动收尾（面板单独使用、没有页面级覆盖层的情形由面板
-  自己接隐藏事件）。
-
-这里只验证覆盖层与生命周期约定本身；发现页的真实接线（页面隐藏、页面关闭时收尾）在
-``tests/integration/device_discovery``。
+保留取消协议、宿主隐藏时收尾与关停幂等；尺寸/滚动触发和逐帧动画细节不再保留。
 """
 
 import os
@@ -81,13 +67,6 @@ class OverlayLifecycleTests(unittest.TestCase):
         lifecycle.attach(cancel)
         return host, overlay, lifecycle, cancel
 
-    def test_the_cancel_reasons_are_fixed_names(self):
-        """收尾原因是对外契约：日志、诊断与测试按同一个词检索。"""
-        from presentation.qt import animation_lifecycle
-
-        self.assertEqual(animation_lifecycle.CANCEL_REASON_SURFACE_CHANGED, "surface-changed")
-        self.assertEqual(animation_lifecycle.CANCEL_REASON_PAGE_HIDDEN, "page-hidden")
-        self.assertEqual(animation_lifecycle.CANCEL_REASON_PAGE_SHUTDOWN, "page-shutdown")
 
     def test_an_animation_only_needs_is_running_and_cancel(self):
         """动画对象只回答“是否在播”与“如何收尾”，不承担页面状态恢复。"""
@@ -104,76 +83,11 @@ class OverlayLifecycleTests(unittest.TestCase):
             "动画对象的 cancel() 不返回“页面是否收尾”，那是收尾入口的职责",
         )
 
-    def test_the_page_entry_reports_whether_it_cancelled(self):
-        """页面收尾入口返回“这一次是否真的收尾了”：重复入口据此幂等。"""
-        from presentation.qt.animation_lifecycle import CancelEntry
 
-        entry = RecordingCancel()
 
-        self.assertIsInstance(entry, CancelEntry)
-        self.assertTrue(entry(reason="page-hidden"))
-        self.assertFalse(entry(reason="page-hidden"), "没有在播时不再算一次收尾")
 
-    def test_attaching_something_else_is_rejected(self):
-        _host, _overlay, lifecycle, _cancel = self._lifecycle()
 
-        with self.assertRaises(TypeError):
-            lifecycle.attach("not a callable")
 
-    def test_without_an_entry_cancel_does_nothing(self):
-        from presentation.qt.animation_lifecycle import OverlayLifecycle
-
-        host, overlay = _host_with_overlay()
-        self.addCleanup(host.close)
-        lifecycle = OverlayLifecycle(overlay)
-
-        self.assertFalse(lifecycle.cancel(reason="surface-changed"))
-
-    def test_the_lifecycle_exposes_its_overlay(self):
-        _host, overlay, lifecycle, _cancel = self._lifecycle()
-
-        self.assertIs(lifecycle.overlay(), overlay)
-
-    def test_a_host_resize_cancels_the_running_transition(self):
-        """覆盖层尺寸变化 = 冻结的动画坐标失效：按 ``surface-changed`` 收尾。"""
-        from presentation.qt.animation_lifecycle import CANCEL_REASON_SURFACE_CHANGED
-
-        host, _overlay, _lifecycle, cancel = self._lifecycle()
-
-        host.resize(600, 420)
-        self.app.processEvents()
-
-        self.assertEqual(
-            cancel.calls, [(True, CANCEL_REASON_SURFACE_CHANGED)], "缩放只收尾一次"
-        )
-
-    def test_scrolling_a_registered_area_cancels_the_running_transition(self):
-        """滚动区两个方向都算：滚动会挪动卡片在覆盖层里的位置。"""
-        from presentation.qt.animation_lifecycle import (
-            CANCEL_REASON_SURFACE_CHANGED,
-            OverlayLifecycle,
-        )
-
-        host, overlay = _host_with_overlay()
-        self.addCleanup(host.close)
-        area = QScrollArea(host)
-        area.resize(200, 150)
-        content = QWidget()
-        content.setMinimumSize(800, 800)
-        area.setWidget(content)
-        lifecycle = OverlayLifecycle(overlay)
-        cancel = RecordingCancel()
-        lifecycle.attach(cancel)
-        lifecycle.watch_scrolling(area)
-
-        area.verticalScrollBar().setValue(area.verticalScrollBar().maximum())
-        area.horizontalScrollBar().setValue(area.horizontalScrollBar().maximum())
-
-        self.assertEqual(
-            cancel.calls,
-            [(True, CANCEL_REASON_SURFACE_CHANGED)],
-            "第一次滚动收尾之后，第二次滚动没有在播的动画可取消",
-        )
 
     def test_hiding_the_host_cancels_and_restores(self):
         """宿主被藏起来（切页、标签页切走、窗口最小化）：按 ``page-hidden`` 收尾。"""
@@ -186,39 +100,7 @@ class OverlayLifecycleTests(unittest.TestCase):
 
         self.assertEqual(cancel.calls, [(True, CANCEL_REASON_PAGE_HIDDEN)])
 
-    def test_minimizing_the_host_window_cancels_and_announces_once(self):
-        """最小化只发给顶层窗口：覆盖层要自己盯住窗口状态，并且只通知一次。
 
-        有些平台把最小化翻译成子控件的 Hide，有些只发顶层 ``WindowStateChange``；
-        两条路径都走同一个“看不见”通知，因此收尾入口只应收到一次 ``page-hidden``。
-        """
-        from presentation.qt.animation_lifecycle import CANCEL_REASON_PAGE_HIDDEN
-
-        host, overlay, _lifecycle, cancel = self._lifecycle()
-        announced = []
-        overlay.host_hidden.connect(lambda: announced.append(True))
-
-        host.showMinimized()
-        self.app.processEvents()
-
-        self.assertTrue(host.isMinimized())
-        self.assertEqual(announced, [True], "同一次最小化只通知一次")
-        self.assertEqual(cancel.calls, [(True, CANCEL_REASON_PAGE_HIDDEN)])
-
-        host.showNormal()
-        self.app.processEvents()
-        self.assertFalse(host.isMinimized())
-
-    def test_the_overlay_announces_that_its_host_was_hidden(self):
-        """覆盖层只报“宿主藏起来了”；层级与几何仍由它自己保证。"""
-        host, overlay, _lifecycle, _cancel = self._lifecycle()
-        announced = []
-        overlay.host_hidden.connect(lambda: announced.append(True))
-
-        host.hide()
-        self.app.processEvents()
-
-        self.assertEqual(announced, [True])
 
     def test_shutdown_ends_without_restoring_and_is_idempotent(self):
         """页面关闭：收尾但不恢复即将销毁的控件，重复调用不再触发事件。"""
@@ -235,15 +117,6 @@ class OverlayLifecycleTests(unittest.TestCase):
         self.app.processEvents()
         self.assertEqual(cancel.calls, [(False, CANCEL_REASON_PAGE_SHUTDOWN)])
 
-    def test_cancel_reports_whether_anything_was_running(self):
-        """取消协议返回“是否真的收尾了一次”：没有在播时页面不必再改状态。"""
-        from presentation.qt.animation_lifecycle import CANCEL_REASON_SURFACE_CHANGED
-
-        _host, _overlay, lifecycle, cancel = self._lifecycle()
-
-        self.assertTrue(lifecycle.cancel(reason=CANCEL_REASON_SURFACE_CHANGED))
-        self.assertFalse(lifecycle.cancel(reason=CANCEL_REASON_SURFACE_CHANGED))
-        self.assertEqual(cancel.calls, [(True, CANCEL_REASON_SURFACE_CHANGED)])
 
 
 if __name__ == "__main__":

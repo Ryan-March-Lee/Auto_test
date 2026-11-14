@@ -12,8 +12,7 @@
   订单号单独存放在 ``order_no``，不参与唯一标识。
 - ``role`` 只表示设备类别（``signal_generator`` / ``spectrum_analyzer`` / ``power_supply``），
   不含“第几台”；多台电源共用 :data:`POWER_SUPPLY_ROLE`，靠各自的缩写设备码区分。
-  旧的槽位编号 ``PS1``..``PS4`` 只在读取旧设备表时被识别，读出的字面量原样保留给读取方；
-  写回时由 :func:`canonical_role` 折叠成 ``power_supply``，注册表的保存路径已经接上这一折叠。
+  旧槽位编号不再被识别，读取到 ``PS1``..``PS4`` 与未知角色一样返回 ``None``。
 - ``label`` 是完整设备码派生的现场缩写设备码（契约名 ``short_code``），**所有登记设备都有**
   （不分角色），首次生成后冻结；界面显示优先用它（电源的缩写码同时是配置里的 ``supply_id``）。
 """
@@ -88,22 +87,12 @@ INSTRUMENT_ROLES = ("signal_generator", "spectrum_analyzer")
 POWER_SUPPLY_ROLE = "power_supply"
 # 可登记（可写回）的角色取值：新配置与新注册表只允许这些值。
 DEVICE_ROLES = INSTRUMENT_ROLES + (POWER_SUPPLY_ROLE,)
-# 旧电源槽位编号：只在读取旧设备表时被识别，写回时由 :func:`canonical_role` 折叠成
-# ``POWER_SUPPLY_ROLE``。常量保留下来供迁移识别与旧数据兼容，**不再作为新角色集合使用**。
-# 这里是固定槽位字面量的**唯一**登记处（读取边界）：其它生产模块不得再写槽位名，
-# 也不得用它批量生成电源键——新增电源只按 ``supply_id``（= 缩写设备码）落键，不需要改常量。
-POWER_SUPPLY_SLOTS = ("PS1", "PS2", "PS3", "PS4")
-LEGACY_ROLES = POWER_SUPPLY_SLOTS
-# 归一化可以接受的取值：新类别 + 旧槽位（兼容分支）。
-TEST_ROLES = DEVICE_ROLES + LEGACY_ROLES
+# 归一化可以接受的取值与可写回角色一致；旧槽位不再兼容。
+TEST_ROLES = DEVICE_ROLES
 
 
 def normalize_role(value: Any) -> str | None:
-    """把设备表的 ``role`` 归一化为 :data:`TEST_ROLES` 之一；空值或未知角色返回 ``None``。
-
-    新类别（:data:`DEVICE_ROLES`）原样通过；旧槽位编号 ``PS1``..``PS4`` 走兼容分支
-    也原样返回，好让读取方还能按旧角色找到对应设备。**这里不做折叠**：写回时要用的
-    规范取值由 :func:`canonical_role` 提供，两者分开才能既能读旧表又不写回旧值。
+    """把设备表的 ``role`` 归一化为 :data:`DEVICE_ROLES` 之一；空值或未知角色返回 ``None``。
 
     未知角色不在这里猜成某个默认角色：角色决定地址往哪一路写，猜错会把电源接到
     错误的通道上。
@@ -111,36 +100,15 @@ def normalize_role(value: Any) -> str | None:
     text = normalize_text(value)
     if text in DEVICE_ROLES:
         return text
-    if text in LEGACY_ROLES:
-        return text
     return None
 
 
 def canonical_role(value: Any) -> str | None:
-    """把可识别的角色折叠为 :data:`DEVICE_ROLES` 之一，供新配置与新注册表写回。
+    """把可识别的角色规范化为 :data:`DEVICE_ROLES` 之一，供新配置与新注册表写回。
 
-    旧槽位 ``PS1``..``PS4`` 折叠成 :data:`POWER_SUPPLY_ROLE`；``signal_generator`` /
-    ``spectrum_analyzer`` / ``power_supply`` 原样返回；空值与未知角色返回 ``None``
-    （不猜成电源）。
-
-    本函数是**写回**的唯一折叠入口，纯计算、不落盘：``InstrumentRegistry.save`` 在写盘前调用
-    它，把内存里可能还带旧槽位的文档迁移成新字段。
+    空值与未知角色返回 ``None``（不猜成电源）。纯计算、不落盘。
     """
-    role = normalize_role(value)
-    if role is not None and role in LEGACY_ROLES:
-        return POWER_SUPPLY_ROLE
-    return role
-
-
-def is_legacy_power_supply_slot(value: Any) -> bool:
-    """``value`` 是否是旧电源槽位编号（``PS1``..``PS4``）。
-
-    只回答“这段文本是旧槽位名”，**绝不**用来生成新的电源键：新配置的电源键是
-    ``supply_id``（= 缩写设备码），与槽位序号无关。需要它的场合都在读取边界上，例如判断旧
-    配置条目把槽位名填进了 ``model``（那不是型号），好让写回的运行快照留空而不是把编号
-    当型号。
-    """
-    return normalize_text(value) in LEGACY_ROLES
+    return normalize_role(value)
 
 
 def make_device_key(vendor: Any, full_code: Any) -> str:
@@ -312,12 +280,9 @@ __all__ = [
     "Instrument",
     "InstrumentEndpoint",
     "InstrumentIdentity",
-    "LEGACY_ROLES",
     "POWER_SUPPLY_ROLE",
-    "POWER_SUPPLY_SLOTS",
     "TEST_ROLES",
     "canonical_role",
-    "is_legacy_power_supply_slot",
     "make_device_key",
     "normalize_full_code",
     "normalize_model",

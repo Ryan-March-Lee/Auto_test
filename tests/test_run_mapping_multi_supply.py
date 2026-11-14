@@ -1,12 +1,12 @@
 """门禁：正式运行映射的多电源集合（重构计划步骤 10）。
 
-步骤 10 把 ``RunResourceMapping`` 的电源段从单数 ``instruments.power_supply`` 扩展为集合
-``instruments.power_supplies``，并保留旧单数结构的读取兼容。本文件固定三件事：
+``RunResourceMapping`` 的电源段是集合 ``instruments.power_supplies``，不再读取旧单数结构。
+本文件固定三件事：
 
-- 新结构能表达多台电源，快照条目自带 ``label`` / ``model`` / ``full_code`` / ``device_key`` /
+- 集合能表达多台电源，快照条目自带 ``label`` / ``model`` / ``full_code`` / ``device_key`` /
   ``visa_address``，通道写成 ``supply_id/CHx``；
-- 旧快照（单数电源条目、裸通道名）仍能解析、仍能通过校验——历史运行不能因为换了结构打不开；
-- 新结构的冲突（地址重复、身份重复、路由指向不存在的电源、新旧写法混用）在连接前失败。
+- 旧单数条目、裸通道名与新旧混用都会被明确拒绝；
+- 新结构的冲突（地址重复、身份重复、路由指向不存在的电源）在连接前失败。
 
 数据契约见 ``domain/configuration/models.py`` 的 ``PowerSupplyMapping`` 与
 ``tests/fixtures/power_supply_identity/`` 里的样例。
@@ -308,14 +308,6 @@ class MultiSupplyMappingTests(unittest.TestCase):
 
         self.assertIn("instruments.power_supplies", paths)
 
-    def test_empty_collection_beside_a_legacy_entry_is_still_mixed(self):
-        """混写判据是集合**键**在不在：``power_supplies: {}`` 不能把旧写法洗白。"""
-        data = _fixture("run_mapping_legacy_single.json")
-        data["instruments"]["power_supplies"] = {}
-
-        paths = {issue.path for issue in validate_run_mapping(data).errors}
-
-        self.assertIn("instruments.power_supply", paths)
 
     def test_the_collection_is_not_listed_as_an_instrument(self):
         """电源集合有自己的一层结构，不能在逐台仪器表里多出一条空仪器。"""
@@ -324,16 +316,6 @@ class MultiSupplyMappingTests(unittest.TestCase):
         self.assertNotIn("power_supplies", mapping.instruments)
         self.assertTrue(mapping.declares_power_supplies())
 
-    def test_legacy_snapshot_round_trip_keeps_the_legacy_shape(self):
-        """旧快照读入再写回仍是旧形状，不会被补一个空集合变成混写文档。"""
-        mapping = RunResourceMapping.from_dict(_fixture("run_mapping_legacy_single.json"))
-
-        payload = mapping.to_dict()
-
-        self.assertIn("power_supply", payload["instruments"])
-        self.assertNotIn("power_supplies", payload["instruments"])
-        self.assertFalse(mapping.declares_power_supplies())
-        self.assertTrue(validate_run_mapping(payload).valid)
 
     def test_new_snapshot_round_trip_writes_only_the_collection(self):
         """新结构写回时旧单数条目被丢掉：电源只有一个来源。"""
@@ -348,58 +330,8 @@ class MultiSupplyMappingTests(unittest.TestCase):
         )
 
 
-class LegacySingleSupplyMappingTests(unittest.TestCase):
-    """旧结构：单数电源条目、裸通道名，保持可读可校验。"""
 
-    def test_legacy_fixture_still_parses_and_validates(self):
-        mapping = RunResourceMapping.from_dict(_fixture("run_mapping_legacy_single.json"))
 
-        self.assertIn("power_supply", mapping.instruments)
-        self.assertEqual(mapping.power_supplies, {})
-        self.assertTrue(validate_run_mapping(mapping).valid)
-        # 裸通道名原样保留：旧快照按当时写下的字段显示，不在这里改写。
-        self.assertEqual(
-            [item.channel for item in mapping.dut_power_channels], ["CH1", "CH2"]
-        )
-
-    def test_legacy_mapping_reports_missing_supply(self):
-        """旧快照只剩仪器条目时没有电源：报告“缺少电源”，而不是丢掉这件事。"""
-        data = _fixture("run_mapping_legacy_single.json")
-        del data["instruments"]["power_supply"]
-
-        paths = {issue.path for issue in validate_run_mapping(data).errors}
-
-        self.assertIn("instruments.power_supplies", paths)
-
-    def test_incomplete_legacy_entry_is_reported_on_its_own_field(self):
-        """旧快照的单数条目仍在时，缺字段报告落在旧键上，历史运行不受新结构影响。"""
-        data = _fixture("run_mapping_legacy_single.json")
-        data["instruments"]["power_supply"]["visa_address"] = None
-
-        paths = {issue.path for issue in validate_run_mapping(data).errors}
-
-        self.assertIn("instruments.power_supply.visa_address", paths)
-
-    def test_legacy_accessor_exposes_the_only_supply(self):
-        data = two_supply_mapping()
-        data["instruments"]["power_supplies"] = {
-            "DP8B1519": data["instruments"]["power_supplies"]["DP8B1519"]
-        }
-        data["dut_power_channels"] = [
-            {"channel": "DP8B1519/CH1", "role": "gate", "connection": "gate"},
-            {"channel": "DP8B1519/CH2", "role": "drain", "connection": "drain"},
-        ]
-        mapping = RunResourceMapping.from_dict(data)
-
-        legacy = mapping.legacy_power_supply()
-
-        self.assertIsNotNone(legacy)
-        self.assertEqual(legacy.model, "DP832A")
-        self.assertEqual(legacy.visa_address, "sim::ps1")
-        # 多台电源时“那台电源”没有唯一答案，不猜。
-        self.assertIsNone(
-            RunResourceMapping.from_dict(two_supply_mapping()).legacy_power_supply()
-        )
 
 
 class RunContextSupplyTests(unittest.TestCase):
@@ -416,17 +348,6 @@ class RunContextSupplyTests(unittest.TestCase):
             dict(context.power_channel_mapping)["drain"], "DP8B0885/CH2 -> DUT 漏极"
         )
 
-    def test_context_keeps_the_legacy_single_supply_view_readable(self):
-        context = RunContext.from_resource_mapping(
-            _fixture("run_mapping_legacy_single.json"), run_id="run-1"
-        )
-
-        self.assertEqual(
-            dict(context.power_supply),
-            {"model": "PS1", "visa_address": "TCPIP0::192.168.1.101::inst0::INSTR"},
-        )
-        # 旧映射只有一个条目：按槽位名读成一台电源，历史上下文仍能指到它。
-        self.assertEqual(sorted(context.power_supplies), ["PS1"])
 
     def test_context_freezes_instrument_identity(self):
         """信号源与频谱仪的运行快照自带身份，运行期间不回查注册表。"""
@@ -443,45 +364,6 @@ class RunContextSupplyTests(unittest.TestCase):
             },
         )
 
-    def test_context_projects_legacy_serial_into_full_code(self):
-        """旧快照把完整设备码写在 ``serial`` 里：读入后只保留 ``full_code``。
-
-        这里覆盖三类条目——信号源、频谱仪与电源集合——因为同一份旧文档必须在校验/追溯
-        （``RunResourceMapping``）与运行（``RunContext``）两条路径上得到同一台设备。
-        """
-        data = two_supply_mapping()
-        for name in ("signal_generator", "spectrum_analyzer"):
-            entry = data["instruments"][name]
-            entry["serial"] = entry.pop("full_code")
-        for record in data["instruments"]["power_supplies"].values():
-            record["serial"] = record.pop("full_code")
-
-        mapping = RunResourceMapping.from_dict(data)
-        context = RunContext.from_resource_mapping(data, run_id="run-legacy")
-        payload = context.to_dict()
-
-        snapshots = {
-            "signal_generator": dict(context.signal_generator),
-            "spectrum_analyzer": dict(context.spectrum_analyzer),
-            **payload["power_supplies"],
-        }
-        for name, snapshot in snapshots.items():
-            with self.subTest(entry=name):
-                self.assertNotIn("serial", snapshot, "读入后只保留 full_code")
-                self.assertTrue(snapshot.get("full_code"), "旧 serial 必须投影为 full_code")
-        self.assertEqual(
-            snapshots["signal_generator"]["full_code"],
-            mapping.instruments["signal_generator"].full_code,
-            "运行上下文与运行映射必须给出同一份完整设备码",
-        )
-        self.assertEqual(
-            snapshots["DP8B0885"]["full_code"],
-            mapping.power_supplies["DP8B0885"].full_code,
-        )
-        self.assertEqual(
-            payload["signal_generator"]["full_code"],
-            data["instruments"]["signal_generator"]["serial"],
-        )
 
     def test_new_snapshot_never_writes_two_full_code_fields(self):
         """写出的快照只有 ``full_code``：旧键不会被回写，也不会出现双份身份。"""

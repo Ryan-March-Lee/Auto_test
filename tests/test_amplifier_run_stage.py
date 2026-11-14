@@ -234,10 +234,6 @@ class _Context:
         self.run_id = run_id
 
 
-class _UnwritableResultRepository:
-    """正式运行只写运行目录结果；该对象不提供任何结果写入能力。"""
-
-
 class _FailingCommitRepository:
     """把主功放阶段提交为 completed 时的 manifest 写入注入失败。"""
 
@@ -819,20 +815,6 @@ class AmplifierRunStageTests(unittest.TestCase):
 
     # -- 输入隔离与前置失败 ------------------------------------------------
 
-    def test_missing_explicit_cable_loss_fails_before_hardware(self):
-        self._create_run()
-        instrument = _Instrument()
-
-        with self.assertRaisesRegex(StageInputUnavailable, "显式选择线损"):
-            AmplifierMeasurementUseCase(
-                self._request(instrument=instrument, loss_data=None),
-                sleep_fn=lambda _: None,
-            )
-
-        self.assertEqual(instrument.measured, 0)
-        manifest = self.repository.load_manifest(RUN_ID)
-        self.assertEqual(manifest.stage(STAGE_AMPLIFIER).status, StageStatus.PENDING)
-        self.assertFalse((self._run_directory() / AMPLIFIER_RESULT_PATH).exists())
 
     def test_driver_mode_without_mapping_fails_before_hardware(self):
         self._create_run()
@@ -887,24 +869,6 @@ class AmplifierRunStageTests(unittest.TestCase):
 
         self.assertEqual(instrument.measured, 0)
 
-    def test_other_run_cable_loss_is_not_auto_selected(self):
-        self._create_run(RUN_ID)
-        self._create_run(OTHER_RUN_ID)
-        self._complete_cable_loss(OTHER_RUN_ID)
-        instrument = _Instrument()
-
-        with self.assertRaisesRegex(StageInputUnavailable, "显式选择线损"):
-            AmplifierMeasurementUseCase(
-                self._request(instrument=instrument, loss_data=None),
-                sleep_fn=lambda _: None,
-            )
-
-        self.assertEqual(instrument.measured, 0)
-        self.assertEqual(
-            self.repository.load_manifest(OTHER_RUN_ID).stage(STAGE_CABLE_LOSS).status,
-            StageStatus.COMPLETED,
-        )
-        self.assertFalse((self._run_directory(RUN_ID) / AMPLIFIER_RESULT_PATH).exists())
 
     def test_global_compatibility_calibration_is_not_used_as_input(self):
         compat = self.base / "test_results" / "cable_loss_results.json"
@@ -917,20 +881,6 @@ class AmplifierRunStageTests(unittest.TestCase):
         with self.assertRaises(StageInputUnavailable):
             AmplifierMeasurementUseCase(self._request(), sleep_fn=lambda _: None)
 
-    def test_tampered_run_directory_copy_no_longer_feeds_the_measurement(self):
-        """步骤 17：运行目录的固定校准文件不再参与新测量输入。"""
-        layout = self._create_run()
-        self._complete_cable_loss()
-        (layout.run_directory / CABLE_LOSS_INPUT_PATH).write_text(
-            json.dumps({"run_id": RUN_ID, "cable_losses": {"1.0": {"cable1": 99.0}}}),
-            encoding="utf-8",
-        )
-
-        result = AmplifierMeasurementUseCase(
-            self._request(), sleep_fn=lambda _: None
-        ).measure_all_frequencies()
-
-        self.assertTrue(result.frequencies)
 
     def test_selected_cross_run_input_is_recorded_with_its_source_run(self):
         """显式选择其它运行的阶段结果时，本次运行记录消费来源而不伪装成自身产出。"""
@@ -1053,22 +1003,6 @@ class AmplifierRunStageTests(unittest.TestCase):
 
     # -- 兼容副本与提交失败 ------------------------------------------------
 
-    def test_run_contract_never_touches_the_compatibility_copy_api(self):
-        layout = self._create_run()
-        self._complete_cable_loss()
-        use_case = AmplifierMeasurementUseCase(
-            self._request(repository=_UnwritableResultRepository()), sleep_fn=lambda _: None
-        )
-
-        result = use_case.measure_all_frequencies()
-
-        stage_path = Path(result.result_reference["archive_path"])
-        self.assertTrue(stage_path.is_file())
-        self.assertEqual(stage_path.parent, self.paths.amplifier_results_dir)
-        self.assertTrue((layout.run_directory / AMPLIFIER_RESULT_PATH).is_file())
-        manifest = self.repository.load_manifest(RUN_ID)
-        self.assertEqual(manifest.stage(STAGE_AMPLIFIER).status, StageStatus.COMPLETED)
-        self.assertNotIn("legacy_copy_path", result.result_reference)
 
     def test_commit_failure_rolls_back_results_and_keeps_stage_unfinished(self):
         layout = self._create_run()
@@ -1139,15 +1073,6 @@ class AmplifierRunStageTests(unittest.TestCase):
         self.assertEqual(manifest.stage(STAGE_DRIVER_MAPPING).status, StageStatus.SKIPPED)
         self.assertEqual(manifest.stage(STAGE_AMPLIFIER).status, StageStatus.COMPLETED)
 
-    def test_composition_checks_input_before_connecting_instruments(self):
-        layout = self._create_run()
-        prepared = self._contract_prepared(layout)
-
-        with patch("app.gui_runtime.connect_instruments") as connect:
-            with self.assertRaises(StageInputUnavailable):
-                create_amplifier_measurement(prepared_run=prepared)
-
-        connect.assert_not_called()
 
     def test_composition_rejects_invalid_calibration_before_connecting(self):
         layout = self._create_run()

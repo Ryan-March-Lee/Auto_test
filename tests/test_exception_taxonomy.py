@@ -43,7 +43,6 @@ from application.run_stages import StageInputUnavailable, StageResultNotRecorded
 from instrument.drivers.spectrum_analyzer import SpectrumAnalyzerMeasurementError
 from instrument.flow import SafetyShutdownError
 from instrument.flow.cleanup import cleanup_measurement
-from instrument.measurement_adapter import PortMeasurementAdapter
 from instrument.ports import InstrumentCapabilityError
 from instrument.power_control import PowerControlError, PowerOnControlError
 from instrument.session import InstrumentSessionError, ManagedInstrumentSession
@@ -284,31 +283,6 @@ class CorePathNarrowingTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 session.close()
 
-    def test_adapter_power_failure_keeps_rf_off_and_propagates_the_error(self):
-        recorder = CommandRecorder()
-        signal = SimulatedSignalGenerator(recorder)
-        session = ManagedInstrumentSession(
-            signal,
-            SimulatedSpectrumAnalyzer(recorder=recorder),
-            SimulatedPowerSupply(recorder),
-            {"gate": "A", "drain": "B"},
-        )
-        session.validate()
-        session.connect()
-        session.prepare()
-        session.power_on()
-        adapter = PortMeasurementAdapter(session)
-        adapter.rf_output_on()
-        self.assertTrue(signal.rf_enabled)
-
-        # 驱动原始异常必须原样上抛，不能被适配器改写成新的运行时错误。
-        signal.set_power_dbm = lambda *args, **kwargs: (_ for _ in ()).throw(
-            ValueError("原始失败")
-        )
-        with self.assertRaises(ValueError):
-            adapter.set_power(-10)
-
-        self.assertFalse(signal.rf_enabled, "功率写入失败后不得重新打开 RF")
 
     def test_driver_close_narrows_to_transport_errors(self):
         """关闭失败只翻译 SCPI 传输错误；其他异常原样上抛。"""

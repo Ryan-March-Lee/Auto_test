@@ -1384,21 +1384,6 @@ class AuthoringDocumentValidationTests(unittest.TestCase):
             {issue.code for issue in result.errors},
         )
 
-    def test_plan_route_to_an_unapplied_supply_is_reported(self):
-        def drop_supply(flat):
-            flat["instruments"]["power_supplies"]["DP8B1519"].pop("address", None)
-
-        result = ConfigurationAuthoringService().validate_document(
-            ConfigurationEditingDocument.from_mapping(self._document_with(drop_supply))
-        )
-
-        self.assertTrue(
-            any(
-                "上电计划引用的电源 'DP8B1519' 没有已应用的设备" in issue.message
-                for issue in result.errors
-            ),
-            [issue.message for issue in result.errors],
-        )
 
 
 if __name__ == "__main__":

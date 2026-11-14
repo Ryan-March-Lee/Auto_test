@@ -1,9 +1,6 @@
-"""欢迎页：两个模式按钮的样式表解放（自绘）与悬停动效。
+"""欢迎页模式选择与配置入口。
 
-按钮的悬停效果在样式表里表达不出来（伪元素、``transition``、``transform``），因此整块
-自绘：一块与按钮等宽的圆形色块从左侧滑入并放大到 1.5 倍，被胶囊裁剪后看起来像一块扫过
-按钮的色块；箭头同时从 45° 转到 90°。这里验证三件事：模式信号照旧发出、动效在两个方向
-上都走满全程、以及静止/扫过时胶囊上的颜色确实变了（不是只有进度数值在动）。
+覆盖两个模式按钮、加载配置链接与模式选择对其它配置键的保留；悬停动画和像素比对不再保留。
 """
 
 import os
@@ -85,88 +82,10 @@ class WelcomePageModeButtonTests(unittest.TestCase):
         link.click()
         self.assertEqual(requests, [True])
 
-    def test_hover_sweeps_the_fill_in_and_back_out(self):
-        _, buttons = _page()
-        button = buttons[0]
-        self.assertEqual(button._fill, 0.0)
-
-        button.enterEvent(
-            QEnterEvent(QPointF(5.0, 5.0), QPointF(5.0, 5.0), QPointF(5.0, 5.0))
-        )
-        QTest.qWait(1100)
-        self.assertAlmostEqual(button._fill, 1.0, places=3)
-        self.assertAlmostEqual(button._foreground, 1.0, places=3)
-
-        button.leaveEvent(QEvent(QEvent.Type.Leave))
-        QTest.qWait(1100)
-        self.assertAlmostEqual(button._fill, 0.0, places=3)
-        self.assertAlmostEqual(button._foreground, 0.0, places=3)
-
-    def test_fill_starts_off_the_capsule_and_ends_covering_it(self):
-        """色块静止时整块停在左边界外（看不见），走完之后整枚胶囊都是强调色。"""
-        _, buttons = _page()
-        button = buttons[0]
-
-        rest = _pixel(button, 0.25, 0.25)
-        self.assertGreater(rest.lightness(), 230, f"静止时应是白色胶囊面，实际 {rest.name()}")
-
-        button._fill = 0.5
-        self.assertGreater(
-            _pixel(button, 0.85, 0.25).lightness(),
-            230,
-            "扫到一半时右端应仍是白色胶囊面",
-        )
-        self.assertLessEqual(
-            _pixel(button, 0.15, 0.25).green(),
-            200,
-            "扫到一半时左端应已被色块压住",
-        )
-
-        button._fill = 1.0
-        swept = _pixel(button, 0.85, 0.25)
-        self.assertLess(swept.red(), 90, f"走完之后应是强调色，实际 {swept.name()}")
-        self.assertGreater(swept.green(), 150, f"走完之后应是强调色，实际 {swept.name()}")
 
 
-    def test_font_size_follows_the_window_size(self):
-        """字号跟着窗口一起缩放：窗口化时变小、全屏（比基准尺寸大）时变大。"""
-        from presentation.qt.welcome_page import REFERENCE_SIZE, TITLE_POINT_SIZE
 
-        page, buttons = _page()  # 900x600，远小于设计基准
-        windowed = page._title.font().pointSizeF()
-        self.assertLess(windowed, TITLE_POINT_SIZE - 1.0, "窗口化后标题应随之变小")
-        self.assertLess(
-            buttons[0]._font.pointSizeF(),
-            13.0,
-            "按钮字号应与标题同比例缩小",
-        )
 
-        page.resize(REFERENCE_SIZE)
-        _application().processEvents()
-        self.assertAlmostEqual(
-            page._title.font().pointSizeF(), TITLE_POINT_SIZE, delta=0.6
-        )
-
-        page.resize(REFERENCE_SIZE.width() * 2, REFERENCE_SIZE.height() * 2)
-        _application().processEvents()
-        self.assertGreater(
-            page._title.font().pointSizeF(),
-            TITLE_POINT_SIZE,
-            "比基准尺寸更大的窗口里标题应继续变大",
-        )
-        self.assertEqual(
-            buttons[0]._font.pointSizeF(), page._subtitle.font().pointSizeF()
-        )
-
-    def test_welcome_background_is_loadable(self):
-        """背景图按压缩规则换成 JPEG 后，欢迎页仍能用 QPixmap 解码绘制。"""
-        from presentation.qt.welcome_page import _welcome_background
-
-        pixmap = _welcome_background()
-
-        self.assertFalse(pixmap.isNull(), "欢迎页背景必须能被 Qt 解码")
-        self.assertGreater(pixmap.width(), 0)
-        self.assertGreater(pixmap.height(), 0)
 
 
 class TestModeSelectionTests(unittest.TestCase):

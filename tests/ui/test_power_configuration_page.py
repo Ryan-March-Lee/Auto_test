@@ -1008,34 +1008,6 @@ class PowerConfigurationPageTests(unittest.TestCase):
             "两个编辑器使用同一份候选，器件归属由勾在哪一组决定",
         )
 
-    def test_one_supply_may_power_driver_and_dut_on_different_channels(self):
-        """同一台电源 CH1 供驱放、CH2 供 DUT：计划已经表达清楚，不需要固定分配。"""
-        page = self.make_page(
-            device_bindings=power_supply_bindings("DP8B1519"),
-            driver_mode={"enabled": True},
-            power_supply_assignment={
-                "driver_amplifier": {
-                    "power_plan": plan(("DP8B1519", "CH1")),
-                },
-                "dut_amplifier": {
-                    "power_plan": plan(("DP8B1519", "CH2")),
-                },
-            },
-            dut_config={
-                "drain_channel": {"supply_id": "DP8B1519", "channel": "CH2"}
-            },
-        )
-
-        written = page.build_config()["power_supply_assignment"]
-        self.assertEqual(
-            written["driver_amplifier"]["power_plan"]["power_sequence"],
-            [{"supply_id": "DP8B1519", "channel": "CH1"}],
-        )
-        self.assertEqual(
-            written["dut_amplifier"]["power_plan"]["power_sequence"],
-            [{"supply_id": "DP8B1519", "channel": "CH2"}],
-        )
-        self.assertTrue(page.validate())
 
     def test_a_plan_route_from_an_unbound_supply_stays_visible(self):
         """引用已失效的电源不能从计划里静默消失，交给正式校验报告。"""

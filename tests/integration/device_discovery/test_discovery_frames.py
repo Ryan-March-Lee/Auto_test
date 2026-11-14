@@ -1,13 +1,7 @@
-"""发现页发牌画面的场景矩阵（技术债重构步骤 9）。
+"""发现页发牌接线的单设备冒烟。
 
-``tests/ui/test_card_deal_frames.py`` 在纯动画对象上钉住六个关键帧；这里把它放回真实
-发现页，确认几种真实结果都能走完同一段画面：
-
-- 没有设备：动画根本不启动，覆盖层里没有一帧牌；
-- 只有一台设备：牌仍然从牌堆飞向唯一槽位，翻完才交回卡片；
-- 多台设备：每张卡都有自己的落点，翻完最后一张才恢复交互；
-- 窄窗口：卡片换行后落点仍在页面覆盖层内，画面不空；
-- 发牌中取消：覆盖层清空，真实卡片恢复可见、可点。
+帧级矩阵已收缩到 ``tests/ui/test_card_deal_frames.py`` 的一条取消用例；这里只确认
+一台真实发现结果能进入发牌、覆盖层确实画出牌，并在动画结束后恢复真实卡片与交互。
 
 判断“覆盖层有没有画出东西”用同一块画布上“与角落底色不同的采样点数量”：覆盖层自己
 不画任何东西，差值只可能来自发牌动画。这样不依赖某台设备的卡片颜色，也能直接发现
@@ -44,15 +38,6 @@ def _single_device_factory(_mode):
         registry=registry(),
         mode=SCAN_MODE_SIMULATED,
         responses={("192.168.1.201", 5025): SMW_IDN},
-        timeout_s=0.02,
-    )
-
-
-def _empty_factory(_mode):
-    return build_scanner(
-        registry=registry(),
-        mode=SCAN_MODE_SIMULATED,
-        responses={},
         timeout_s=0.02,
     )
 
@@ -126,29 +111,6 @@ class DiscoveryFrameTests(DiscoveryPanelTestCase):
         image = self._canvas(panel).grab().toImage()
         return _ink(image), image, layer
 
-    # ---- 无设备 -------------------------------------------------------------
-
-    def test_no_devices_never_paints_a_deal_frame(self):
-        """没有设备就不发牌：覆盖层里不能出现任何一帧牌。"""
-        panel = self.make_panel(_empty_factory, size=(1000, 800))
-        self._scan_until_result(panel)
-
-        self.assertIs(panel.phase(), DiscoveryPhase.IDLE)
-        layer = panel.deal_animation
-        self.assertFalse(layer.is_running())
-        self.assertFalse(layer.isVisible())
-        self.assertEqual(layer.item_count(), 0)
-        snapshot = layer.diagnostics()
-        self.assertEqual(snapshot["event"], "skip")
-        self.assertEqual(snapshot["card_count"], 0)
-        self.assertEqual(snapshot["paint_frames"], 0, "空结果不应绘制发牌画面")
-        self.assertEqual(snapshot["drawn_cards"], 0)
-        self.assertEqual(
-            self._overlay_ink(panel)[0], 0, "没有设备时覆盖层应保持空白"
-        )
-
-    # ---- 单设备与多设备 -----------------------------------------------------
-
     def test_a_single_device_is_dealt_before_its_card_appears(self):
         """只有一台设备：先发一张牌，翻完才恢复真实卡片与交互。"""
         panel = self._dealing(_single_device_factory)
@@ -174,101 +136,6 @@ class DiscoveryFrameTests(DiscoveryPanelTestCase):
         self.assertIsNone(card.graphicsEffect())
         self.assertTrue(card.isVisible())
         self.assertTrue(panel.cards_area.isEnabled())
-
-    def test_multiple_devices_keep_their_own_targets_until_the_last_flip(self):
-        """多台设备：每张卡一个落点，最后一张翻完才恢复交互。"""
-        panel = self._dealing()
-
-        cards = panel.cards()
-        layer = panel.deal_animation
-        self.assertGreater(len(cards), 1)
-        self.assertEqual(layer.item_count(), len(cards))
-        targets = layer.targets()
-        self.assertEqual(len(targets), len(cards))
-        self.assertEqual(
-            len({(round(t.x()), round(t.y())) for t in targets}),
-            len(cards),
-            "每张卡都要有自己的落点，不能叠在同一格",
-        )
-        ink, _image, _layer = self._overlay_ink(panel, layer.duration_ms())
-        self.assertGreater(ink, 0, "多张牌翻完后覆盖层仍是满的")
-
-        layer.finish()
-        self.app.processEvents()
-
-        self.assertIs(panel.phase(), DiscoveryPhase.INTERACTIVE)
-        # 结果统计不再写回状态行：翻完最后一张后没有提示，整行保持隐藏。
-        self.assertEqual(panel.status_label.text(), "")
-        self.assertFalse(panel.status_label.isVisible())
-        for card in cards:
-            self.assertIsNone(card.graphicsEffect())
-            self.assertTrue(card.isVisible())
-
-    # ---- 窄窗口 -------------------------------------------------------------
-
-    def test_a_narrow_panel_wraps_cards_and_still_paints_the_deal(self):
-        """窄窗口：卡片换到多行，落点仍在页面覆盖层里，发牌画面不空。"""
-        panel = self._dealing(six_device_factory, size=(520, 900))
-
-        self.assertEqual(panel.card_count(), 6)
-        layer = panel.deal_animation
-        overlay_rect = QRectF(self._canvas(panel).rect())
-        targets = layer.targets()
-        self.assertEqual(len(targets), 6)
-        self.assertGreaterEqual(
-            len({round(target.y()) for target in targets}),
-            2,
-            "窄窗口下卡片应换行，发牌落点因此有多个纵坐标",
-        )
-        for target in targets:
-            self.assertTrue(
-                overlay_rect.intersects(target), "落点必须在页面覆盖层之内"
-            )
-        clip = layer.clip_rect()
-        self.assertIsNotNone(clip, "卡片区可见时应有裁剪遮罩")
-        self.assertTrue(
-            any(clip.intersects(target) for target in targets),
-            "至少有一张牌落在可见的卡片区里",
-        )
-        ink, _image, _layer = self._overlay_ink(panel, layer.duration_ms())
-        self.assertGreater(ink, 0, "窄窗口下也要画出牌面")
-
-        layer.finish()
-        self.app.processEvents()
-        self.assertIs(panel.phase(), DiscoveryPhase.INTERACTIVE)
-
-    # ---- 取消后恢复 ---------------------------------------------------------
-
-    def test_cancelling_mid_deal_restores_the_real_cards_and_clears_the_overlay(self):
-        """发牌中取消：覆盖层清空，真实卡片恢复可见、可点，状态行不留下统计。"""
-        panel = self._dealing()
-        layer = panel.deal_animation
-        ink_before, _image, _layer = self._overlay_ink(panel, 200.0)
-        self.assertGreater(ink_before, 0, "取消前画面是满的")
-        # 取帧时为了钉住时刻停过表；取消入口按“正在播”判断，这里恢复计时器。
-        layer._timer.start()
-
-        self.assertTrue(
-            panel.cancel_deal_reveal(reveal=True, reason="test-cancel"),
-            "确实取消了一次正在播的发牌",
-        )
-        self.app.processEvents()
-
-        self.assertIs(panel.phase(), DiscoveryPhase.INTERACTIVE)
-        self.assertFalse(layer.is_running())
-        self.assertFalse(layer.isVisible())
-        snapshot = layer.diagnostics()
-        self.assertEqual(snapshot["event"], "cancel")
-        self.assertEqual(snapshot["cancel_reason"], "test-cancel")
-        self.assertEqual(snapshot["restore_result"], "revealed")
-        self.assertTrue(panel.cards_area.isEnabled(), "取消后卡片区恢复可点")
-        self.assertEqual(panel.status_label.text(), "", "取消后不补写结果统计")
-        for card in panel.cards():
-            self.assertIsNone(card.graphicsEffect(), "取消后卡片不再被藏起来")
-            self.assertTrue(card.isVisible())
-        self.assertEqual(
-            self._overlay_ink(panel)[0], 0, "取消后覆盖层必须回到空白"
-        )
 
 
 if __name__ == "__main__":

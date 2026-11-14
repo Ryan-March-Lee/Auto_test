@@ -36,7 +36,7 @@ SMW_IDN = "Rohde&Schwarz,SMW200A,1412.0000K02/105462,5.20.043.47"
 DP832A_IDN = "RIGOL TECHNOLOGIES,DP832A,DP8B214901519,00.01.16"
 _ROLE_BY_MODEL = {
     "SMW200A": "signal_generator",
-    "DP832A": "PS3",
+    "DP832A": "power_supply",
     "4082F": "spectrum_analyzer",
 }
 
@@ -109,7 +109,7 @@ class SimulatedScanTests(unittest.TestCase):
         self.assertTrue(by_ip["192.168.1.201"].registered)
         self.assertEqual(by_ip["192.168.1.201"].known_role, "signal_generator")
         self.assertTrue(by_ip["192.168.1.102"].registered)
-        self.assertEqual(by_ip["192.168.1.102"].known_role, "PS3")
+        self.assertEqual(by_ip["192.168.1.102"].known_role, "power_supply")
         # 演示响应里的 4082F 不在本次测试用的小设备表里，按未知设备出现。
         self.assertFalse(by_ip["192.168.1.202"].is_known)
         unknown = by_ip["192.168.1.150"]
@@ -418,21 +418,6 @@ class VisaAddressTests(unittest.TestCase):
 class PowerSupplyIdentityTests(unittest.TestCase):
     """电源的发现结果：短标签只读注册表、身份只认 ``device_key``、多台各自独立。"""
 
-    LEGACY_REGISTRY = {
-        "schema_version": 2,
-        "instruments": [
-            {
-                "name": "DP832A-1",
-                "vendor": "RIGOL TECHNOLOGIES",
-                "model": "DP832A",
-                "model_index": 1,
-                "full_code": "DP8B214901519",
-                "role": "PS3",
-                "status": "online",
-                "known_ips": [],
-            }
-        ],
-    }
     MIGRATED_REGISTRY = {
         "schema_version": 4,
         "instruments": [
@@ -465,22 +450,6 @@ class PowerSupplyIdentityTests(unittest.TestCase):
             timeout_s=0.05,
         ).scan(subnet)
 
-    def test_legacy_slot_is_reported_as_power_supply_without_a_label(self):
-        device = self._scan(
-            self.LEGACY_REGISTRY, {("10.8.8.1", 5555): DP832A_IDN}
-        ).devices[0]
-
-        # 旧字面量原样保留给排查，类别折叠成 ``power_supply``。
-        self.assertEqual(device.known_role, "PS3")
-        self.assertEqual(device.role, "power_supply")
-        self.assertFalse(hasattr(device, "config_slot"), "旧槽位不再出现在发现结果里")
-        # 旧设备表没有标签：发现过程不生成标签，也就没有 ``supply_id``。
-        self.assertIsNone(device.label)
-        self.assertIsNone(device.supply_id)
-        self.assertEqual(device.display_name, "DP832A")
-        self.assertEqual(device.full_code, "DP8B214901519")
-        self.assertEqual(device.device_key, "rigol technologies:dp8b214901519")
-
     def test_frozen_label_is_used_for_display_and_as_supply_id(self):
         device = self._scan(
             self.MIGRATED_REGISTRY, {("10.8.8.1", 5555): DP832A_IDN}
@@ -493,25 +462,25 @@ class PowerSupplyIdentityTests(unittest.TestCase):
         # 迁移后的记录只有类别与短标签：地址怎么写回配置由配置页按绑定决定。
         self.assertFalse(hasattr(device, "config_slot"))
 
-    def test_has_role_follows_the_folded_category(self):
+    def test_has_role_follows_the_registered_category(self):
         """“有没有角色”必须和界面可勾选、配置页接受的角色同源。
 
-        旧槽位（``PS3``）折叠成 ``power_supply``，算有角色；登记成未知字面量（手改出
-        ``PS9``）没有可写入的类别，不能算成“已登记角色”，否则状态列说“已登记”、
-        勾选框却是灰的，扫描摘要还会把它算进“可应用”。
+        登记成当前类别（``power_supply``）算有角色；登记成未知字面量（手改出 ``PS9``）
+        没有可写入的类别，不能算成“已登记角色”，否则状态列说“已登记”、勾选框却是灰的，
+        扫描摘要还会把它算进“可应用”。
         """
-        legacy = self._scan(
-            self.LEGACY_REGISTRY, {("10.8.8.1", 5555): DP832A_IDN}
+        registered = self._scan(
+            self.MIGRATED_REGISTRY, {("10.8.8.1", 5555): DP832A_IDN}
         ).devices[0]
-        self.assertTrue(legacy.has_role)
+        self.assertTrue(registered.has_role)
 
         unknown = DiscoveredDevice(
-            ip=legacy.ip,
-            port=legacy.port,
-            idn=legacy.idn,
-            identity=legacy.identity,
-            registered=legacy.registered,
-            status=legacy.status,
+            ip=registered.ip,
+            port=registered.port,
+            idn=registered.idn,
+            identity=registered.identity,
+            registered=registered.registered,
+            status=registered.status,
             known_role="PS9",
         )
         self.assertIsNone(unknown.role)
@@ -567,23 +536,25 @@ class PowerSupplyIdentityTests(unittest.TestCase):
 
     def test_non_power_supply_devices_have_no_supply_id(self):
         device = self._scan(
-            {**self.LEGACY_REGISTRY, "instruments": [
-                {
-                    "name": "SMW200A-1",
-                    "vendor": "Rohde&Schwarz",
-                    "model": "SMW200A",
-                    "model_index": 1,
-                    "full_code": "105462",
-                    "role": "signal_generator",
-                    "status": "online",
-                    "known_ips": [],
-                }
-            ]},
+            {
+                "schema_version": 4,
+                "instruments": [
+                    {
+                        "vendor": "Rohde&Schwarz",
+                        "model": "SMW200A",
+                        "full_code": "105462",
+                        "label": "5462",
+                        "role": "signal_generator",
+                        "status": "online",
+                        "known_ips": [],
+                    }
+                ],
+            },
             {("10.8.8.1", 5555): SMW_IDN},
         ).devices[0]
 
         self.assertEqual(device.role, "signal_generator")
-        self.assertIsNone(device.label)
+        self.assertEqual(device.label, "5462")
         self.assertIsNone(device.supply_id)
         self.assertFalse(hasattr(device, "config_slot"))
 

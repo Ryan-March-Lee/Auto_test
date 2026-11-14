@@ -18,7 +18,7 @@
 
 电源是**动态集合**：``instruments.power_supplies`` 以 ``supply_id`` 为键（现场短标签，
 如 ``DP8B1519``），每条物理路由都是显式的 ``supply_id/CHx`` token。计划按实际被引用的
-电源逐台解析，1 台、2 台或 5 台都不需要改代码；``test_instrument_routing`` 禁止把
+电源逐台解析，1 台、2 台或 5 台都不需要改代码；``tests/test_static_quality_gate.py`` 禁止把
 ``CH1``/``CH2`` 写成装配常量，因此电源驱动型号与通道查询写法留在构造计划的使用方，
 不在逐台电源的循环里。
 

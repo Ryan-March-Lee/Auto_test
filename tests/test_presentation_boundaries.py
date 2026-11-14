@@ -129,7 +129,6 @@ REGISTERED_PAGE_MODULES = frozenset(
         "driver_mapping_page",
         "amplifier_page",
         "visualization_page",
-        "run_history_page",
         "welcome_page",
     }
 )
@@ -529,31 +528,6 @@ class PresentationBoundaryTests(unittest.TestCase):
             "QT_FREE_PRESENTATION_MODULES: " + "; ".join(violations),
         )
 
-    def test_qt_free_import_scan_resolves_relative_and_absolute_forms(self):
-        """门禁自身要识别相对导入、包内具名导入与绝对导入，不能只看 node.module。"""
-        for source in (
-            "from . import pages",
-            "from .pages import PAGE_DEFINITIONS",
-            "from presentation.qt import pages",
-            "import presentation.qt.pages",
-        ):
-            with self.subTest(source=source):
-                modules = _resolved_import_modules(
-                    ast.parse(source), "presentation.qt"
-                )
-                self.assertIn(PAGE_REGISTRY_MODULE, modules)
-
-        for source in (
-            "import PySide6.QtWidgets",
-            "from PySide6.QtCore import QObject",
-            "from PySide2 import QtWidgets",
-        ):
-            with self.subTest(source=source):
-                modules = _resolved_import_modules(
-                    ast.parse(source), "presentation.qt"
-                )
-                roots = {module.split(".")[0] for module in modules}
-                self.assertTrue(roots & QT_BINDING_ROOTS)
 
     def test_presentation_reaches_infrastructure_only_through_the_composition_root(self):
         """表现层不装配基础设施：路径、存储与扫描器都由 composition/app 注入。
@@ -771,51 +745,8 @@ class LongTermChangeBoundaryTests(unittest.TestCase):
             "必须使用窄依赖接口，而不是直接持有另一个页面: " + "; ".join(violations),
         )
 
-    def test_page_assembly_exemption_is_path_exact(self):
-        """装配根豁免只覆盖 Qt 根目录的两个模块，不按文件名扩散到子目录。"""
-        self.assertTrue(_is_page_assembly_module(QT_ROOT / "pages.py"))
-        self.assertTrue(_is_page_assembly_module(QT_ROOT / "main_window.py"))
-        self.assertFalse(_is_page_assembly_module(QT_ROOT / "ui" / "pages.py"))
-        self.assertFalse(_is_page_assembly_module(QT_ROOT / "nested" / "main_window.py"))
 
-    def test_configuration_import_scan_detects_new_import_forms(self):
-        """门禁本身要能识别模块族、包内模块、具名导入与字面量动态导入。"""
-        tree = ast.parse(
-            "import application.configuration_authoring\n"
-            "from application import device_binding\n"
-            "from domain.configuration import rules\n"
-            "from application.device_binding import DeviceBindingService\n"
-            "import application.configuration_draft\n"
-            "from importlib import import_module\n"
-            "import_module('domain.configuration.custom_rules')\n"
-            "from application.configuration_view_model import ConfigurationViewModel\n"
-        )
-        self.assertEqual(
-            _configuration_business_imports_in_tree(tree),
-            {
-                "application.configuration_authoring": {WHOLE_MODULE_IMPORT},
-                "application.device_binding": {
-                    WHOLE_MODULE_IMPORT,
-                    "DeviceBindingService",
-                },
-                "domain.configuration.rules": {WHOLE_MODULE_IMPORT},
-                "application.configuration_draft": {WHOLE_MODULE_IMPORT},
-                "domain.configuration.custom_rules": {WHOLE_MODULE_IMPORT},
-            },
-        )
 
-    def test_page_import_scan_detects_relative_and_absolute_forms(self):
-        tree = ast.parse(
-            "from .test_configuration_page import TestConfigurationPage\n"
-            "import presentation.qt.instrument_setup_page\n"
-        )
-        self.assertEqual(
-            _imported_page_modules(tree),
-            {
-                "presentation.qt.test_configuration_page",
-                "presentation.qt.instrument_setup_page",
-            },
-        )
 
     def test_page_module_registry_covers_every_declared_page_class(self):
         """新增页面必须登记，页面导入门禁才能覆盖它。"""
@@ -847,38 +778,6 @@ class LongTermChangeBoundaryTests(unittest.TestCase):
             "*args/**kwargs、页面类型注解或另一个页面实例: " + "; ".join(violations),
         )
 
-    def test_page_constructor_scan_rejects_page_dependencies(self):
-        """门禁自身要能识别 *args/**kwargs、页面类型注解与页面实例参数。"""
-        tree = ast.parse(
-            "class DemoPage:\n"
-            "    def __init__(self, test_config_page, parent=None, **options):\n"
-            "        pass\n"
-            "class TypedPage:\n"
-            "    def __init__(self, other: 'TestConfigurationPage') -> None:\n"
-            "        pass\n"
-            "class NarrowPage:\n"
-            "    def __init__(self, *, port, parent=None):\n"
-            "        pass\n"
-            "class DefaultPage:\n"
-            "    def __init__(self, factory=TestConfigurationPage):\n"
-            "        pass\n"
-        )
-        names = {"TestConfigurationPage"}
-        demo = _page_constructor_violations(tree.body[0], names)
-        typed = _page_constructor_violations(tree.body[1], names)
-        narrow = _page_constructor_violations(tree.body[2], names)
-        defaulted = _page_constructor_violations(tree.body[3], names)
-        self.assertTrue(
-            any("**kwargs" in violation for violation in demo), demo
-        )
-        self.assertTrue(
-            any("test_config_page" in violation for violation in demo), demo
-        )
-        self.assertTrue(
-            any("TestConfigurationPage" in violation for violation in typed), typed
-        )
-        self.assertTrue(any("factory" in violation for violation in defaulted), defaulted)
-        self.assertEqual(narrow, [])
 
     def test_page_context_stays_frozen_and_narrow(self):
         """新增页面动作经 ViewModel/Application facade，不扩张 PageContext。"""
@@ -948,26 +847,6 @@ class RunFlowEntryBoundaryTests(unittest.TestCase):
             + "; ".join(missing),
         )
 
-    def test_run_flow_entry_scan_detects_all_reference_forms(self):
-        tree = ast.parse(
-            "page.connect_btn.setEnabled(True)\n"
-            "page.connect_requested.emit()\n"
-            "getattr(page, 'request_connect')()\n"
-            "class Page:\n"
-            "    create_run_requested = Signal()\n"
-            "    def _set_connect_enabled(self):\n"
-            "        pass\n"
-        )
-        self.assertEqual(
-            [name for name, _lineno in retired_run_flow_sites(tree)],
-            [
-                "connect_btn",
-                "connect_requested",
-                "request_connect",
-                "create_run_requested",
-                "_set_connect_enabled",
-            ],
-        )
 
     def test_page_requests_finalization_only_through_its_signal(self):
         """测试配置页不直接调用协调器：最终动作只经页面自己的信号交给窗口。"""

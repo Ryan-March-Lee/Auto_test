@@ -211,8 +211,8 @@ class RegistryUpsertTests(unittest.TestCase):
         instrument, _ = self.registry.upsert(InstrumentIdentity.from_idn(DP832A_IDN))
         self.assertIsNone(instrument.role)
 
-        assigned = self.registry.set_role(instrument, "PS3")
-        self.assertEqual(assigned.role, "PS3")
+        assigned = self.registry.set_role(instrument, "power_supply")
+        self.assertEqual(assigned.role, "power_supply")
 
         cleared = self.registry.set_role(instrument.device_key, None)
         self.assertIsNone(cleared.role)
@@ -383,24 +383,25 @@ class RegistryValidationTests(unittest.TestCase):
         ])
         self.assertEqual(len(registry.list(model="SMW200A")), 2)
 
-    def test_retired_fields_are_projected_on_read_not_written(self):
-        registry = self._load([
+    def test_retired_identity_fields_are_rejected(self):
+        payload = _document([
             {
                 "name": "SMW200A-1",
                 "vendor": "Rohde&Schwarz",
                 "model": "SMW200A",
                 "model_index": 1,
+                "full_code": "105462",
                 "serial": "105462",
                 "label": "5462",
                 "status": "online",
                 "known_ips": [],
             }
         ])
-        entry = registry.raw["instruments"][0]
-        self.assertEqual(entry["full_code"], "105462")
-        self.assertNotIn("serial", entry)
-        self.assertNotIn("name", entry)
-        self.assertNotIn("model_index", entry)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "instruments.json"
+            path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            with self.assertRaisesRegex(InstrumentRegistryError, "serial"):
+                InstrumentRegistry.load(path)
 
     def test_current_ip_must_exist_in_known_ips(self):
         with self.assertRaises(InstrumentRegistryError):

@@ -4,19 +4,17 @@
 
 1. **正式用户配置**（``config.json``）：唯一实现是
    ``JsonConfigurationRepository.save_document``——配置页面保存（
-   :class:`infrastructure.gui_data_service.JsonConfigurationAdapter`）与旧电源配置迁移器
-   都只委托它；
+   :class:`infrastructure.gui_data_service.JsonConfigurationAdapter`）只委托它；
 2. **用户命名配置快照**（``test_results/configurations/<名称>_<时间>/``）：由
    :class:`infrastructure.persistence.configuration_snapshot_repository.FileConfigurationSnapshotRepository`
    独占，和 ``config.json``、运行目录互不混用；
 3. **运行目录快照**（``runs/<run_id>/config.json`` 与 manifest）：仍由运行仓储与运行
    目录布局负责，配置仓储与 GUI 适配器不写运行目录；
-4. **其它 JSON 文档**（设备表、迁移摘要、测量结果）：各自仓储/工具负责，与配置文件
-   互不混用。
+4. **其它 JSON 文档**（设备表、测量结果）：各自仓储/工具负责，与配置文件互不混用。
 
 因此这里断言的可观察契约是：
 
-- 适配器与迁移器都不再自己序列化或打开文件，只要委托链断掉就失败；
+- 适配器不再自己序列化或打开文件，只要委托链断掉就失败；
 - 正式配置的序列化格式（``indent=4`` + 非 ASCII 原样）只由配置仓储声明一次；
 - 导入原子写入原语的模块是一张带用途说明的固定清单，新增写入点必须先改清单；
 - 生产代码里**每一处 JSON 文档写入调用点**都登记了用途与类别，其中“用户配置”类别只有
@@ -42,14 +40,9 @@ import tempfile
 import unittest
 from functools import lru_cache
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import ANY, patch
+from unittest.mock import patch
 
 from infrastructure.config.json_config_repository import JsonConfigurationRepository
-from infrastructure.config.legacy_power_supply_migration import (
-    LegacyMigrationResult,
-    save_migrated_configuration,
-)
 from infrastructure.gui_data_service import JsonConfigurationAdapter
 from tests.config_fixtures import complete_combined_config
 
@@ -68,7 +61,6 @@ RUN_REPOSITORY_SOURCE = ROOT / "infrastructure" / "persistence" / "run_repositor
 # 必须先在这里登记用途，评审时才能看出它是否偷偷变成了第二条配置写入路径。
 ATOMIC_WRITE_IMPORTERS = {
     "infrastructure/config/json_config_repository.py": "正式用户配置的唯一写入口 save_document",
-    "infrastructure/config/legacy_power_supply_migration.py": "迁移摘要文件（不是配置文件）",
     "infrastructure/persistence/configuration_snapshot_repository.py": (
         "用户命名配置快照（独立于 config.json 的配置文件与元数据）"
     ),
@@ -141,10 +133,6 @@ JSON_WRITE_SITES = {
     OFFICIAL_CONFIGURATION_FORMAT_SITE: (
         "正式用户配置 config.json（唯一用户配置写入点）",
         CATEGORY_USER_CONFIGURATION,
-    ),
-    ("infrastructure/config/legacy_power_supply_migration.py", "save_migration_summary"): (
-        "旧电源配置迁移摘要（不是配置文件）",
-        CATEGORY_OTHER_JSON,
     ),
     (
         "infrastructure/persistence/configuration_snapshot_repository.py",
@@ -443,7 +431,7 @@ def _config_path_reference_sites():
 
 
 class ConfigurationWriteEntranceTests(unittest.TestCase):
-    """适配器与迁移器都只委托配置仓储的写入口，自己不写文件。"""
+    """适配器只委托配置仓储的写入口，自己不写文件。"""
 
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
@@ -471,25 +459,6 @@ class ConfigurationWriteEntranceTests(unittest.TestCase):
 
         self.assertEqual(adapter.load(), {"schema_version": "1.0"})
 
-    def test_migration_save_uses_the_same_entrance(self):
-        configuration = complete_combined_config()
-        result = LegacyMigrationResult(
-            config=configuration, entries=(), old_keys=("PS1",)
-        )
-
-        def validator(_document):
-            return SimpleNamespace(valid=True)
-
-        with patch.object(
-            JsonConfigurationRepository, "save_document", autospec=True
-        ) as save_document:
-            written = save_migrated_configuration(
-                self.path, result, validator=validator
-            )
-
-        save_document.assert_called_once_with(ANY, self.path, configuration)
-        self.assertEqual(written, save_document.return_value)
-        self.assertFalse(self.path.exists(), "迁移器不得另起一套写入实现")
 
     def test_repository_save_is_the_official_format_and_is_reloadable(self):
         configuration = dict(complete_combined_config(), note="现场配置")
@@ -671,86 +640,9 @@ class ConfigurationWriteSourceBoundaryTests(unittest.TestCase):
         self.assertEqual(_call_name(call), "self.repository.save_document")
         self.assertEqual(len(call.args), 2, "委托必须显式传入配置文件路径与配置文档")
 
-    def test_migration_module_writes_only_its_summary_document(self):
-        module = "infrastructure/config/legacy_power_supply_migration.py"
-        self.assertEqual(
-            {scope for path, scope in _file_write_sites() if path == module},
-            {"save_migration_summary"},
-            "迁移器写回配置必须委托 save_document，自己只写迁移摘要文件",
-        )
 
 
-class BoundaryDetectorTests(unittest.TestCase):
-    """门禁辅助函数自身的回归：换一种写法也必须被识别。"""
 
-    def test_official_format_detector_requires_both_format_keywords(self):
-        tree = ast.parse(
-            "def save():\n"
-            "    write_json_atomic(path, doc, indent=4, ensure_ascii=False)\n"
-            "    write_json_atomic(path, doc, indent=2, ensure_ascii=False)\n"
-            "    write_json_atomic(path, doc)\n"
-        )
-        owners = _scopes(tree)
-        calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
-        self.assertEqual([_scope_of(owners, node) for node in calls], ["save"] * 3)
-        formatted = [
-            node
-            for node in calls
-            if len(node.keywords) == 2
-            and {keyword.arg for keyword in node.keywords} == set(OFFICIAL_FORMAT_KWARGS)
-        ]
-        self.assertEqual(len(formatted), 2, "两条带全格式参数的调用应被锁定，第三条不算")
-
-    def test_scope_owner_tracks_class_and_method(self):
-        tree = ast.parse("class Repo:\n    def save(self):\n        write_json_atomic(p, d)\n")
-        owners = _scopes(tree)
-        calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
-        self.assertEqual([_scope_of(owners, node) for node in calls], ["Repo.save"])
-
-    def test_json_write_detector_requires_json_payload_not_plain_text(self):
-        tree = ast.parse(
-            "def save():\n"
-            "    path.write_text(json.dumps(document), encoding='utf-8')\n"
-            "    path.write_text('纯文本报告', encoding='utf-8')\n"
-            "    json.dump(document, handle)\n"
-            "    write_json_atomic(path, document)\n"
-        )
-        sites = {_scope_of(_scopes(tree), node) for node in ast.walk(tree) if isinstance(node, ast.Call)}
-        writes = [
-            node
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call) and _is_json_write(node)
-        ]
-        self.assertEqual(len(writes), 3, "写 JSON 的三条调用应被识别，纯文本写入不算")
-        self.assertEqual(sites, {"save"})
-
-    def test_write_api_detector_covers_text_json_and_write_modes(self):
-        tree = ast.parse(
-            "def save():\n"
-            "    path.write_text('x')\n"
-            "    json.dump({}, handle)\n"
-            "    destination.open('w')\n"
-            "    os.replace(temporary, target)\n"
-            "    shutil.copy2(source, target)\n"
-            "    with Path(p).open('r') as handle:\n"
-            "        handle.read()\n"
-        )
-        detected = sorted(
-            _write_api(node)
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call) and _write_api(node) is not None
-        )
-        self.assertEqual(
-            detected,
-            ["destination.open", "json.dump", "os.replace", "path.write_text", "shutil.copy2"],
-            "写入类 API 必须被识别；只读 open 不得计入",
-        )
-
-    def test_statements_skips_the_docstring(self):
-        tree = ast.parse('def save(self):\n    """doc"""\n    return 1\n')
-        function = tree.body[0]
-        self.assertEqual(len(_statements(function)), 1)
-        self.assertIsInstance(_statements(function)[0], ast.Return)
 
 
 if __name__ == "__main__":

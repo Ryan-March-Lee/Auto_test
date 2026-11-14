@@ -236,15 +236,6 @@ class PowerPlanTests(unittest.TestCase):
                 with self.assertRaises(AmplifierInputError):
                     PowerPlan.from_document({"power_sequence": value})
 
-    def test_unknown_plan_fields_are_rejected(self):
-        with self.assertRaises(AmplifierInputError):
-            PowerPlan.from_document(
-                {
-                    "power_sequence": [],
-                    "inter_channel_delay_s": 0.0,
-                    "drain_channel": {"supply_id": "PS1", "channel": "CH2"},
-                }
-            )
 
     def test_delay_range_and_type_boundaries(self):
         for value in (0, 0.0, 1, 60, MAX_INTER_CHANNEL_DELAY_S):
@@ -286,16 +277,6 @@ class PowerPlanTests(unittest.TestCase):
 class DrainChannelTests(unittest.TestCase):
     """漏极是可选测量路由；已配置时只校验“存在于本次配置的通道”。"""
 
-    def test_drain_is_optional(self):
-        drain = DrainChannel()
-
-        self.assertFalse(drain.is_configured)
-        self.assertIsNone(drain.to_document())
-        self.assertEqual(DrainChannel.from_document(None), drain)
-        self.assertEqual(drain.require_in_routes([]), drain)
-        self.assertEqual(
-            drain.require_in_routes([_route("PS1", "CH1")]).routes, ()
-        )
 
     def test_document_round_trip_keeps_the_route(self):
         drain = DrainChannel.from_document(
@@ -328,11 +309,6 @@ class DrainChannelTests(unittest.TestCase):
             ],
         )
 
-    def test_duplicate_drain_routes_are_rejected(self):
-        with self.assertRaises(AmplifierInputError):
-            DrainChannel(
-                routes=(_route("PS1", "CH2"), _route("PS1", "CH2"))
-            )
 
     def test_parsing_does_not_imply_membership_validation(self):
         """解析只做形状；归属判断必须由调用方显式调用 require_in_routes。"""

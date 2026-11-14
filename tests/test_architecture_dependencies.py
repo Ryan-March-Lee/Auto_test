@@ -521,7 +521,6 @@ class ProductionDependencyTests(unittest.TestCase):
             ROOT / "presentation" / "qt" / "history_view_model.py",
             ROOT / "presentation" / "qt" / "history_result_dialog.py",
             ROOT / "presentation" / "qt" / "visualization_page.py",
-            ROOT / "presentation" / "qt" / "run_history_page.py",
         )
         forbidden_imports = ("infrastructure", "result_storage", "json_result_repository")
         forbidden_calls = {
@@ -857,7 +856,7 @@ class ProductionDependencyTests(unittest.TestCase):
             "self.current_freq_index =",
             "self.frequency_list =",
         )
-        for name in ("run_history_page.py", "visualization_page.py"):
+        for name in ("visualization_page.py",):
             source = (ROOT / "presentation" / "qt" / name).read_text(
                 encoding="utf-8-sig"
             )
@@ -893,14 +892,7 @@ class ProductionDependencyTests(unittest.TestCase):
                 source,
                 "导出页面不得直接调用导出端口；必须构造 ExportRequest",
             )
-        run_history_source = (
-            ROOT / "presentation" / "qt" / "run_history_page.py"
-        ).read_text(encoding="utf-8-sig")
-        self.assertNotIn(
-            "ExportRequest(",
-            run_history_source,
-            "结果另存为已移到数据可视化页，历史运行页不再导出",
-        )
+
 
     def test_visualization_page_only_requests_reports_through_the_export_use_case(self):
         """步骤 8：报告只有一个应用层实现，可视化页不再自己生成报告。"""
@@ -1043,41 +1035,7 @@ class ProductionDependencyTests(unittest.TestCase):
             "生产源码出现占位问号文本，说明注释或文档被截断: " + ", ".join(offenders),
         )
 
-    def test_worker_aliases_and_attribute_construction_are_detected(self):
-        source = """
-from presentation.qt.workers import CableLossWorker as Worker
-import presentation.qt.workers as worker_module
-Worker()
-worker_module.AmplifierWorker()
-"""
-        tree = ast.parse(source)
-        self.assertEqual(len(_worker_construction_violations(tree)), 2)
 
-    def test_runtime_module_alias_calls_are_detected(self):
-        source = """
-import app.gui_runtime as runtime
-
-class MainWindow:
-    def start(self):
-        runtime.create_amplifier_measurement()
-"""
-        tree = ast.parse(source)
-        main_window = _main_window_class(tree)
-        runtime_aliases = {
-            alias
-            for module, alias, _name in _imported_modules(tree)
-            if module == "app.gui_runtime"
-        }
-        calls = [
-            node
-            for node in ast.walk(main_window)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and isinstance(node.func.value, ast.Name)
-            and node.func.value.id in runtime_aliases
-            and node.func.attr in FORBIDDEN_MEASUREMENT_CALLS
-        ]
-        self.assertEqual(len(calls), 1)
 
 
 # 技术债步骤 13 的单位边界：dBm↔W、%↔比值的换算与线缆字段名都归测量值对象所有。

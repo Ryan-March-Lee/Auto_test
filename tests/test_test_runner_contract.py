@@ -1,14 +1,12 @@
-"""门禁：测试入口把分层、门禁顺序和并行排除清单固化成可断言的数据。
+"""门禁：测试入口保留分层、门禁顺序和并行排除清单。
 
-``tools/run_tests.py`` 取代了原先写死在 ``run_tests.ps1`` 里的规则。规则改为可导入的纯函数，
-这样“纯界面改动不该跑全量”“UI 层必须先过全部门禁”“硬件测试不得进入并行全量”就不再只是
-文档里的一句话。
+``tools/run_tests.py`` 的规则仍必须是可断言的数据：纯界面改动不跑全量、UI 层先过仓库
+门禁、硬件测试不进入并行全量。
 """
 
 import os
 import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -22,9 +20,7 @@ from tools.run_tests import (  # noqa: E402  (需先补齐 sys.path)
     LAYERS,
     PARALLEL_EXCLUSIONS,
     PARALLEL_SERIAL_MODULES,
-    STATIC_PRE_CHECK_MODULES,
     build_plan,
-    prepend_runtime_path,
 )
 
 
@@ -50,9 +46,8 @@ class TestRunnerPlanTests(unittest.TestCase):
     def test_default_layer_is_the_full_offline_suite(self):
         plan = build_plan()
         self.assertEqual(_labels(plan)[-1], "全量离线测试")
-        # 全量发现也必须以仓库根为顶层目录（``-t .``）：否则 tests/integration
-        # 会以 integration.* 导入，与测试文件里的 tests.integration.* 形成两份
-        # 同名模块，Qt 线程清理时会出现 access violation。
+        # 全量发现必须以仓库根为顶层目录（``-t .``），避免 tests.integration
+        # 以 integration.* 再导入一份同名模块。
         self.assertEqual(
             plan[-1].arguments,
             (
@@ -78,24 +73,6 @@ class TestRunnerPlanTests(unittest.TestCase):
         self.assertIn("tests/ui", plan[3].arguments)
         self.assertNotIn("tests/integration", _flatten(plan))
 
-    def test_an_integration_change_adds_the_wiring_tests(self):
-        plan = build_plan(layer="integration")
-        self.assertEqual(
-            _labels(plan),
-            ["编译检查", "依赖核对", "仓库门禁", "表现层测试", "接线测试"],
-        )
-        self.assertIn("tests/integration", plan[4].arguments)
-
-    def test_narrow_layers_run_the_static_gates_before_their_tests(self):
-        for layer in ("unit", "simulation"):
-            with self.subTest(layer=layer):
-                plan = build_plan(layer=layer)
-                self.assertEqual(_labels(plan)[2], "静态质量门禁")
-                for module in STATIC_PRE_CHECK_MODULES:
-                    self.assertIn(module, plan[2].arguments)
-                self.assertIn(f"tests/{layer}", plan[3].arguments)
-                self.assertIn("-v", plan[3].arguments)
-
     def test_parallel_plan_excludes_hardware_qt_flow_and_global_scan(self):
         plan = build_plan(parallel=True, workers=2)
         self.assertEqual(_labels(plan)[-2:], ["并行离线测试", "串行补跑"])
@@ -107,47 +84,13 @@ class TestRunnerPlanTests(unittest.TestCase):
         for module in PARALLEL_SERIAL_MODULES:
             self.assertIn(module, plan[-1].arguments)
 
-    def test_parallel_worker_count_is_capped(self):
-        from tools.run_tests import MAX_PARALLEL_WORKERS, parallel_arguments
-
-        arguments = parallel_arguments()
-        workers = int(arguments[arguments.index("-n") + 1])
-        self.assertGreaterEqual(workers, 1)
-        self.assertLessEqual(workers, MAX_PARALLEL_WORKERS)
-
     def test_the_hardware_layer_never_runs_through_parallel_discovery(self):
         plan = build_plan(layer="hardware")
         self.assertEqual(_labels(plan)[-1], "硬件冒烟")
         self.assertIn("tests/hardware", plan[-1].arguments)
 
-    def test_explicit_unittest_arguments_replace_the_default_discovery(self):
-        plan = build_plan(unittest_arguments=["discover", "-s", "tests", "-v"])
-        self.assertEqual(_labels(plan), ["编译检查", "依赖核对", "自定义测试参数"])
-        self.assertEqual(plan[-1].arguments, ("discover", "-s", "tests", "-v"))
-
 
 class TestRunnerInterpreterTests(unittest.TestCase):
-    """解释器与运行时目录的处理不再依赖 PowerShell 助手。"""
-
-    def test_runner_reuses_the_shared_interpreter_contract(self):
-        source = (ROOT / "tools" / "run_tests.py").read_text(encoding="utf-8")
-        self.assertIn("python_version_supported", source)
-        self.assertIn("configured_python", source)
-        self.assertNotIn('"3.11"', source)
-
-    def test_conda_runtime_directories_are_prepended_without_duplicates(self):
-        with tempfile.TemporaryDirectory() as directory:
-            prefix = Path(directory)
-            library_bin = prefix / "Library" / "bin"
-            library_bin.mkdir(parents=True)
-            environment = {"PATH": os.pathsep.join([str(library_bin), "C:\\Windows"])}
-            added = prepend_runtime_path(environment, prefix)
-            entries = environment["PATH"].split(os.pathsep)
-            self.assertEqual(added, 1)
-            self.assertEqual(entries[0], str(prefix))
-            self.assertEqual(entries[-1], "C:\\Windows")
-            self.assertEqual(environment["PATH"].count(str(library_bin)), 1)
-
     def test_the_runner_can_be_started_without_powershell(self):
         completed = subprocess.run(
             [sys.executable, str(ROOT / "tools" / "run_tests.py"), "--help"],

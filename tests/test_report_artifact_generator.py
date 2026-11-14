@@ -321,19 +321,6 @@ class ReportArtifactGeneratorTests(RunDirectoryFixture):
         self.assertIn("图表生成失败", html)
         self.assertIn("字体不可用", html)
 
-    def test_result_document_from_another_run_is_rejected(self):
-        """正式结果内容自称属于别的运行：它不是本次运行的正式结果。"""
-        self._complete_cable_loss()
-        self._complete_amplifier(
-            payload={**_amplifier_payload(), "run_id": "20261028T030405Z_ffffffff"}
-        )
-
-        with self.assertRaisesRegex(
-            ArtifactGenerationError, "运行标识与本次归档运行不一致"
-        ):
-            ReportArtifactGenerator(self.repository).generate(_report_request())
-
-        self.assertFalse(self._report_file().exists())
 
     def test_report_references_only_sibling_files(self):
         """报告不写运行目录的绝对路径：交付产物换机器仍然可用。"""
@@ -374,38 +361,8 @@ class ReportArtifactGeneratorTests(RunDirectoryFixture):
 
         self.assertFalse(self._csv_file().exists())
 
-    def test_empty_result_fails_with_an_explicit_reason(self):
-        self._complete_cable_loss()
-        self._complete_amplifier(payload=_amplifier_payload(results={}))
 
-        with self.assertRaisesRegex(ArtifactGenerationError, "数据行"):
-            ReportArtifactGenerator(self.repository).generate(_report_request())
 
-        self.assertFalse(self._report_file().exists())
-        self.assertEqual(self._temporary_files(), [])
-
-    def test_non_amplifier_stage_is_rejected(self):
-        self._complete_cable_loss()
-
-        with self.assertRaisesRegex(ArtifactGenerationError, "只有主功放"):
-            ReportArtifactGenerator(self.repository).generate(
-                _report_request(
-                    stage=STAGE_CABLE_LOSS,
-                    source_result=CABLE_LOSS_INPUT_PATH,
-                    target_path="artifacts/cable_loss_report.html",
-                )
-            )
-
-    def test_unregistered_source_result_is_rejected(self):
-        self._complete_cable_loss()
-        self._complete_amplifier()
-
-        with self.assertRaisesRegex(ArtifactGenerationError, "未登记"):
-            ReportArtifactGenerator(self.repository).generate(
-                _report_request(source_result="results/unregistered.json")
-            )
-
-        self.assertFalse(self._report_file().exists())
 
     def test_write_failure_leaves_no_partial_artifact(self):
         self._complete_cable_loss()

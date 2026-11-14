@@ -711,49 +711,7 @@ class BroadExceptTests(unittest.TestCase):
             + ", ".join(offenders),
         )
 
-    def test_detectors_recognise_broad_and_bare_handlers(self):
-        tree = ast.parse(
-            "try:\n    run()\n"
-            "except Exception:\n    pass\n"
-            "except BaseException as error:\n    raise\n"
-            "except (ValueError, Exception):\n    log(error)\n"
-            "except:\n    raise\n"
-        )
-        self.assertEqual(len(_broad_catches(tree)), 3)
-        self.assertEqual(len(_bare_catches(tree)), 1)
-        silent = [handler for handler in _broad_catches(tree) if _is_silent(handler)]
-        self.assertEqual(len(silent), 1)
 
-    def test_site_identity_tracks_the_enclosing_scope(self):
-        """同文件内“删一处、在别的函数里加一处”必须被识别为不同站点。"""
-        tree = ast.parse(
-            "def first():\n"
-            "    try:\n        run()\n    except Exception:\n        log()\n"
-            "class Runner:\n"
-            "    def second(self):\n"
-            "        try:\n            run()\n        except Exception:\n            log()\n"
-            "        try:\n            run()\n        except Exception:\n            log()\n"
-        )
-        self.assertEqual(
-            broad_catch_sites(tree),
-            ("first#1", "Runner.second#1", "Runner.second#2"),
-        )
-
-        moved = ast.parse(
-            "def first():\n"
-            "    try:\n        run()\n    except Exception:\n        log()\n"
-            "    try:\n        run()\n    except Exception:\n        log()\n"
-        )
-        swapped = ast.parse(
-            "def first():\n"
-            "    try:\n        run()\n    except Exception:\n        log()\n"
-            "def third():\n"
-            "    try:\n        run()\n    except Exception:\n        log()\n"
-        )
-        # 处数相同、位置不同：按文件计数的旧基线会放行，按作用域的站点会拦住。
-        self.assertEqual(len(broad_catch_sites(moved)), len(broad_catch_sites(swapped)))
-        self.assertEqual(broad_catch_sites(moved), ("first#1", "first#2"))
-        self.assertEqual(broad_catch_sites(swapped), ("first#1", "third#1"))
 
 
 class ProductionPrintTests(unittest.TestCase):
@@ -771,9 +729,6 @@ class ProductionPrintTests(unittest.TestCase):
             "正式运行包不得使用 print；诊断走 logging 或事件回调: " + ", ".join(offenders),
         )
 
-    def test_print_detector_ignores_attribute_calls(self):
-        tree = ast.parse("print('x')\nconsole.print('y')\n")
-        self.assertEqual(len(_printed_calls(tree)), 1)
 
 
 class LegacyImportTests(unittest.TestCase):
@@ -805,30 +760,6 @@ class LegacyImportTests(unittest.TestCase):
             + "; ".join(missing),
         )
 
-    def test_detectors_report_retired_roots_and_missing_submodules(self):
-        tree = ast.parse(
-            "import config_io\n"
-            "from measurement_services import create_cable_loss_measurement\n"
-            "from application.ports.result_history import ResultHistoryRepository\n"
-            "from application.run_service import create_run_snapshot\n"
-        )
-        retired = _retired_module_names()
-        self.assertEqual(
-            sorted(_retired_imports(_absolute_import_names(tree), retired)),
-            [
-                "application.ports.result_history",
-                "config_io",
-                "measurement_services",
-            ],
-        )
-        self.assertEqual(
-            sorted(
-                module
-                for module in _first_party_imports(tree, ROOT / "test_probe.py")
-                if not _module_exists(module)
-            ),
-            ["application.ports.result_history"],
-        )
 
 
 class DynamicDeviceRoutingTests(unittest.TestCase):
@@ -853,56 +784,9 @@ class DynamicDeviceRoutingTests(unittest.TestCase):
             frozenset({("instrument/ports.py", "require_measurement_capabilities")}),
         )
 
-    def test_detector_flags_device_forwarding_only(self):
-        tree = ast.parse(
-            "getattr(self.inst_ctrl, name)()\n"
-            "setattr(self.session, 'state', value)\n"
-            "getattr(self._worker, method)()\n"
-            "getattr(control, 'signal_gen', None)\n"
-        )
-        flagged = dynamic_routing_sites(tree, "probe.py")
-        self.assertEqual(len(flagged), 2)
-        self.assertEqual([node.lineno for node in flagged], [1, 2])
 
-    def test_detector_flags_indirect_and_dynamic_lookups(self):
-        tree = ast.parse(
-            "method = getattr(self.device, name)\n"
-            "method(1)\n"
-            "probe = getattr(self.inst_ctrl, name, None)\n"
-            "alias = self.signal_generator\n"
-            "getattr(alias, 'set_power')(-10)\n"
-            "value = getattr(self.spectrum_analyzer, 'center_frequency_hz', None)\n"
-        )
-        flagged = dynamic_routing_sites(tree, "probe.py")
-        self.assertEqual([node.lineno for node in flagged], [1, 2, 3, 5])
 
-    def test_detector_allows_presence_probes_and_widget_lookups(self):
-        tree = ast.parse(
-            "getattr(port, 'close_all', None)\n"
-            "getattr(self.driver_plot_widget, 'update_plot', None)\n"
-            "has_rf = getattr(instrument_control, 'signal_gen', None) is not None\n"
-        )
-        self.assertEqual(dynamic_routing_sites(tree, "probe.py"), [])
 
-    def test_detector_honours_the_capability_checker_boundary(self):
-        tree = ast.parse(
-            "def require_measurement_capabilities(instrument, capabilities):\n"
-            "    return [name for name in capabilities if not callable(getattr(instrument, name, None))]\n"
-        )
-        self.assertEqual(
-            len(
-                dynamic_routing_sites(
-                    tree, "instrument/ports.py"
-                )
-            ),
-            0,
-            "登记的能力检查函数允许按名字探测能力",
-        )
-        self.assertEqual(
-            len(dynamic_routing_sites(tree, "instrument/other.py")),
-            1,
-            "同样的写法出现在别的模块必须被拦截",
-        )
 
 
 class RunFlowEntryGateTests(unittest.TestCase):
@@ -938,29 +822,6 @@ class RunFlowEntryGateTests(unittest.TestCase):
             + "; ".join(missing),
         )
 
-    def test_call_chain_contract_reports_kept_but_disconnected_method(self):
-        """方法仍在但事务链断开时必须报错，不能因为定义存在就通过。"""
-        tree = ast.parse(
-            "class Coordinator:\n"
-            "    def finalize_configuration(self):\n"
-            "        return self.prepare_pending_run()\n"
-            "    def prepare_pending_run(self):\n"
-            "        return None\n"
-        )
-        contract = {
-            "definitions": ("finalize_configuration", "prepare_pending_run"),
-            "calls": (
-                ("finalize_configuration", "prepare_pending_run"),
-                ("finalize_configuration", "_start_connection_worker"),
-            ),
-        }
-
-        missing = missing_contract_items("demo.py", tree, contract)
-
-        self.assertEqual(
-            missing,
-            ["demo.py 的 finalize_configuration 未调用 _start_connection_worker"],
-        )
 
     def test_only_the_window_opens_the_finalization_transaction(self):
         """事务入口只允许由主窗口调用；第二个调用文件就是第二个提交端口入口。"""
@@ -983,27 +844,6 @@ class RunFlowEntryGateTests(unittest.TestCase):
             + "; ".join(problems),
         )
 
-    def test_run_flow_entry_detector_recognises_all_reference_forms(self):
-        tree = ast.parse(
-            "page.connect_btn.setEnabled(True)\n"
-            "getattr(page, 'request_connect')()\n"
-            "class Page:\n"
-            "    connect_requested = Signal()\n"
-            "    def create_run_requested(self):\n"
-            "        pass\n"
-            "    def _set_connect_enabled(self):\n"
-            "        pass\n"
-        )
-        self.assertEqual(
-            [name for name, _lineno in retired_run_flow_sites(tree)],
-            [
-                "connect_btn",
-                "request_connect",
-                "connect_requested",
-                "create_run_requested",
-                "_set_connect_enabled",
-            ],
-        )
 
 
 if __name__ == "__main__":

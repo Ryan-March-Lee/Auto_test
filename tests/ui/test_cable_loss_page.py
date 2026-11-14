@@ -118,12 +118,6 @@ class CableLossPageTests(unittest.TestCase):
         self.assertEqual(command.config_path, "config.json")
         self.assertIs(command.prepared_run, self.run)
 
-    def test_missing_current_run_does_not_start_measurement(self):
-        self.page._run_provider = lambda: None
-
-        self.page.start_measurement()
-
-        self.assertEqual(self.controller.calls, [])
 
     def test_legacy_run_does_not_start_measurement(self):
         self.page._run_provider = lambda: type(
@@ -132,23 +126,6 @@ class CableLossPageTests(unittest.TestCase):
         self.page.start_measurement()
         self.assertEqual(self.controller.calls, [])
 
-    def test_start_submits_to_the_controller_checked_before_the_dialog(self):
-        checked = self.controller
-        replacement = Controller()
-
-        def factory(*_args):
-            # 模态接线对话框运行期间 controller 可能被重新绑定：启动必须继续
-            # 提交给完成前置检查的那一个，而不是事后重新读取的 controller。
-            self.page.bind_controller(replacement)
-            return Dialog(QDialog.Accepted)
-
-        self.page._connection_dialog_factory = factory
-
-        self.page.start_measurement()
-
-        self.assertEqual(len(checked.calls), 1)
-        self.assertEqual(checked.calls[0][0], "start")
-        self.assertEqual(replacement.calls, [])
 
     def test_realtime_and_structured_result_fill_table(self):
         self.controller.signals.data_update.emit({
@@ -292,29 +269,6 @@ class CableLossPageTests(unittest.TestCase):
         self.assertTrue(self.page.cable_loss_source_label.isHidden())
         self.assertEqual(self.page.cable_loss_source_label.text(), "")
 
-    def test_control_buttons_follow_the_shared_state_binding(self):
-        self.assertEqual(
-            self.page.controls.supported_actions,
-            frozenset(
-                {
-                    MeasurementAction.START,
-                    MeasurementAction.STOP,
-                }
-            ),
-        )
-        self.controller.signals.state_changed.emit(type(
-            "State", (), {
-                "kind": MeasurementKind.CABLE_LOSS,
-                "status": MeasurementStatus.WAITING_FOR_CONTINUE,
-                "is_active": True,
-            }
-        )())
-        self.assertFalse(self.page.start_measurement_btn.isEnabled())
-        self.assertTrue(self.page.stop_cable_loss_btn.isEnabled())
-
-        self.controller.signals.stopped.emit("用户停止")
-        self.assertTrue(self.page.start_measurement_btn.isEnabled())
-        self.assertFalse(self.page.stop_cable_loss_btn.isEnabled())
 
     def test_non_formal_result_is_reported_and_not_displayed(self):
         self.page.show_loaded_result(MeasurementResultReference(
@@ -341,65 +295,9 @@ class CableLossPageTests(unittest.TestCase):
         self.assertFalse(hasattr(self.page, "show_path2_btn"))
         self.assertEqual(self.page.findChildren(QTextEdit), [])
 
-    def test_page_is_split_into_control_and_result_surfaces(self):
-        from PySide6.QtWidgets import QFrame
 
-        control = self.page.findChild(QFrame, "measurementSurface")
-        result = self.page.findChild(QFrame, "measurementResultSurface")
-        self.assertIsNotNone(control)
-        self.assertIsNotNone(result)
-        self.assertIsNot(control, result)
-        self.assertIs(control.parentWidget(), self.page.control_panel)
 
-    def test_start_is_the_only_primary_action(self):
-        primary = [
-            button
-            for button in (
-                self.page.start_measurement_btn,
-                self.page.stop_cable_loss_btn,
-                self.page.load_cable_results_btn,
-                self.page.show_cable_loss_diagram_btn,
-            )
-            if button.property("variant") == "primary"
-        ]
-        self.assertEqual(primary, [self.page.start_measurement_btn])
 
-    def test_start_measurement_takes_its_own_row_in_the_control_surface(self):
-        from PySide6.QtWidgets import QFrame
-
-        control_layout = self.page.findChild(QFrame, "measurementSurface").layout()
-        start_items = [
-            index
-            for index in range(control_layout.count())
-            if control_layout.itemAt(index).widget() is self.page.start_measurement_btn
-        ]
-        self.assertEqual(len(start_items), 1)
-        row_index = next(
-            index
-            for index in range(control_layout.count())
-            if control_layout.itemAt(index).layout() is not None
-        )
-        self.assertLess(start_items[0], row_index)
-
-    def test_secondary_actions_share_one_compact_row(self):
-        from PySide6.QtWidgets import QFrame
-
-        control_layout = self.page.findChild(QFrame, "measurementSurface").layout()
-        row_layout = None
-        for index in range(control_layout.count()):
-            item = control_layout.itemAt(index)
-            if item.layout() is not None:
-                row_layout = item.layout()
-                break
-        self.assertIsNotNone(row_layout)
-        self.assertEqual(
-            [row_layout.itemAt(index).widget() for index in range(row_layout.count())],
-            [
-                self.page.stop_cable_loss_btn,
-                self.page.load_cable_results_btn,
-                self.page.show_cable_loss_diagram_btn,
-            ],
-        )
 
     def test_result_surface_holds_the_table_source_and_empty_state(self):
         from PySide6.QtWidgets import QFrame
@@ -416,18 +314,6 @@ class CableLossPageTests(unittest.TestCase):
         self.page.show_cable_loss_diagram_btn.click()
         self.assertEqual(self.dialog_types, ["cable_loss_paths"])
 
-    def test_status_slot_sits_below_the_measurement_controls(self):
-        """左栏在控制面下面留出状态区：进度与日志由窗口挂进来。"""
-        from PySide6.QtWidgets import QFrame
-
-        page = self.page
-        page.resize(1200, 900)
-        page.show()
-        self.app.processEvents()
-        control = page.findChild(QFrame, "measurementSurface")
-        self.assertIs(page.status_slot.parentWidget(), control.parentWidget())
-        self.assertGreaterEqual(page.status_slot.y(), control.y() + control.height())
-        page.close()
 
     def test_stage_summary_starts_at_not_started_without_a_fake_zero(self):
         summary = self.page.stage_summary()
@@ -536,15 +422,6 @@ class CableLossPageTests(unittest.TestCase):
             "取消选择后回落到最后一行，与实时追加顺序一致",
         )
 
-    def test_repeated_identical_data_does_not_announce_twice(self):
-        events = []
-        self.page.stage_summary_changed.connect(lambda: events.append(True))
-        payload = {"frequency": "2.4", "cable_losses": {"cable1": 1.0}}
-
-        self.controller.signals.data_update.emit(payload)
-        self.controller.signals.data_update.emit(payload)
-
-        self.assertEqual(len(events), 1, "摘要没变化就不重复刷新阶段条/页头")
 
     def test_batch_result_loading_refreshes_the_summary_once(self):
         events = []

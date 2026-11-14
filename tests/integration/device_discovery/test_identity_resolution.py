@@ -74,7 +74,7 @@ class DeviceHeadingTests(unittest.TestCase):
         self.assertEqual(device.supply_id, "DP8B1519")
         self.assertFalse(hasattr(device, "config_slot"), "旧槽位已从发现结果里删除")
 
-    def test_legacy_slot_is_folded_into_the_power_supply_category(self):
+    def test_legacy_slot_role_is_not_recognised(self):
         device = DiscoveredDevice(
             ip="10.0.0.1",
             port=5555,
@@ -85,10 +85,11 @@ class DeviceHeadingTests(unittest.TestCase):
             known_role="PS3",
         )
 
-        self.assertEqual(device.role, "power_supply")
+        self.assertIsNone(device.role)
+        self.assertFalse(device.has_role)
         self.assertFalse(hasattr(device, "config_slot"))
         self.assertIsNone(device.supply_id, "没有标签就没有 supply_id，发现过程不生成标签")
-        self.assertEqual(device_heading(device), "DP832A（电源）")
+        self.assertEqual(device_heading(device), "DP832A")
 
     def test_other_roles_and_unknown_devices_keep_their_heading(self):
         signal = DiscoveredDevice(

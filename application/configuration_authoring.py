@@ -86,7 +86,6 @@ from domain.configuration.rules import (
     validate_power_plan,
 )
 from domain.configuration.types import ConfigIssue
-from domain.instruments.models import is_legacy_power_supply_slot
 
 __all__ = [
     "ConfigurationAuthoringError",
@@ -892,12 +891,7 @@ def _author_power_supply_entries(document: Mapping[str, Any]) -> dict[str, Any]:
         supply = _mapping(supplies.get(supply_id))
         entries[supply_id] = {
             "label": supply.get("label"),
-            # 旧槽位条目的 ``model`` 里存的是槽位名（``PS1``），那不是型号；旧写法没有
-            # 型号信息，宁可留空让正式校验报告，也不把编号当型号写进快照。槽位名的识别
-            # 只有领域层一处实现（``is_legacy_power_supply_slot``），页面不再自带槽位清单。
-            "model": None
-            if is_legacy_power_supply_slot(supply.get("model"))
-            else supply.get("model"),
+            "model": supply.get("model"),
             "full_code": supply.get("full_code"),
             "device_key": supply.get("device_key"),
             "visa_address": supply.get("address"),

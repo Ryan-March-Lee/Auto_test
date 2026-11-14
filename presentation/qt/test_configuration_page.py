@@ -36,8 +36,12 @@
 参数区按被测对象分成两张卡片：**“DUT 参数”**承载 DUT 频率扫描计划、DUT 功率扫描
 计划、压缩点、衰减器与 DUT 最大输入功率；**“驱放参数”**只承载有驱放测试才生效的
 驱动功放预估增益与驱放最大输入功率，无驱放测试时整组不显示。控件对象仍保留在页面
-上，因此配置里已有的驱放值会原样回写，不会因为切换模式被删除。运行入口和底部操作栏
-不属于参数分组，仍独立成块。
+上，因此配置里已有的驱放值会原样回写，不会因为切换模式被删除。
+
+版式分两段：DUT 参数整行占满（它的频率扫描行必须单行排下四个输入），驱放参数与
+“仪器连接”并排放在下一行，页面下半部分不再只剩空白。运行入口不在参数分组里：
+“上一步”“保存配置”“连接仪器”一起排在底部固定操作栏，其中“连接仪器”是唯一主操作；
+“仪器连接”分组只显示由窗口写入的运行状态。
 
 测试频率不再逐点输入：页面提供“起始/步长/终止/增补”四个控件，由
 :mod:`presentation.qt.frequency_sweep` 生成配置文档仍使用的 ``test_frequencies``
@@ -213,11 +217,13 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         # 限制内容最大宽度：窗口过宽时不再把卡片横向拉伸成很长的边框。宽度是跨页面
         # 共用的主题令牌，连接页的 ``.ui`` 与这里取同一个值。
         content.setMaximumWidth(PAGE_CONTENT_MAX_WIDTH)
-        # 单列布局：测试参数与运行入口都在这里；电源参数、分配与上电计划已移入
-        # :mod:`presentation.qt.power_configuration_page`，本页不再持有电源控件。
-        column = QVBoxLayout(content)
+        # 版式分两段：DUT 参数整行占满（它的频率扫描行必须单行排下四个输入），
+        # 驱放参数与仪器连接并排放在下一行。这样页面下半部分不再只剩空白，同时
+        # 所有分组仍挂在同一个布局里，既有的“DUT 在前、驱放在后”顺序保持不变。
+        column = QGridLayout(content)
         column.setContentsMargins(0, 0, 4, 0)
-        column.setSpacing(12)
+        column.setHorizontalSpacing(12)
+        column.setVerticalSpacing(12)
         root.addWidget(scroll, 1)
         scroll.setWidget(content)
         page_column = column
@@ -227,7 +233,7 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         self.read_only_notice.setProperty("tone", "warning")
         self.read_only_notice.setWordWrap(True)
         self.read_only_notice.setVisible(False)
-        page_column.addWidget(self.read_only_notice)
+        page_column.addWidget(self.read_only_notice, 0, 0, 1, 2)
 
         # 设备发现与设备勾选都在“仪表配置”页（欢迎页之后的第一步）：本页只配置测试
         # 参数与运行，设备地址与身份来自那一页写入的设备绑定，页面不再提供手工填写地址
@@ -337,22 +343,27 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
             field_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             form.addWidget(field_label, row + first_parameter_row, column * 2)
             form.addWidget(widget, row + first_parameter_row, column * 2 + 1)
-        page_column.addWidget(params)
-        self._build_driver_parameters(page_column)
+        page_column.addWidget(params, 1, 0, 1, 2)
+        self._build_driver_parameters(page_column, 2, 0)
         self._apply_driver_gain_state()
-        # 连接入口紧随测试参数，命名配置保存放在页面底部固定操作栏。
-        self._build_run_widgets(page_column)
-        page_column.addStretch(1)
+        # 仪器连接与驱放参数同一行：最终动作在底部固定操作栏里，这里只留运行状态。
+        self._build_run_widgets(page_column, 2, 1)
+        page_column.setColumnStretch(0, 3)
+        page_column.setColumnStretch(1, 2)
+        # 富余高度留在最后一行：卡片保持自身高度，不会被拉成一张空白的大卡。
+        page_column.setRowStretch(3, 1)
         root.addWidget(self._build_action_bar())
 
     # -- 驱放参数组 ---------------------------------------------------------
-    def _build_driver_parameters(self, layout) -> None:
+    def _build_driver_parameters(self, layout, row: int, column: int) -> None:
         """建立驱放参数组：有驱放测试才生效的预估增益与最大输入功率。
 
         本页与驱放直接相关的配置是 ``driver_mode.estimated_gain_db`` 与
         ``driver_mode.max_input_power``：驱放上电计划归电源配置页，有/无驱放由欢迎页
         选择。组内两行分别是预估增益与最大输入功率；后者是有驱放链路中信号源输出
         设定值的硬上限。无驱放测试时整组不显示（见 :meth:`_apply_driver_gain_state`）。
+
+        参数组由调用方给出格位：它和“仪器连接”并排放在 DUT 参数下方的同一行。
         """
         # 驱动功放预估增益是测试配置里的单一全局值（dB）。空文本表示尚未填写；
         # 增益的业务校验（有限数值、驱动模式下必填）由配置 DTO 承担，页面不推算。
@@ -405,7 +416,7 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         form.addWidget(self.driver_max_input_power_label, 1, 0)
         form.addWidget(self.driver_max_input_power, 1, 1, Qt.AlignLeft)
 
-        layout.addWidget(group)
+        layout.addWidget(group, row, column)
 
     # -- DUT 功率扫描计划编辑器 ---------------------------------------------
     @staticmethod
@@ -680,8 +691,20 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         return self.power_scan_plan_rows[0].step
 
     def _build_action_bar(self):
-        """页面底部固定操作栏：回到仪表配置或保存当前配置。"""
-        return build_action_bar(self)
+        """页面底部固定操作栏：回退、保存与最终动作，最终动作是唯一主操作。
+
+        动作条放进一个居中容器，宽度与上方内容列一致（都是版心令牌），按钮因此
+        与卡片左右对齐；底栏贴着页面底边，不随内容滚动。
+        """
+        bar = build_action_bar(self, self.finalize_run_btn)
+        host = QWidget()
+        row = QHBoxLayout(host)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
+        row.addStretch(1)
+        row.addWidget(bar, 1000)
+        row.addStretch(1)
+        return host
 
     def view_state(self):
         """返回连接页读取的只读配置视图。
@@ -761,11 +784,13 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
                 labels.append(f"电源 {key}")
         return labels
 
-    def _build_run_widgets(self, layout):
-        """最终动作入口：一次完成校验、保存当前配置、冻结执行上下文与连接检查。
+    def _build_run_widgets(self, layout, row: int, column: int):
+        """仪器连接分组：只显示当前执行状态，最终动作交给底部固定操作栏。
 
-        保存配置放在页面底部固定操作栏（``_build_action_bar``），
-        最终动作留在参数区下方，便于“改参数 → 连接仪器”就近操作。
+        页面的终点是“连接仪器”，它和“上一步”“保存配置”一起排在底栏（
+        ``_build_action_bar``），全页因此只有一个主操作；本分组不再放按钮，
+        只保留由窗口写入的运行状态。按钮在这里创建，是因为它的文案、提示与可用
+        状态都由本页维护；摆放位置由底栏决定。
         """
         # 配置阶段入口：页面最终按钮。连接成功后
         # 由窗口切到测量区，页面不会自动开始任何测量。
@@ -781,9 +806,8 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         self.run_status_label = QLabel(DEFAULT_RUN_STATUS)
         self.run_status_label.setWordWrap(True)
         self.run_status_label.setProperty("tone", "muted")
-        run_layout.addWidget(self.finalize_run_btn)
         run_layout.addWidget(self.run_status_label)
-        layout.addWidget(run_group)
+        layout.addWidget(run_group, row, column)
 
     def _connect_signals(self):
         self.save_config_btn.clicked.connect(self.request_save)

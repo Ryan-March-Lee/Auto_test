@@ -6,10 +6,10 @@
 构建代码里。
 """
 
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QWidget
 
 from .input_controls import NumericTextField, WheelSafeComboBox
-from .theme import set_button_variant
+from .theme import PAGE_CONTENT_MAX_WIDTH, set_button_variant
 
 # 配置页表单里数值框的固定宽度：长数字不撑开列宽，两列表单的输入列才能对齐。
 _NUMBER_FIELD_MAXIMUM_WIDTH = 140
@@ -47,12 +47,23 @@ def combo_box(items=(), current=None):
     return widget
 
 
-def build_action_bar(page) -> QWidget:
-    """构建配置页底部操作栏，并把需要由页面使用的控件登记到 ``page``。"""
-    bar = QWidget()
+def build_action_bar(page, primary_action=None) -> QWidget:
+    """构建配置页底部操作栏，并把需要由页面使用的控件登记到 ``page``。
+
+    ``primary_action`` 是页面自己的最终动作（“连接仪器”）：它排在“上一步”“保存配置”
+    之后，成为底栏唯一的主操作。页面在调用本函数之前已经创建好该按钮，这里只负责摆放，
+    不改文案、信号或可用状态。缺省为 ``None`` 时底栏仍只保留回退与保存，供独立测试使用。
+
+    底栏是一条贴在页面底部的动作条：一条 1px 发丝线把它与上方可滚动内容分开（见
+    ``theme.py`` 的 ``QFrame#pageActionBar``），层级由按钮的 ``variant`` 声明。
+    """
+    bar = QFrame()
     bar.setObjectName("pageActionBar")
+    bar.setFrameShape(QFrame.NoFrame)
+    # 与上方内容列同宽：动作条由页面放进居中的容器，这里给出跨页面共用的宽度上限。
+    bar.setMaximumWidth(PAGE_CONTENT_MAX_WIDTH)
     row = QHBoxLayout(bar)
-    row.setContentsMargins(0, 0, 4, 0)
+    row.setContentsMargins(0, 10, 4, 0)
     row.setSpacing(10)
 
     dirty_hint = QLabel("修改参数后请保存配置，运行时使用已保存并冻结的配置。")
@@ -63,10 +74,13 @@ def build_action_bar(page) -> QWidget:
     page.previous_step_btn.setToolTip("回到上一级“电源配置”页，保留已经填好的电源参数")
     set_button_variant(page.previous_step_btn, "secondary")
     page.save_config_btn = QPushButton("保存配置")
-    set_button_variant(page.save_config_btn, "primary")
+    # 保存不是本页的终点：最终动作是“连接仪器”，保存降为次要操作，避免两个主按钮。
+    set_button_variant(page.save_config_btn, "ghost")
     # “加载配置”已移到欢迎页：配置流程内只保留回退与保存。
     row.addWidget(page.previous_step_btn)
     row.addWidget(page.save_config_btn)
+    if primary_action is not None:
+        row.addWidget(primary_action)
     return bar
 
 

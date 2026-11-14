@@ -561,6 +561,15 @@ QGroupBox QGroupBox::title {
     top: 8px;
 }
 
+/* ===== 配置页底部操作栏 =====
+   动作条贴在页面底部：一条 1px 发丝线把它与上方可滚动内容分开，动作层级仍由按钮的
+   variant 决定（“保存配置”是次要操作，最终动作是底栏唯一的主操作）。 */
+QFrame#pageActionBar {
+    background: transparent;
+    border: none;
+    border-top: 1px solid $border;
+}
+
 /* ===== 整屏页面标题 =====
    整屏步骤页（如“仪表配置”）只有一个大字号标题，居中放在页面偏上位置；
    它不参与卡片标题的层级，因此单独一条属性。 */

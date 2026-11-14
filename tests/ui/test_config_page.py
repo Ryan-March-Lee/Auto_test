@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QApplication, QLabel
 from application.device_binding import ApplyDeviceSelectionRequest
 from presentation.qt.power_sweep_plan_row import PowerSweepPlanRow
 from presentation.qt.test_configuration_page import TestConfigurationPage
+from presentation.qt.theme import PAGE_CONTENT_MAX_WIDTH
 
 
 def _destroy_page(page):
@@ -703,6 +704,31 @@ class ConfigurationPageTests(unittest.TestCase):
         }
         self.assertIn("驱放最大输入功率 (dBm)", driver_labels)
 
+    def test_secondary_groups_share_the_row_below_the_dut_parameters(self):
+        """DUT 参数整行占满；驱放参数与仪器连接并排放到下一行，右侧不再留空。"""
+        from PySide6.QtWidgets import QGridLayout
+
+        page = self.make_page()
+
+        layout = page.dut_parameters_group.parentWidget().layout()
+        self.assertIsInstance(layout, QGridLayout)
+        dut_row, dut_column, _, dut_column_span = layout.getItemPosition(
+            layout.indexOf(page.dut_parameters_group)
+        )
+        driver_row, driver_column, _, _ = layout.getItemPosition(
+            layout.indexOf(page.driver_parameters_group)
+        )
+        run_group = page.run_status_label.parentWidget()
+        run_row, run_column, _, _ = layout.getItemPosition(
+            layout.indexOf(run_group)
+        )
+
+        self.assertEqual(dut_column, 0)
+        self.assertEqual(dut_column_span, 2, "DUT 参数必须横跨两列")
+        self.assertEqual(driver_row, dut_row + 1)
+        self.assertEqual(driver_row, run_row, "驱放与连接必须在同一行")
+        self.assertEqual((driver_column, run_column), (0, 1))
+
     def test_no_driver_mode_does_not_render_driver_settings(self):
         """无驱放测试时整张驱放参数卡不出现，也不留模式说明行。"""
         page = self.make_page(
@@ -1218,6 +1244,37 @@ class ConfigurationPageTests(unittest.TestCase):
         page.set_reconnect_required(False)
 
         self.assertEqual(page.finalize_run_btn.text(), "连接仪器")
+
+    def test_the_bottom_bar_has_exactly_one_primary_action(self):
+        """连接仪器是唯一主操作；保存降为次要，三个动作同排且宽度与内容列一致。"""
+        page = self.make_page()
+
+        variants = [
+            page.previous_step_btn.property("variant"),
+            page.save_config_btn.property("variant"),
+            page.finalize_run_btn.property("variant"),
+        ]
+        self.assertEqual(variants.count("primary"), 1)
+        self.assertEqual(page.finalize_run_btn.property("variant"), "primary")
+        self.assertEqual(page.save_config_btn.property("variant"), "ghost")
+
+        for button in (
+            page.previous_step_btn,
+            page.save_config_btn,
+            page.finalize_run_btn,
+        ):
+            self.assertEqual(
+                button.parentWidget().objectName(),
+                "pageActionBar",
+                "三个动作都必须排在底部固定操作栏里",
+            )
+
+        bar = page.previous_step_btn.parentWidget()
+        self.assertEqual(
+            bar.maximumWidth(),
+            PAGE_CONTENT_MAX_WIDTH,
+            "动作条与内容列使用同一个版心宽度",
+        )
 
     def test_finalizing_disables_the_page_and_restores_previous_states(self):
         """最终动作只临时禁用控件，退出时恢复各控件原来的可用状态。"""

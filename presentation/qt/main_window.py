@@ -164,6 +164,11 @@ class MainWindow(ConfigurationSnapshotActions, QMainWindow):
         self.tab_widget.setDocumentMode(True)
         self.measurement_workspace.set_content(self.tab_widget)
         self._register_pages()
+        # 外壳动效开关只由工作台拥有；窗口只把它转发给页面里自绘的读数条，
+        # 页面不反向读取工作台，也不新增第二个开关。
+        self.measurement_workspace.animations_changed.connect(
+            self._apply_page_animations
+        )
         self.mode_badge = self._build_mode_badge()
         # 标签宿主与外壳之间只有一条同步路径：阶段导航、页头同步、阶段停用都在这里。
         self.workspace_binding = WorkspaceBinding(
@@ -385,6 +390,17 @@ class MainWindow(ConfigurationSnapshotActions, QMainWindow):
         self.amplifier_page.load_driver_mapping_requested.connect(
             self._load_amplifier_driver_mapping
         )
+
+    def _apply_page_animations(self, enabled: bool) -> None:
+        """把工作台的动效开关转发给页面里自绘的读数条。
+
+        外壳仍拥有开关：它只发一个布尔值，页面只把读数条的淡入与呼吸点落到静态
+        外观；没有读数条的页面（测试配置、可视化）自然跳过。
+        """
+        for page in getattr(self, "pages", {}).values():
+            setter = getattr(page, "set_animations_enabled", None)
+            if callable(setter):
+                setter(enabled)
 
     def _on_page_changed(self, index):
         """Keep page activation hooks aligned with the visible tab.

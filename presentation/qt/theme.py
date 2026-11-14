@@ -116,6 +116,21 @@ TOKENS = {
     "series_2": "#16A34A",
     "series_3": "#D97706",
     "series_4": "#7C3AED",
+    # 测量读数条：结果面顶部的一条深色玻璃带。它借用电源通道滚筒的深色语言，
+    # 但只占一条带，不把整页变暗；读数条上的文字、芯片与呼吸点都从这组令牌取色。
+    "readout_body": "#161616",
+    "readout_body_bottom": "#0B0B0B",
+    "readout_border": "#2E2E2E",
+    "readout_text": "#F8FAFC",
+    "readout_text_muted": "#9CA3AF",
+    "readout_chip_bg": "#1C1C1C",
+    "readout_chip_border": "#2A2A2A",
+    "readout_accent": "#10B981",
+    # 自定义绘制用的网格线：只取颜色，透明度由绘制代码按屏幕像素比决定。
+    "readout_grid": "#FFFFFF",
+    # 结果面的 KPI 芯片：比白底卡再低一层的“读数底座”，不引入新的边框层级。
+    "kpi_chip_bg": "#F8FAFC",
+    "kpi_chip_border": "#E2E8F0",
     # 控件表面：输入区“凹”、按钮“凸”。
     # 输入区用浅灰底 + 细边，按钮用白面 + 稍深的下边；两者因此不靠文字也能分辨。
     "button_face_top": "#FFFFFF",
@@ -143,6 +158,8 @@ TOKENS = {
     "font_code": "18pt",
     # 设备卡片最下面的 IP：灰色小字，只作连接信息。
     "font_card_address": "8pt",
+    # 测量读数条的当前频点：结果面上最大的一个数，现场读数时先看到它。
+    "font_readout": "28pt",
     "font_mono": "Consolas",
 }
 
@@ -189,6 +206,10 @@ MEASUREMENT_LEFT_PANEL_MAX_WIDTH = 430
 
 #: 测量阶段切换时内容区的淡入时长（毫秒）：只动画进入的页面，旧页立即隐藏。
 MOTION_REVEAL_MS = 220
+
+#: 新读数到达时读数条文字的一次淡入（毫秒）：只确认“值换了”，不推迟读数；
+#: 动画从 0.55 透明度回到 1.0，任何时刻文字都保持可读。
+MOTION_DATA_MS = 180
 
 #: 阶段条指示块移动到当前阶段的时长（毫秒）；不改变布局，只移动指示块。
 MOTION_STAGE_MS = 180
@@ -1106,20 +1127,23 @@ QTableCornerButton::section {
     border-bottom: 1px solid $border;
 }
 
-/* ===== 进度条 ===== */
+/* ===== 进度条 =====
+   状态面板里的进度条只做水平读数：轨道更薄、两端圆角、已走部分用主色到序列紫的
+   渐变，和结果面的读数条一起构成“仪表正在走”的连续感。 */
 QProgressBar {
     background-color: $disabled_bg;
     border: 1px solid $border;
-    border-radius: 8px;
+    border-radius: 6px;
     color: $text_secondary;
     font-size: $font_small;
-    max-height: 16px;
-    min-height: 14px;
+    max-height: 12px;
+    min-height: 10px;
     text-align: center;
 }
 QProgressBar::chunk {
-    background-color: $primary;
-    border-radius: 7px;
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 $primary, stop:1 $series_4);
+    border-radius: 5px;
 }
 
 /* ===== 滚动条 ===== */
@@ -1190,8 +1214,90 @@ QLabel[role="sectionCaption"] {
 /* 结果面里的关键数字：比正文大一级，现场读数时先看到它。 */
 QLabel#measurementMetric {
     color: $text;
+    font-family: "$font_mono";
     font-size: $font_title;
     font-weight: 700;
+}
+/* KPI 芯片：结果面里一组“标签在上、数字在下”的读数底座。它比白底结果面低一层，
+   不新增卡片边界；芯片之间只靠间距分开，不再等分拉满整行。 */
+QFrame#measurementKpiChip {
+    background-color: $kpi_chip_bg;
+    border: 1px solid $kpi_chip_border;
+    border-radius: 6px;
+}
+/* 读数条：深色玻璃带由 MeasurementReadout 自绘背景与网格，样式表只负责文字与芯片；
+   背景留空，避免 QSS 再铺一层把自绘的渐变和细网格盖掉。 */
+QFrame#measurementReadout {
+    background: transparent;
+    border: none;
+}
+QLabel#measurementReadoutCaption {
+    color: $readout_text_muted;
+    font-size: $font_small;
+    font-weight: 600;
+}
+QLabel#measurementReadoutValue {
+    color: $readout_text;
+    font-family: "$font_mono";
+    font-size: $font_readout;
+    font-weight: 700;
+}
+QLabel#measurementReadoutUnit {
+    color: $readout_text_muted;
+    font-size: $font_body;
+}
+QLabel#measurementReadoutChipLabel {
+    color: $readout_text_muted;
+    font-size: $font_small;
+    font-weight: 600;
+}
+QLabel#measurementReadoutChipTitle {
+    color: $readout_text_muted;
+    font-size: $font_small;
+    font-weight: 600;
+}
+QLabel#measurementReadoutChipValue {
+    color: $readout_text;
+    font-family: "$font_mono";
+    font-size: 11pt;
+    font-weight: 600;
+}
+QLabel#measurementReadoutChipUnit {
+    color: $readout_text_muted;
+    font-size: $font_small;
+}
+QLabel#measurementReadoutChipDelta {
+    color: $readout_text_muted;
+    font-size: $font_small;
+}
+QFrame#measurementReadoutLive {
+    background-color: $readout_chip_bg;
+    border: 1px solid $readout_accent;
+    border-radius: 9px;
+}
+QLabel#measurementReadoutLiveText {
+    color: $readout_accent;
+    font-size: $font_small;
+    font-weight: 600;
+}
+QFrame#measurementReadoutChip {
+    background-color: $readout_chip_bg;
+    border: 1px solid $readout_chip_border;
+    border-radius: 6px;
+}
+/* 空态：结果面里的线稿 + 一句说明。它不画外框，避免“卡片里再套一张卡”。 */
+QWidget#measurementEmptyState {
+    background: transparent;
+    border: none;
+}
+QLabel#measurementEmptyStateTitle {
+    color: $text;
+    font-size: $font_section;
+    font-weight: 600;
+}
+QLabel#measurementEmptyStateDescription {
+    color: $text_secondary;
+    font-size: $font_small;
 }
 /* 面内分隔：只是一条 1px 的线，不加边距，也不使用 QFrame 的立体边框。 */
 QFrame#measurementHairline {
@@ -1206,6 +1312,101 @@ QFrame#measurementResultSurface QTableWidget,
 QFrame#measurementResultSurface QTableView {
     border: none;
     border-radius: 0;
+}
+/* 测量结果表：行高、等宽数字与行内数据条由 MeasurementTable / 委托负责；样式表只
+   统一交替行底色与表头，避免默认表格的浅灰行几乎看不见。 */
+QTableWidget#measurementResultTable {
+    alternate-background-color: $surface_sunken;
+    background-color: $surface;
+    gridline-color: transparent;
+}
+QTableWidget#measurementResultTable QHeaderView::section {
+    background-color: $surface_sunken;
+    border: none;
+    border-bottom: 1px solid $border;
+    color: $header_text;
+    font-size: $font_small;
+    font-weight: 600;
+    padding: 8px 9px;
+}
+/* 结果面底部的读数摘要：只给范围和最大值，并提醒条长只是相对大小。 */
+QLabel#measurementResultSummary {
+    background-color: $surface_sunken;
+    border: 1px solid $border;
+    border-radius: 6px;
+    color: $text_secondary;
+    font-size: $font_small;
+    padding: 6px 9px;
+}
+/* 频点胶片条：一条可滚动的频点带。已测频点用轻微的凹底，当前频点用主色描边与
+   主色文字；不使用成功色，避免把“已到达”读成“合格”。 */
+QWidget#frequencyFilmstrip {
+    background: transparent;
+    border: none;
+}
+QScrollArea#frequencyFilmstripScroll {
+    background: transparent;
+    border: none;
+}
+QWidget#frequencyFilmstripContent {
+    background: transparent;
+}
+QPushButton#frequencyChip {
+    background-color: $surface_sunken;
+    border: 1px solid $border;
+    border-radius: 10px;
+    color: $text_secondary;
+    font-family: "$font_mono";
+    font-size: $font_small;
+    min-height: 20px;
+    padding: 1px 9px;
+}
+QPushButton#frequencyChip:hover {
+    border-color: $border_strong;
+    color: $text;
+}
+QPushButton#frequencyChip[current="true"] {
+    background-color: $primary_soft;
+    border-color: $primary;
+    color: $primary_pressed;
+    font-weight: 700;
+}
+/* 运行控制台：左栏的运行事实与前置检查。标签用小字，值用正文并加粗；LED 只有
+   “已满足 / 还缺 / 不使用”三种状态，不在控制台里表达失败（失败由日志与提示条承担）。 */
+QLabel#consoleFactLabel {
+    color: $text_muted;
+    font-size: $font_small;
+}
+QLabel#consoleFactValue {
+    color: $text;
+    font-size: $font_small;
+    font-weight: 600;
+}
+QLabel#consoleCheckLabel {
+    color: $text;
+    font-size: $font_small;
+}
+QLabel#consoleCheckDetail {
+    color: $text_secondary;
+    font-size: $font_small;
+}
+QLabel#consoleLed {
+    background-color: $disabled_text;
+    border: none;
+    border-radius: 4px;
+    max-height: 8px;
+    max-width: 8px;
+    min-height: 8px;
+    min-width: 8px;
+}
+QLabel#consoleLed[tone="ready"] {
+    background-color: $success;
+}
+QLabel#consoleLed[tone="waiting"] {
+    background-color: $warning;
+}
+QLabel#consoleLed[tone="optional"] {
+    background-color: $disabled_text;
 }
 
 /* ===== 状态区 ===== */

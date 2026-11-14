@@ -24,7 +24,7 @@ from application.dto import (
 from application.dto.export_requests import ExportFormat, ExportOutcome
 from application.dto.run_history import ResultReportLocation, ResultReportState
 from application.ports.gui_data_service import LoadedResultDto
-from PySide6.QtWidgets import QDialog
+from PySide6.QtWidgets import QDialog, QFrame
 from presentation.qt.history_view_model import HistoryViewModel
 from presentation.qt.visualization_page import VisualizationPage
 
@@ -140,6 +140,75 @@ class VisualizationPageTests(unittest.TestCase):
         )
         self.assertTrue(page.load_test_data())
         return page
+
+    # -- 布局：与三个测量页共用“控制面 + 结果面” -----------------------------
+
+    def test_page_uses_the_shared_measurement_surfaces(self):
+        page = self._page()
+
+        control = page.findChild(QFrame, "measurementSurface")
+        result = page.findChild(QFrame, "measurementResultSurface")
+
+        self.assertIsNotNone(control)
+        self.assertIsNotNone(result)
+        self.assertIs(page.data_plot_widget.parentWidget(), result)
+
+    def test_filmstrip_shows_loaded_frequencies_and_selects_on_click(self):
+        page = self._page_with_loaded_result(None)
+        strip = page.frequency_filmstrip
+
+        self.assertFalse(strip.isHidden())
+        self.assertEqual(strip.frequencies(), (4.8, 5.2))
+        self.assertEqual(strip.current_index(), 0)
+
+        strip.chips()[1].click()
+
+        self.assertEqual(page.history.frequency_index, 1)
+        self.assertEqual(page.freq_label.text(), "5.2 GHz (2/2)")
+
+    def test_compression_target_draws_a_gain_band_only_when_the_result_has_it(self):
+        result = AmplifierMeasurementResult(
+            run_id=RUN_ID,
+            frequencies=(
+                AmplifierFrequencyResult(
+                    frequency_ghz="4.8",
+                    compression_type="3dB",
+                    small_signal_gain_db=30.0,
+                    sweep_data={
+                        "input_power_dut": [-20.0, -10.0],
+                        "output_power_dut": [-9.0, 1.0],
+                        "gain": [30.0, 27.0],
+                    },
+                ),
+                AmplifierFrequencyResult(
+                    frequency_ghz="5.2",
+                    sweep_data={
+                        "input_power_dut": [-20.0, -10.0],
+                        "output_power_dut": [-9.0, 1.0],
+                        "gain": [30.0, 27.0],
+                    },
+                ),
+            ),
+        )
+        page = self._page(
+            chooser=lambda: LoadedResultDto(
+                "run::r::amplifier.json", "amplifier.json", result
+            )
+        )
+        self.assertTrue(page.load_test_data())
+
+        bands = page.data_plot_widget.target_bands()
+        self.assertEqual(len(bands), 1)
+        self.assertEqual(bands[0].panel, 1)
+        self.assertAlmostEqual(bands[0].low, 26.9)
+        self.assertAlmostEqual(bands[0].high, 27.1)
+        self.assertIn("3dB", bands[0].label)
+
+        page.frequency_filmstrip.chips()[1].click()
+        self.assertEqual(page.data_plot_widget.target_bands(), ())
+
+        page.frequency_filmstrip.chips()[0].click()
+        self.assertEqual(len(page.data_plot_widget.target_bands()), 1)
 
     # -- 另存为：只针对已加载结果 -------------------------------------------
 

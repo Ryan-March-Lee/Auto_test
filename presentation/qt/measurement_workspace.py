@@ -272,6 +272,9 @@ class MeasurementWorkspace(QWidget):
     #: 用户请求回到测试配置；配置入口是工具动作，不是第五个阶段。
     configuration_requested = Signal()
 
+    #: 外壳动效开关变化：窗口把它转发给页面的读数条等自绘件。
+    animations_changed = Signal(bool)
+
     def __init__(
         self,
         stages: tuple[StageDescriptor, ...] = MEASUREMENT_STAGES,
@@ -630,6 +633,7 @@ class MeasurementWorkspace(QWidget):
         self.rail.set_animations_enabled(enabled)
         if not enabled:
             self._cancel_page_reveal()
+        self.animations_changed.emit(enabled)
 
     # ---- 写入：内容与状态簇 ---------------------------------------------------
 

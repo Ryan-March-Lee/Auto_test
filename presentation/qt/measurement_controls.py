@@ -79,6 +79,16 @@ def _state_snapshot(state: Any) -> tuple[MeasurementKind | None, MeasurementStat
     return kind, status, active
 
 
+def state_is_active(state: Any) -> bool:
+    """只读判定：该状态是否表示“本页面的测量正在进行”。
+
+    读数条、呼吸点等纯展示件只需要这一个结论；它们不消费 ``kind``，也不改变按钮。
+    状态与 :class:`MeasurementControlPresenter` 使用同一份快照规则，避免页面各自
+    推导出不同的“进行中”。
+    """
+    return _state_snapshot(state)[2]
+
+
 class MeasurementControlPresenter:
     """把测量状态映射成页面声明过的控制按钮可用性。
 
@@ -149,4 +159,5 @@ __all__ = [
     "MeasurementAction",
     "MeasurementControlAvailability",
     "MeasurementControlPresenter",
+    "state_is_active",
 ]

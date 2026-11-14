@@ -54,6 +54,34 @@ class RealtimeBufferTests(unittest.TestCase):
         self.assertEqual(buffer.frequencies, [])
         self.assertFalse(buffer.user_browsing)
 
+    def test_select_switches_to_an_index_and_restores_following(self):
+        buffer = RealtimeMeasurementBuffer()
+        for frequency in (1.0, 2.0, 3.0):
+            buffer.store({"frequency": frequency, "value": frequency})
+
+        self.assertTrue(buffer.select(0))
+        self.assertEqual(buffer.current()["value"], 1.0)
+        self.assertTrue(buffer.user_browsing)
+
+        self.assertTrue(buffer.select(2))
+        self.assertEqual(buffer.current()["value"], 3.0)
+        self.assertFalse(buffer.user_browsing, "切到最后一个频点后恢复自动跟随")
+
+    def test_select_and_index_of_reject_invalid_values(self):
+        buffer = RealtimeMeasurementBuffer()
+        buffer.store({"frequency": 2.4})
+
+        self.assertEqual(buffer.index_of(2.4), 0)
+        self.assertEqual(buffer.index_of("2.40"), 0)
+        self.assertIsNone(buffer.index_of("bad"))
+        self.assertIsNone(buffer.index_of(float("inf")))
+        self.assertIsNone(buffer.index_of(9.9))
+        self.assertFalse(buffer.select(1))
+        with self.assertRaises(TypeError):
+            buffer.select(True)
+        with self.assertRaises(TypeError):
+            buffer.select("0")
+
 
 class StatusPanelTests(unittest.TestCase):
     @classmethod
@@ -100,20 +128,50 @@ class StatusPanelTests(unittest.TestCase):
         panel.add_log_message("first")
         panel.add_log_message("second\nline two")
 
-        self.assertEqual(panel.log_summary_label.text(), "second line two")
+        self.assertEqual(panel.log_summary_label.text(), "first\nsecond line two")
         self.assertEqual(panel.log_count_label.text(), "2 条")
 
         panel.toggle_log()
 
         self.assertTrue(panel.is_log_expanded())
         self.assertFalse(panel.log_text.isHidden())
+        self.assertTrue(
+            panel.log_summary_label.isHidden(), "展开后预览让位给完整日志"
+        )
         self.assertEqual(panel.log_toggle_btn.accessibleName(), "收起实时日志")
         self.assertIn("line two", panel.log_text.toPlainText())
 
         panel.toggle_log()
 
         self.assertTrue(panel.log_text.isHidden())
+        self.assertFalse(panel.log_summary_label.isHidden())
         self.assertIn("line two", panel.log_text.toPlainText(), "折叠不能丢消息")
+
+    def test_collapsed_preview_keeps_only_the_last_three_messages(self):
+        panel = self._panel()
+        for message in ("one", "two", "three", "four"):
+            panel.add_log_message(message)
+
+        self.assertEqual(panel.log_count_label.text(), "4 条")
+        self.assertEqual(panel.log_summary_label.text(), "two\nthree\nfour")
+        self.assertEqual(
+            panel.log_summary_label.messages(), ("two", "three", "four")
+        )
+
+    def test_collapsed_preview_labels_do_not_keep_growing(self):
+        """预览固定三行：第 4 条之后不再新增标签，避免左栏越拉越高。"""
+        panel = self._panel()
+        for index in range(6):
+            panel.add_log_message(f"message {index}")
+
+        self.assertEqual(len(panel.log_summary_label._labels), 3)
+        self.assertEqual(
+            panel.log_summary_label.messages(),
+            ("message 3", "message 4", "message 5"),
+        )
+        # 视觉文本可能已按当前宽度省略，但三条都来自最近消息。
+        for label in panel.log_summary_label._labels:
+            self.assertTrue(label.text().startswith("message"))
 
     def test_summary_tooltip_keeps_the_log_text_plain(self):
         """日志里的 HTML 片段不能被 tooltip 当成富文本；换行仍要保留。"""

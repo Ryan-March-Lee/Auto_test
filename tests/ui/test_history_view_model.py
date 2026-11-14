@@ -285,6 +285,20 @@ class HistoryViewModelTests(unittest.TestCase):
         self.assertTrue(view_model.previous_frequency())
         self.assertEqual(view_model.frequency_index, 0)
 
+    def test_select_frequency_jumps_directly_and_rejects_out_of_range(self):
+        view_model, _query = self._view_model()
+        view_model.show(
+            LoadedResultDto("run::r::a.json", "a.json", _amplifier_result())
+        )
+
+        self.assertTrue(view_model.select_frequency(1))
+        self.assertEqual(view_model.current_frequency, 5.2)
+        self.assertFalse(view_model.select_frequency(2))
+        self.assertEqual(view_model.frequency_index, 1)
+
+        with self.assertRaises(TypeError):
+            view_model.select_frequency(True)
+
     def test_clear_returns_to_the_unloaded_state(self):
         view_model, _query = self._view_model()
         view_model.show(

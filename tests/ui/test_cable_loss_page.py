@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 
 from application.dto import CableLossMeasurementResult, CableLossRow
 from presentation.qt.cable_loss_page import CableLossPage
+from presentation.qt.measurement_console import CheckState
 from presentation.qt.measurement_controller_contract import MeasurementCommand
 from presentation.qt.measurement_controls import MeasurementAction
 from presentation.qt.measurement_state import (
@@ -101,6 +102,7 @@ class CableLossPageTests(unittest.TestCase):
             connection_dialog_factory=dialog_factory,
             log_callback=self.logs.append,
             error_callback=self.errors.append,
+            archival_run_id_provider=lambda: self.run.run_id,
         )
         self.page.bind_controller(self.controller)
 
@@ -325,6 +327,62 @@ class CableLossPageTests(unittest.TestCase):
         )
         self.assertEqual(self.page.stage_metrics_row.metrics(), summary.metrics)
 
+    def test_readout_follows_the_latest_frequency_and_cable_values(self):
+        self.controller.signals.data_update.emit({
+            "frequency": "2.4",
+            "cable_losses": {"cable1": 1.234},
+        })
+
+        readout = self.page.readout
+
+        self.assertEqual(readout.frequency_text(), "2.4")
+        self.assertEqual(readout.unit_text(), "GHz")
+        self.assertEqual(
+            [metric.value for metric in readout.metrics()],
+            ["1.234", "—", "—", "—"],
+        )
+        self.assertEqual(
+            [metric.label for metric in readout.metrics()],
+            ["线缆1", "线缆2", "线缆3", "线缆4"],
+        )
+
+    def test_readout_shows_the_delta_to_the_previous_frequency(self):
+        for frequency, loss in (("2.4", 1.0), ("2.5", 1.2)):
+            self.controller.signals.data_update.emit({
+                "frequency": frequency,
+                "cable_losses": {"cable1": loss},
+            })
+
+        metric = self.page.readout.metrics()[0]
+
+        self.assertEqual(metric.value, "1.200")
+        self.assertEqual(metric.delta, "▲ 0.200")
+
+    def test_result_summary_reports_ranges_and_the_maximum(self):
+        for frequency, loss in (("2.4", 1.0), ("2.5", 1.2)):
+            self.controller.signals.data_update.emit({
+                "frequency": frequency,
+                "cable_losses": {"cable1": loss},
+            })
+
+        summary = self.page.cable_loss_summary_label
+
+        self.assertFalse(summary.isHidden())
+        self.assertIn("2 频点", summary.text())
+        self.assertIn("线缆1 1.000–1.200 dB", summary.text())
+        self.assertIn("最大 1.200 dB @ 2.5 GHz", summary.text())
+        self.assertIn("条长只表相对大小", summary.text())
+
+    def test_result_summary_hides_with_the_cleared_table(self):
+        self.controller.signals.data_update.emit({
+            "frequency": "2.4",
+            "cable_losses": {"cable1": 1.0},
+        })
+
+        self.page.clear_results()
+
+        self.assertTrue(self.page.cable_loss_summary_label.isHidden())
+
     def test_stage_summary_follows_the_displayed_table(self):
         self.controller.signals.data_update.emit({
             "frequency": "2.4",
@@ -453,6 +511,41 @@ class CableLossPageTests(unittest.TestCase):
                 StageMetric("当前频点", "3.5 GHz"),
                 StageMetric("线缆", "1"),
             ),
+        )
+
+    def test_run_console_shows_the_run_and_the_remaining_prerequisites(self):
+        console = self.page.console
+
+        self.assertEqual(console.run_id_text(), "run-cable-loss")
+        self.assertIsNone(console.mode_text())
+        self.assertEqual(console.archive_text(), "未配置")
+        self.assertIs(console.check_state("执行会话"), CheckState.READY)
+        self.assertIs(console.check_state("接线确认"), CheckState.OPTIONAL)
+        self.assertIs(console.check_state("结果归档"), CheckState.WAITING)
+
+    def test_console_follows_a_reconnected_run_on_activation(self):
+        self.run = type("PreparedRun", (), {
+            "run_id": "run-cable-loss-2", "run_repository": object(),
+            "run_directory": "runs/run-cable-loss-2",
+            "hardware_connection_path": lambda self: None,
+        })()
+
+        self.page.on_activated()
+
+        self.assertEqual(self.page.console.run_id_text(), "run-cable-loss-2")
+
+    def test_console_archive_check_turns_ready_when_a_location_is_configured(self):
+        self.page._archival_location_provider = (
+            lambda run_id, relative: f"runs/{run_id}"
+        )
+
+        self.page._refresh_console()
+
+        self.assertEqual(
+            self.page.console.archive_text(), "runs/run-cable-loss"
+        )
+        self.assertIs(
+            self.page.console.check_state("结果归档"), CheckState.READY
         )
 
 

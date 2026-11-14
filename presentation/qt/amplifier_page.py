@@ -18,10 +18,21 @@ from PySide6.QtWidgets import (
 
 from application.dto.measurement_requests import StageResultDigest
 from .archival_page import ArchivalPageMixin
+from .measurement_console import (
+    CheckState,
+    ConsoleCheck,
+    MeasurementRunConsole,
+    archive_check,
+    input_check,
+    run_session_check,
+    wiring_check,
+)
 from .measurement_controls import (
     MeasurementAction,
     MeasurementControlPresenter,
+    state_is_active,
 )
+from .measurement_readout import MeasurementReadout, ReadoutMetric
 from .measurement_start_facade import (
     MeasurementStartFacade,
     StartMeasurementRequest,
@@ -38,7 +49,7 @@ from .measurement_surface import (
 )
 from .pages import PageControllerBindingMixin
 from .realtime_buffer import RealtimeMeasurementBuffer
-from .realtime_page import RealtimePageMixin
+from .realtime_page import RealtimePageMixin, format_latest_number
 from .stage_summary import (
     NOT_STARTED,
     StageMetric,
@@ -182,9 +193,13 @@ class AmplifierPage(
         )
         control_layout.addWidget(self.driver_mapping_input_row)
         left_layout.addWidget(control_surface)
+        # 运行控制台：运行标识、测试模式、两类校准输入、接线与归档位置。
+        self.console = MeasurementRunConsole()
+        left_layout.addWidget(self.console)
         self._sync_cable_loss_label()
         self._sync_driver_mapping_label()
         self._sync_driver_input_availability()
+        self._refresh_console()
         self.archival_banner = self._build_archival_banner()
         left_layout.addWidget(self.archival_banner)
         # 进度与实时日志由窗口挂进这块容器，占满控制面以下的剩余高度。
@@ -193,9 +208,11 @@ class AmplifierPage(
         self.control_panel = left_panel
         layout.addWidget(left_panel)
 
-        # 结果面统一包住绘图控件：频点浏览仍由绘图控件自带，本步只加标题行，不做 KPI。
+        # 结果面统一包住绘图控件：读数条在上，频点浏览仍由绘图控件自带。
         result_surface = build_surface(RESULT_SURFACE, title="测量结果")
         result_layout = result_surface.layout()
+        self.readout = MeasurementReadout(result_surface)
+        result_layout.addWidget(self.readout)
         # KPI 行只排版已有实时数据：频点数、当前频点与当前扫频点数。
         self.stage_metrics_row = StageMetricsRow(result_surface)
         result_layout.addWidget(self.stage_metrics_row)
@@ -205,8 +222,15 @@ class AmplifierPage(
             signal = getattr(self.amplifier_plot_widget, signal_name, None)
             if signal is not None:
                 signal.connect(slot)
+        # 胶片条点击切换到已测频点；页面只改浏览位置，不触发测量命令。
+        frequency_selected = getattr(
+            self.amplifier_plot_widget, "frequency_selected", None
+        )
+        if frequency_selected is not None:
+            frequency_selected.connect(self.select_frequency)
         result_layout.addWidget(self.amplifier_plot_widget, 1)
         layout.addWidget(result_surface, 1)
+        self.readout.set_reading("—", "", self._readout_metrics(), active=False)
         self._refresh_stage_summary()
         return self
 
@@ -277,6 +301,7 @@ class AmplifierPage(
         """配置可能在别的页面被修改：回到本页时重新同步驱动映射入口。"""
         super().on_activated()
         self._sync_driver_input_availability()
+        self._refresh_console()
 
     def _confirm_start_connection(self) -> bool:
         """按驱动模式选择连接图，接受才算完成接线确认。"""
@@ -318,6 +343,7 @@ class AmplifierPage(
             digest=StageResultDigest(sha256=sha256, size_bytes=size_bytes),
         )
         self._sync_cable_loss_label()
+        self._refresh_console()
         self._log_callback(
             f"已选择主功放线损测量结果：{filename}"
             f"（测量时间：{created_at}）"
@@ -421,6 +447,40 @@ class AmplifierPage(
                 label.setText("无驱放测试不需要驱动映射结果")
         if row is not None:
             row.setVisible(required)
+        self._refresh_console()
+
+    def _refresh_console(self) -> None:
+        """把运行标识、测试模式、校准输入与归档位置写进左栏控制台。"""
+        console = getattr(self, "console", None)
+        if console is None:
+            return
+        run_id = self._current_run_id()
+        configured = self._archival_location_provider is not None
+        directory = self._archival_directory(run_id)
+        driver_mode = bool(self._driver_mode_provider())
+        console.set_run_facts(
+            run_id=run_id,
+            mode="有驱放测试" if driver_mode else "无驱放测试",
+            archive=directory,
+            archive_configured=configured,
+        )
+        checks = [
+            run_session_check(run_id),
+            input_check("线损结果", self._cable_loss_selection is not None),
+        ]
+        if driver_mode:
+            checks.append(
+                input_check(
+                    "驱动映射结果", self._driver_mapping_selection is not None
+                )
+            )
+        else:
+            checks.append(
+                ConsoleCheck("驱动映射结果", CheckState.OPTIONAL, "无驱放模式不使用")
+            )
+        checks.append(wiring_check())
+        checks.append(archive_check(directory, configured=configured))
+        console.set_checks(tuple(checks))
 
     def stage_summary(self) -> StageSummary:
         """从已显示的实时缓存里取摘要；不读结果 DTO，也不发起新的测量查询。"""
@@ -488,13 +548,74 @@ class AmplifierPage(
         if update_plot is not None:
             update_plot(dict(data))
 
+    def _measurement_active(self) -> bool:
+        controller = getattr(self, "controller", None)
+        if controller is None:
+            return False
+        return state_is_active(getattr(controller, "state", None))
+
+    def _readout_metrics(
+        self, data: Mapping[str, Any] | None = None
+    ) -> tuple[ReadoutMetric, ...]:
+        """主功放读数：输出功率、增益、效率与 DC 功耗，全部取扫频的最后一点。"""
+        if data is None:
+            return (
+                ReadoutMetric("输出功率", "—", "dBm"),
+                ReadoutMetric("增益", "—", "dB"),
+                ReadoutMetric("效率", "—", "%"),
+                ReadoutMetric("DC功耗", "—", "W"),
+            )
+        sweep = data.get("sweep_data", {})
+        if not isinstance(sweep, Mapping):
+            sweep = {}
+        output = sweep.get("output_power_dut", sweep.get("output_power_driver"))
+        return (
+            ReadoutMetric("输出功率", format_latest_number(output, 1), "dBm"),
+            ReadoutMetric("增益", format_latest_number(sweep.get("gain"), 1), "dB"),
+            ReadoutMetric(
+                "效率", format_latest_number(sweep.get("efficiency"), 1), "%"
+            ),
+            ReadoutMetric(
+                "DC功耗", format_latest_number(sweep.get("dc_power"), 2), "W"
+            ),
+        )
+
+    def _update_readout(self, data: Mapping[str, Any]) -> None:
+        readout = getattr(self, "readout", None)
+        if readout is None:
+            return
+        frequency = str(data.get("frequency", "")).strip()
+        readout.set_reading(
+            frequency or "—",
+            "GHz" if frequency else "",
+            self._readout_metrics(data),
+            active=self._measurement_active(),
+        )
+
+    def _reset_readout(self) -> None:
+        readout = getattr(self, "readout", None)
+        if readout is not None:
+            readout.set_reading(
+                "—", "", self._readout_metrics(), active=self._measurement_active()
+            )
+
     def _on_state_changed(self, state: Any) -> None:
         self.controls.apply(state)
+        readout = getattr(self, "readout", None)
+        if readout is not None:
+            readout.set_active(self._measurement_active())
+        self._refresh_console()
+
+    def set_animations_enabled(self, enabled: bool) -> None:
+        """外壳关闭动效时，读数条的数值淡入与呼吸点一起落到静态外观。"""
+        self.readout.set_animations_enabled(enabled)
 
     def _on_error(self, message: str) -> None:
         if not self._archival_is_for_this_page():
             return
         self.controls.show_idle()
+        if getattr(self, "readout", None) is not None:
+            self.readout.set_active(False)
         self._archival_test_failed(message)
         self._error_callback(message)
 
@@ -502,6 +623,8 @@ class AmplifierPage(
         if not self._archival_is_for_this_page():
             return
         self.controls.show_idle()
+        if getattr(self, "readout", None) is not None:
+            self.readout.set_active(False)
         self._progress_callback(0)
         self._archival_test_stopped(reason, self._partial_result_path())
         self._log_callback(f"测量已停止: {reason}")
@@ -510,6 +633,8 @@ class AmplifierPage(
         if not self._archival_is_for_this_page():
             return
         self.controls.show_idle()
+        if getattr(self, "readout", None) is not None:
+            self.readout.set_active(False)
         self._progress_callback(100)
         # 测试确实完成了，但没有收到归档结果时如实提示状态未知。
         self._archival_test_finished()

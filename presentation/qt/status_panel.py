@@ -41,11 +41,110 @@ _NO_LOG_TEXT = "暂无日志"
 #: 一条消息全部为空白时的摘要占位：仍然计为一条，但不让标题行看起来是空的。
 _EMPTY_MESSAGE_TEXT = "—"
 
+#: 折叠时预览最近几条消息；超过这个数目的更早消息只留在展开的日志框里。
+_LOG_PREVIEW_LINES = 3
+
 #: 展开/收起按钮的文案与无障碍描述；按钮只有箭头，含义由这里给出。
 _LOG_TOGGLE_EXPANDED_TEXT = "▴"
 _LOG_TOGGLE_COLLAPSED_TEXT = "▾"
 _LOG_TOGGLE_EXPANDED_ACTION = "收起实时日志"
 _LOG_TOGGLE_COLLAPSED_ACTION = "展开实时日志"
+
+
+def _preview_tooltip(messages: tuple[str, ...]) -> str:
+    """把最近几条日志压成只显示文本的 tooltip；消息之间空一行。"""
+    if not messages:
+        return ""
+    blocks: list[str] = []
+    for message in messages:
+        normalized = message.replace("\r\n", "\n").replace("\r", "\n")
+        if not normalized.strip():
+            continue
+        blocks.append(escape(normalized).replace("\n", "<br>"))
+    if not blocks:
+        return ""
+    return f"<qt>{'<br><br>'.join(blocks)}</qt>"
+
+
+class _LogPreview(QWidget):
+    """折叠日志的最近三条预览：每行按可用宽度省略，完整内容在 tooltip。
+
+    QLabel 不会自己省略超长文本；直接放进左栏会把面板撑宽。这里每行一个固定高度的
+    标签，在宽度变化时用 ``elidedText`` 重写显示文本。``text()`` 仍返回未省略的原文，
+    供测试与无障碍读取；视觉上的省略只发生在每个子标签里。
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("logPreview")
+        self.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
+        )
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self._messages: tuple[str, ...] = ()
+        self._labels: list[QLabel] = []
+        for _ in range(_LOG_PREVIEW_LINES):
+            label = QLabel(self)
+            label.setObjectName("logSummary")
+            label.setProperty("role", "hint")
+            label.setTextFormat(Qt.TextFormat.PlainText)
+            label.setSizePolicy(
+                QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
+            )
+            label.setMinimumWidth(0)
+            label.setFixedHeight(label.fontMetrics().lineSpacing())
+            label.hide()
+            layout.addWidget(label)
+            self._labels.append(label)
+
+    def set_messages(self, messages: list[str]) -> None:
+        """写入最近消息（最多三条），并立即刷新预览。"""
+        self._messages = tuple(messages)[-_LOG_PREVIEW_LINES:]
+        self._relayout()
+
+    def messages(self) -> tuple[str, ...]:
+        """最近三条消息的原文。"""
+        return self._messages
+
+    def text(self) -> str:
+        """未省略的预览原文；每条消息压成一行，消息之间用换行分隔。"""
+        if not self._messages:
+            return _NO_LOG_TEXT
+        lines = [
+            " ".join(message.split()) or _EMPTY_MESSAGE_TEXT
+            for message in self._messages
+        ]
+        return "\n".join(lines)
+
+    def _relayout(self) -> None:
+        combined = _preview_tooltip(self._messages)
+        self.setToolTip(combined)
+        visible = self._messages or (_NO_LOG_TEXT,)
+        for index, label in enumerate(self._labels):
+            if index < len(visible):
+                raw = visible[index]
+                if raw == _NO_LOG_TEXT:
+                    text = _NO_LOG_TEXT
+                else:
+                    text = " ".join(raw.split()) or _EMPTY_MESSAGE_TEXT
+                width = label.width()
+                if width > 0 and text != _NO_LOG_TEXT:
+                    text = label.fontMetrics().elidedText(
+                        text, Qt.TextElideMode.ElideRight, width
+                    )
+                label.setText(text)
+                label.setToolTip(combined)
+                label.show()
+            else:
+                label.hide()
+        self.updateGeometry()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt 覆盖方法
+        super().resizeEvent(event)
+        self._relayout()
+
 
 
 class StatusSlot(QWidget):
@@ -108,10 +207,10 @@ class StatusPanel(QFrame):
         self.setMinimumWidth(self.MINIMUM_WIDTH)
         self.log_user_scrolling = False
         # 摘要与条数由面板自己按“接收过几次消息”记账，不回头解析日志控件文本：
-        # 一条消息可能包含多行，blockCount 不能当条数用。最后一条消息保留原文，
-        # 标题行按需压平，tooltip 仍能给出完整内容。
+        # 一条消息可能包含多行，blockCount 不能当条数用。最近三条原文保留下来，
+        # 折叠时逐行预览；tooltip 仍能给出完整内容。
         self._log_message_count = 0
-        self._last_log_message = ""
+        self._recent_log_messages: list[str] = []
         self._log_expanded = False
         status_layout = QVBoxLayout(self)
         # 面板本身不再画外框：它嵌在测量页左栏里，左边缘与“测量控制”分组框对齐。
@@ -144,18 +243,7 @@ class StatusPanel(QFrame):
         log_title = QLabel("实时日志")
         log_title.setObjectName("statusCaption")
         log_header.addWidget(log_title)
-
-        # 折叠时仍要看得见“刚刚发生了什么”：摘要只占一行，完整消息另在日志里；
-        # 宽度可被压缩，长消息由 Qt 裁切，完整文本放在 tooltip。
-        self.log_summary_label = QLabel(_NO_LOG_TEXT)
-        self.log_summary_label.setObjectName("logSummary")
-        self.log_summary_label.setProperty("role", "hint")
-        self.log_summary_label.setTextFormat(Qt.TextFormat.PlainText)
-        self.log_summary_label.setSizePolicy(
-            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
-        )
-        self.log_summary_label.setMinimumWidth(0)
-        log_header.addWidget(self.log_summary_label, 1)
+        log_header.addStretch(1)
 
         self.log_count_label = QLabel("0 条")
         self.log_count_label.setObjectName("statusCaption")
@@ -176,6 +264,11 @@ class StatusPanel(QFrame):
         self.log_toggle_btn.clicked.connect(self.toggle_log)
         log_header.addWidget(self.log_toggle_btn)
         status_layout.addLayout(log_header)
+
+        # 折叠时仍要看得见“刚刚发生了什么”：最近三条消息各占一行，完整内容在
+        # 日志框里；展开后预览隐藏，避免和日志框重复。
+        self.log_summary_label = _LogPreview(self)
+        status_layout.addWidget(self.log_summary_label)
 
         self.log_text = QTextEdit()
         self.log_text.setObjectName("logView")
@@ -202,6 +295,8 @@ class StatusPanel(QFrame):
             raise TypeError("日志展开状态必须是 bool")
         self._log_expanded = expanded
         self.log_text.setVisible(expanded)
+        # 展开时日志框已经给出全部内容，预览不再重复；折叠时恢复最近三条。
+        self.log_summary_label.setVisible(not expanded)
         # 折叠时不要再占满左栏剩余高度：把纵向尺寸策略收成“最多到 sizeHint”，
         # 左栏才会随日志收起而明显变短；展开后恢复可扩展，日志继续吃满剩余空间。
         policy = self.sizePolicy()
@@ -231,37 +326,17 @@ class StatusPanel(QFrame):
         self.set_log_expanded(not self._log_expanded)
 
     def _sync_log_summary(self) -> None:
-        """把条数与最后一条消息写进标题行；摘要不写入日志控件。"""
+        """把条数与最近三条消息写进预览；摘要不写入日志控件。"""
         self.log_count_label.setText(f"{self._log_message_count} 条")
-        raw = self._last_log_message
-        if not raw:
-            self.log_summary_label.setText(_NO_LOG_TEXT)
-            self.log_summary_label.setToolTip("")
-            return
-        summary = " ".join(raw.split())
-        self.log_summary_label.setText(summary or _EMPTY_MESSAGE_TEXT)
-        self.log_summary_label.setToolTip(self._tooltip_text(raw))
-
-    @staticmethod
-    def _tooltip_text(message: str) -> str:
-        """把日志原文转成只显示文本的 tooltip，避免被 Qt 当成富文本解析。
-
-        ``<qt>`` 是显式的富文本容器；先转义尖括号与 ``&``，再把换行变成 ``<br>``，
-        这样日志里出现的 ``<b>``、``&`` 或类似 HTML 的内容不会改变 tooltip 的排版，
-        原始多行消息也能在提示里保持分行。
-        """
-        normalized = message.replace("\r\n", "\n").replace("\r", "\n")
-        if not normalized.strip():
-            return ""
-        escaped = escape(normalized).replace("\n", "<br>")
-        return f"<qt>{escaped}</qt>"
+        self.log_summary_label.set_messages(self._recent_log_messages)
 
     def add_log_message(self, message: str) -> None:
         text = str(message)
         self.log_text.append(text)
         self._log_message_count += 1
-        # tooltip 保留原始文本，标题行只显示压成一行后的摘要；完整内容仍在 log_text。
-        self._last_log_message = text
+        # tooltip 保留最近三条原始文本，预览逐行压平并省略；完整内容仍在 log_text。
+        self._recent_log_messages.append(text)
+        del self._recent_log_messages[:-_LOG_PREVIEW_LINES]
         self._sync_log_summary()
         if not self.log_user_scrolling:
             cursor = self.log_text.textCursor()
@@ -281,7 +356,7 @@ class StatusPanel(QFrame):
         self.log_text.clear()
         self.log_user_scrolling = False
         self._log_message_count = 0
-        self._last_log_message = ""
+        self._recent_log_messages.clear()
         self._sync_log_summary()
 
     def update_status(self) -> None:

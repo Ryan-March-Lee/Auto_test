@@ -14,6 +14,7 @@ from presentation.qt.measurement_controls import (
     MeasurementAction,
     MeasurementControlAvailability,
     MeasurementControlPresenter,
+    state_is_active,
 )
 from presentation.qt.measurement_state import (
     MeasurementKind,
@@ -229,6 +230,60 @@ class MeasurementControlPresenterTests(unittest.TestCase):
 
         self.assertFalse(self.stop.enabled)
         self.assertIsNone(replacement.enabled)
+
+
+class StateIsActiveTests(unittest.TestCase):
+    """读数条等展示件只消费“是否活动”，与按钮使用同一份快照规则。"""
+
+    def test_running_and_waiting_states_are_active(self):
+        self.assertTrue(
+            state_is_active(_controller_state(MeasurementKind.CABLE_LOSS))
+        )
+        self.assertTrue(
+            state_is_active(
+                _controller_state(
+                    MeasurementKind.CABLE_LOSS,
+                    MeasurementStatus.WAITING_FOR_CONTINUE,
+                )
+            )
+        )
+
+    def test_idle_and_terminal_states_are_not_active(self):
+        self.assertFalse(state_is_active(ControllerState()))
+        self.assertFalse(
+            state_is_active(
+                _controller_state(
+                    MeasurementKind.CABLE_LOSS, MeasurementStatus.CANCELLED
+                )
+            )
+        )
+
+    def test_explicit_flag_wins_over_status(self):
+        state = type(
+            "State",
+            (),
+            {
+                "kind": MeasurementKind.CABLE_LOSS,
+                "status": MeasurementStatus.RUNNING,
+                "is_active": False,
+            },
+        )()
+
+        self.assertFalse(state_is_active(state))
+
+    def test_invalid_flag_is_a_contract_error(self):
+        state = type(
+            "State",
+            (),
+            {
+                "kind": MeasurementKind.CABLE_LOSS,
+                "status": MeasurementStatus.RUNNING,
+                "is_active": "true",
+            },
+        )()
+
+        with self.assertRaises(TypeError):
+            state_is_active(state)
 
 
 class MeasurementPagesUseThePresenterTests(unittest.TestCase):

@@ -78,6 +78,30 @@ class RealtimeMeasurementBuffer:
         self.user_browsing = self.current_index != len(self._frequencies) - 1
         return self.current()
 
+    def index_of(self, value: Any) -> int | None:
+        """按频率值查索引；无效值或未测量时返回 ``None``。"""
+        frequency = normalize_frequency(value)
+        if frequency is None:
+            return None
+        try:
+            return self._frequencies.index(frequency)
+        except ValueError:
+            return None
+
+    def select(self, index: int) -> bool:
+        """直接切到指定频点；越界索引返回 ``False``，不抛异常打断点击。
+
+        语义与 :meth:`next` 一致：切到最后一个频点后恢复自动跟随，其余位置保持
+        用户浏览状态，新的实时数据不会把用户正在看的频点顶掉。
+        """
+        if isinstance(index, bool) or not isinstance(index, int):
+            raise TypeError("频点索引必须是整数")
+        if not 0 <= index < len(self._frequencies):
+            return False
+        self.current_index = index
+        self.user_browsing = index != len(self._frequencies) - 1
+        return True
+
     def clear(self) -> None:
         self._data.clear()
         self._frequencies.clear()

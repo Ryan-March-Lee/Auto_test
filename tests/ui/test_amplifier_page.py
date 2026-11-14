@@ -7,9 +7,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication, QDialog, QLabel, QWidget
 
 from presentation.qt.amplifier_page import AmplifierPage
+from presentation.qt.measurement_console import CheckState
 from presentation.qt.measurement_controller_contract import MeasurementCommand
 from presentation.qt.measurement_controls import MeasurementAction
 from presentation.qt.measurement_state import MeasurementKind, MeasurementStatus
+from presentation.qt.measurement_workspace import mode_text
 from presentation.qt.stage_summary import NOT_STARTED, StageMetric
 from presentation.qt.theme import MEASUREMENT_LEFT_PANEL_MIN_WIDTH
 
@@ -65,9 +67,14 @@ class Plot(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.updated = []
+        self.frequency_selected = Signal()
+        self.frequency_rows = []
 
     def update_plot(self, data):
         self.updated.append(data)
+
+    def set_frequencies(self, frequencies, current_index):
+        self.frequency_rows.append((tuple(frequencies), current_index))
 
 
 class AmplifierPageTests(unittest.TestCase):
@@ -94,6 +101,7 @@ class AmplifierPageTests(unittest.TestCase):
             plot_widget_factory=lambda parent: Plot(parent),
             log_callback=self.logs.append,
             error_callback=self.errors.append,
+            archival_run_id_provider=lambda: self.run.run_id,
         )
         self.page.bind_controller(self.controller)
 
@@ -380,6 +388,50 @@ class AmplifierPageTests(unittest.TestCase):
         self.assertEqual(self.page.amplifier_plot_widget.updated[-1]["frequency"], "4.0")
         self.assertEqual(self.page.realtime_buffer.frequencies, [4.0])
 
+    def test_filmstrip_tracks_measured_frequencies_and_selects_on_click(self):
+        for frequency, output in (("1.0", 2.0), ("2.0", 3.0)):
+            self.controller.signals.data_update.emit(
+                {
+                    "frequency": frequency,
+                    "sweep_data": {"output_power_dut": [output]},
+                }
+            )
+        plot = self.page.amplifier_plot_widget
+
+        self.assertEqual(plot.frequency_rows[-1], ((1.0, 2.0), 1))
+
+        plot.frequency_selected.emit(1.0)
+
+        self.assertEqual(self.page.realtime_buffer.current_index, 0)
+        self.assertEqual(plot.updated[-1]["frequency"], 1.0)
+        self.assertEqual(self.page.readout.frequency_text(), "1.0")
+
+    def test_readout_shows_the_latest_power_gain_efficiency_and_dc(self):
+        self.controller.signals.data_update.emit(
+            {
+                "frequency": "4.0",
+                "sweep_data": {
+                    "output_power_dut": [10.5],
+                    "gain": [20.1],
+                    "efficiency": [45.2],
+                    "dc_power": [12.34],
+                },
+            }
+        )
+
+        readout = self.page.readout
+
+        self.assertEqual(readout.frequency_text(), "4.0")
+        self.assertEqual(readout.unit_text(), "GHz")
+        self.assertEqual(
+            [metric.value for metric in readout.metrics()],
+            ["10.5", "20.1", "45.2", "12.34"],
+        )
+        self.assertEqual(
+            [metric.unit for metric in readout.metrics()],
+            ["dBm", "dB", "%", "W"],
+        )
+
     def test_stop_and_error_restore_controls(self):
         self.controller.signals.state_changed.emit(type("State", (), {
             "kind": MeasurementKind.AMPLIFIER, "is_active": True,
@@ -651,6 +703,52 @@ class AmplifierPageTests(unittest.TestCase):
         self.page.show_connection_diagram()
 
         self.assertEqual(opened, ["amplifier_test", "amplifier_test_no_driver"])
+
+    def test_run_console_shows_the_driver_mode_and_all_prerequisites(self):
+        console = self.page.console
+
+        self.assertEqual(console.run_id_text(), "run-amplifier")
+        self.assertEqual(console.mode_text(), mode_text(True))
+        self.assertEqual(console.mode_text(), "有驱放测试")
+        self.assertIs(console.check_state("执行会话"), CheckState.READY)
+        self.assertIs(console.check_state("线损结果"), CheckState.WAITING)
+        self.assertIs(console.check_state("驱动映射结果"), CheckState.WAITING)
+        self.assertIs(console.check_state("接线确认"), CheckState.OPTIONAL)
+        self.assertIs(console.check_state("结果归档"), CheckState.WAITING)
+
+    def test_console_input_checks_turn_ready_after_each_selection(self):
+        self._select_cable_loss()
+        self.assertIs(
+            self.page.console.check_state("线损结果"), CheckState.READY
+        )
+
+        self._select_driver_mapping()
+        self.assertIs(
+            self.page.console.check_state("驱动映射结果"), CheckState.READY
+        )
+
+    def test_no_driver_mode_hides_and_skips_the_driver_mapping_check(self):
+        self.page._driver_mode_provider = lambda: False
+
+        self.page.on_activated()
+
+        console = self.page.console
+        self.assertEqual(console.mode_text(), mode_text(False))
+        self.assertEqual(console.mode_text(), "无驱放测试")
+        self.assertIs(console.check_state("驱动映射结果"), CheckState.OPTIONAL)
+        self.assertIn("无驱放", [
+            check.detail for check in console.checks()
+            if check.label == "驱动映射结果"
+        ][0])
+        self.assertTrue(self.page.driver_mapping_input_row.isHidden())
+
+        self._select_cable_loss()
+        self._select_driver_mapping()
+        self.assertIs(
+            console.check_state("驱动映射结果"),
+            CheckState.OPTIONAL,
+            "无驱放模式即使有历史结果也不应变成必需项",
+        )
 
 
 if __name__ == "__main__":

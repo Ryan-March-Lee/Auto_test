@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QLabel, QWidget
 
 from application.dto import DriverMappingRawPoint, DriverPowerMappingMeasurementResult
 from presentation.qt.driver_mapping_page import DriverMappingPage
+from presentation.qt.measurement_console import CheckState
 from presentation.qt.measurement_controller_contract import MeasurementCommand
 from presentation.qt.measurement_controls import MeasurementAction
 from presentation.qt.measurement_state import (
@@ -72,9 +73,14 @@ class Plot(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.updated = []
+        self.frequency_selected = Signal()
+        self.frequency_rows = []
 
     def update_plot(self, data):
         self.updated.append(data)
+
+    def set_frequencies(self, frequencies, current_index):
+        self.frequency_rows.append((tuple(frequencies), current_index))
 
 
 class DriverMappingPageTests(unittest.TestCase):
@@ -105,6 +111,7 @@ class DriverMappingPageTests(unittest.TestCase):
             clear_realtime_callback=lambda: self.clears.append(True),
             log_callback=self.logs.append,
             error_callback=self.errors.append,
+            archival_run_id_provider=lambda: self.run.run_id,
         )
         self.page.bind_controller(self.controller)
 
@@ -190,6 +197,42 @@ class DriverMappingPageTests(unittest.TestCase):
         self.page.start_measurement()
         self.assertEqual(self.controller.calls, [])
 
+
+    def test_filmstrip_tracks_measured_frequencies_and_selects_on_click(self):
+        self.controller.signals.data_update.emit({
+            "frequency": "1.0", "sweep_data": {"input_power_sg": [-10], "output_power_driver": [2]},
+        })
+        self.controller.signals.data_update.emit({
+            "frequency": "2.0", "sweep_data": {"input_power_sg": [-9], "output_power_driver": [3]},
+        })
+        plot = self.page.driver_plot_widget
+
+        self.assertEqual(plot.frequency_rows[-1], ((1.0, 2.0), 1))
+
+        plot.frequency_selected.emit(1.0)
+
+        self.assertEqual(self.page.realtime_buffer.current_index, 0)
+        self.assertEqual(plot.updated[-1]["frequency"], 1.0)
+        self.assertEqual(self.page.readout.frequency_text(), "1.0")
+
+    def test_readout_follows_current_frequency_and_power(self):
+        self.controller.signals.data_update.emit({
+            "frequency": "1.0",
+            "sweep_data": {"input_power_sg": [-10], "output_power_driver": [2]},
+        })
+        self.controller.signals.data_update.emit({
+            "frequency": "2.0",
+            "sweep_data": {"input_power_sg": [-9], "output_power_driver": [3]},
+        })
+
+        readout = self.page.readout
+
+        self.assertEqual(readout.frequency_text(), "2.0")
+        self.assertEqual(readout.unit_text(), "GHz")
+        self.assertEqual(
+            [metric.value for metric in readout.metrics()],
+            ["-9.0", "3.0", "1", "2"],
+        )
 
     def test_power_mapping_is_converted_to_plot_display_model(self):
         self.controller.signals.data_update.emit({
@@ -375,6 +418,34 @@ class DriverMappingPageTests(unittest.TestCase):
             StageMetric("当前频点", "2.4 GHz"),
         )
         self.assertTrue(events)
+
+    def test_run_console_waits_for_the_cable_loss_input(self):
+        console = self.page.console
+
+        self.assertEqual(console.run_id_text(), "run-driver")
+        self.assertIsNone(console.mode_text())
+        self.assertIs(console.check_state("执行会话"), CheckState.READY)
+        self.assertIs(console.check_state("线损结果"), CheckState.WAITING)
+        self.assertIs(console.check_state("接线确认"), CheckState.OPTIONAL)
+        self.assertIs(console.check_state("结果归档"), CheckState.WAITING)
+
+    def test_selecting_a_cable_loss_turns_the_console_check_ready(self):
+        self._select_cable_loss()
+
+        console = self.page.console
+        self.assertIs(console.check_state("线损结果"), CheckState.READY)
+        self.assertIn("线损结果", [check.label for check in console.checks()])
+
+    def test_console_follows_a_reconnected_run_on_activation(self):
+        self.run = type("PreparedRun", (), {
+            "run_id": "run-driver-2", "run_repository": object(),
+            "run_directory": "runs/run-driver-2",
+            "hardware_connection_path": lambda self: None,
+        })()
+
+        self.page.on_activated()
+
+        self.assertEqual(self.page.console.run_id_text(), "run-driver-2")
 
 
 

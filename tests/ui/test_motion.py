@@ -21,6 +21,7 @@ from presentation.qt.motion import (  # noqa: E402
 from presentation.qt.theme import (  # noqa: E402
     MOTION_BREATH_MS,
     MOTION_COMPLETE_MS,
+    MOTION_DATA_MS,
     MOTION_REVEAL_MS,
     MOTION_SLIDE_PX,
     MOTION_STAGE_MS,
@@ -84,6 +85,7 @@ class MotionTokenTests(unittest.TestCase):
         self.assertEqual(MOTION_STAGE_MS, 180)
         self.assertEqual(MOTION_COMPLETE_MS, 260)
         self.assertEqual(MOTION_BREATH_MS, 1600)
+        self.assertEqual(MOTION_DATA_MS, 180)
         self.assertEqual(MOTION_SLIDE_PX, 10)
 
     def test_direction_names_are_stable_strings(self):

@@ -137,9 +137,12 @@ class StageMetricsRow(QWidget):
         self.setObjectName("stageMetricsRow")
         self._layout = QHBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
-        self._layout.setSpacing(24)
+        # 芯片之间只留 10px：KPI 是一组读数，不是三段被拉满整行的标题。
+        self._layout.setSpacing(10)
         self._cells: list[tuple[QWidget, QLabel, QLabel]] = []
         self._metrics: tuple[StageMetric, ...] = ()
+        # 尾部留白吸收多余宽度：芯片保持自身宽度，不再均分结果面。
+        self._layout.addStretch(1)
         self.setVisible(False)
 
     def metrics(self) -> tuple[StageMetric, ...]:
@@ -173,17 +176,22 @@ class StageMetricsRow(QWidget):
 
     def _add_cell(self) -> None:
         """补建一个 KPI 单元：小标签在上，关键数字在下。"""
-        container = QWidget(self)
+        container = QFrame(self)
+        container.setObjectName("measurementKpiChip")
+        container.setSizePolicy(
+            QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred
+        )
         cell_layout = QVBoxLayout(container)
-        cell_layout.setContentsMargins(0, 0, 0, 0)
-        cell_layout.setSpacing(2)
+        cell_layout.setContentsMargins(10, 6, 10, 6)
+        cell_layout.setSpacing(1)
         label = QLabel(container)
         label.setProperty("role", "hint")
         label.setTextFormat(Qt.TextFormat.PlainText)
         value = metric_label(parent=container)
         cell_layout.addWidget(label)
         cell_layout.addWidget(value)
-        self._layout.addWidget(container, 1)
+        # 最后一个布局项永远是尾部留白：新芯片插在它前面，保持左对齐。
+        self._layout.insertWidget(self._layout.count() - 1, container)
         self._cells.append((container, label, value))
 
 

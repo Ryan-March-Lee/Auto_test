@@ -5,7 +5,9 @@
 - 历史列表、选中项、已加载结果和频率浏览都在只读视图模型里，页面不解析结果文档、
   不访问文件路径；加载时通过“选择历史结果”对话框列出可选结果（见
   ``history_result_dialog``）；
-- 绘图数据由视图模型一次性从正式结果 DTO 的显式属性构建；
+- 绘图数据由视图模型一次性从正式结果 DTO 的显式属性构建；当前频点结果自带
+  压缩目标（``compression_type`` + ``small_signal_gain_db``）时，增益图画出目标
+  增益带，没有目标就明确不画；
 - “打开测试报告”只针对**当前已加载结果**：页面把结果标识交给
   ``RunHistoryServicePort.report_for_result()``，由应用层定位同一次运行归档的最终
   报告，页面不解析结果标识、不判断产物类型；
@@ -16,6 +18,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any, Callable
 
 from PySide6.QtCore import Qt, QUrl
@@ -23,7 +26,6 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMenu,
@@ -50,8 +52,20 @@ from .history_view_model import (
     result_kind,
     result_plot_series,
 )
-from .realtime_plot import RealTimePlotWidget
-from .theme import set_button_variant
+from .frequency_filmstrip import FrequencyFilmstrip
+from .measurement_surface import (
+    CONTROL_SURFACE,
+    RESULT_SURFACE,
+    build_surface,
+    hairline,
+    section_caption,
+)
+from .realtime_plot import PlotTargetBand, RealTimePlotWidget
+from .theme import (
+    MEASUREMENT_LEFT_PANEL_MAX_WIDTH,
+    MEASUREMENT_LEFT_PANEL_MIN_WIDTH,
+    set_button_variant,
+)
 
 _EXPORT_FILTERS = {
     ExportFormat.JSON: "JSON files (*.json)",
@@ -67,6 +81,12 @@ _REPORT_HINT_UNLOADED = "请先加载一条历史结果"
 _REPORT_HINT_READY = "打开这次运行归档的最终报告"
 _REPORT_HINT_NO_SERVICE = "未装配历史运行服务，无法打开测试报告"
 _REPORT_HINT_NO_REPORT = "当前结果没有可打开的最终报告"
+
+# 主功放结果里的压缩点目标：只有结果自己带 ``compression_type`` 时才画目标带。
+_COMPRESSION_TARGETS_DB = {"1db": 1.0, "3db": 3.0, "5db": 5.0}
+# 目标带的可视厚度（±dB）：压缩点是一个增益值，这里只把线画成一条容易看见的窄带，
+# 不代表任何合格/不合格容差。
+_TARGET_BAND_HALF_DB = 0.1
 
 __all__ = [
     "VisualizationPage",
@@ -176,19 +196,27 @@ class VisualizationPage(QWidget):
     # -- 界面 ---------------------------------------------------------------
 
     def _build_ui(self):
-        layout = QVBoxLayout(self)
+        layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 4, 0, 0)
         layout.setSpacing(12)
 
-        controls = QGroupBox("可视化控制")
-        control_layout = QVBoxLayout(controls)
-        control_layout.setSpacing(10)
-        toolbar = QHBoxLayout()
-        toolbar.setSpacing(10)
+        # 可视化和三个测量页使用同一套“左控制面 + 右结果面”：切到 04 时不会突然
+        # 从两栏控制台变成一张整宽表单。左栏只放浏览与导出动作，右侧整块留给图。
+        left_panel = QWidget()
+        left_panel.setMinimumWidth(MEASUREMENT_LEFT_PANEL_MIN_WIDTH)
+        left_panel.setMaximumWidth(MEASUREMENT_LEFT_PANEL_MAX_WIDTH)
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(12)
+
+        controls = build_surface(CONTROL_SURFACE, title="结果浏览")
+        control_layout = controls.layout()
+
         self.load_data_btn = QPushButton("加载测试数据")
         set_button_variant(self.load_data_btn, "primary")
         self.load_data_btn.clicked.connect(lambda _checked=False: self.load_test_data())
-        toolbar.addWidget(self.load_data_btn)
+        control_layout.addWidget(self.load_data_btn)
+
         self.open_report_button = QPushButton("打开测试报告")
         set_button_variant(self.open_report_button, "secondary")
         self.open_report_button.setToolTip(_REPORT_HINT_UNLOADED)
@@ -196,7 +224,8 @@ class VisualizationPage(QWidget):
         self.open_report_button.clicked.connect(
             lambda _checked=False: self.open_test_report()
         )
-        toolbar.addWidget(self.open_report_button)
+        control_layout.addWidget(self.open_report_button)
+
         self.save_as_button = QPushButton("另存为…")
         set_button_variant(self.save_as_button, "secondary")
         self.save_as_button.setToolTip(
@@ -211,25 +240,28 @@ class VisualizationPage(QWidget):
         self.save_as_button.setMenu(self.save_as_menu)
         # 没有已加载结果时没有任何可另存的对象，按钮保持禁用。
         self.save_as_button.setEnabled(False)
-        toolbar.addWidget(self.save_as_button)
-        toolbar.addStretch(1)
+        control_layout.addWidget(self.save_as_button)
 
+        control_layout.addWidget(hairline())
+        control_layout.addWidget(section_caption("频点浏览"))
+        navigation = QHBoxLayout()
+        navigation.setSpacing(8)
         self.freq_prev_btn = QPushButton("◀ 上一个")
         set_button_variant(self.freq_prev_btn, "secondary")
         self.freq_prev_btn.setEnabled(False)
         self.freq_prev_btn.clicked.connect(self.prev_frequency)
+        navigation.addWidget(self.freq_prev_btn)
         self.freq_label = QLabel("未加载数据")
         self.freq_label.setObjectName("freqBadge")
         self.freq_label.setAlignment(Qt.AlignCenter)
-        self.freq_label.setMinimumWidth(140)
+        self.freq_label.setMinimumWidth(120)
+        navigation.addWidget(self.freq_label, 1)
         self.freq_next_btn = QPushButton("下一个 ▶")
         set_button_variant(self.freq_next_btn, "secondary")
         self.freq_next_btn.setEnabled(False)
         self.freq_next_btn.clicked.connect(self.next_frequency)
-        toolbar.addWidget(self.freq_prev_btn)
-        toolbar.addWidget(self.freq_label)
-        toolbar.addWidget(self.freq_next_btn)
-        control_layout.addLayout(toolbar)
+        navigation.addWidget(self.freq_next_btn)
+        control_layout.addLayout(navigation)
 
         self.hint_label = QLabel(
             "结果与报告在测试完成时自动归档；这里可以加载历史结果动态查看、"
@@ -238,10 +270,21 @@ class VisualizationPage(QWidget):
         self.hint_label.setProperty("role", "hint")
         self.hint_label.setWordWrap(True)
         control_layout.addWidget(self.hint_label)
-        layout.addWidget(controls)
+        control_layout.addStretch(1)
+        left_layout.addWidget(controls)
+        left_layout.addStretch(1)
+        layout.addWidget(left_panel)
 
+        results = build_surface(RESULT_SURFACE, title="可视化结果")
+        result_layout = results.layout()
+        # 胶片条在图表上方：先看这条结果覆盖了哪些频点、当前在哪一个，再读曲线。
+        # 左栏的上一个/下一个仍保留，用于逐点精调；两者共用同一份视图模型索引。
+        self.frequency_filmstrip = FrequencyFilmstrip(results)
+        self.frequency_filmstrip.frequency_selected.connect(self._select_frequency)
+        result_layout.addWidget(self.frequency_filmstrip)
         self.data_plot_widget = RealTimePlotWidget()
-        layout.addWidget(self.data_plot_widget, 1)
+        result_layout.addWidget(self.data_plot_widget, 1)
+        layout.addWidget(results, 1)
 
     def on_activated(self):
         """页面可见时重新校验报告可用性：报告可能在后台补生成或由外部工具更新。"""
@@ -278,7 +321,9 @@ class VisualizationPage(QWidget):
         self.history.clear()
         for axis in self.data_plot_widget.figure.axes:
             axis.clear()
+        self.data_plot_widget.set_target_bands(())
         self.data_plot_widget.canvas.draw_idle()
+        self.frequency_filmstrip.clear()
         self.freq_label.setText(message)
         self.freq_prev_btn.setEnabled(False)
         self.freq_next_btn.setEnabled(False)
@@ -362,12 +407,18 @@ class VisualizationPage(QWidget):
             self.freq_label.setText("未加载数据")
             self.freq_prev_btn.setEnabled(False)
             self.freq_next_btn.setEnabled(False)
+            self.frequency_filmstrip.clear()
             return
         self.freq_label.setText(
             f"{frequency} GHz ({self.history.frequency_index + 1}/{self.history.frequency_count})"
         )
         self.freq_prev_btn.setEnabled(self.history.has_previous)
         self.freq_next_btn.setEnabled(self.history.has_next)
+        loaded = self.history.loaded
+        self.frequency_filmstrip.set_frequencies(
+            loaded.frequencies if loaded is not None else (),
+            self.history.frequency_index,
+        )
 
     def display_current_frequency_data(self):
         loaded = self.history.loaded
@@ -376,8 +427,51 @@ class VisualizationPage(QWidget):
         record = loaded.plot_record(self.history.frequency_index)
         if record is None:
             return
+        self.data_plot_widget.set_target_bands(
+            self._target_bands_for_current_frequency()
+        )
         self.data_plot_widget.update_plot(record)
         self._log(f"显示频率 {record['frequency']} GHz 的数据")
+
+    def _target_bands_for_current_frequency(self) -> tuple[PlotTargetBand, ...]:
+        """当前频点结果自带压缩目标时，在增益图画出目标增益带。
+
+        目标值只来自结果 DTO 自己的 ``small_signal_gain_db`` 与 ``compression_type``：
+        目标增益 = 小信号增益 − 压缩量。没有这两项、或类型不认识时明确不画，
+        不按配置猜测，也不把目标带当成合格/不合格判定。
+        """
+        loaded = self.history.loaded
+        if loaded is None:
+            return ()
+        frequencies = getattr(loaded.result, "frequencies", ())
+        index = self.history.frequency_index
+        if not isinstance(frequencies, (list, tuple)) or not 0 <= index < len(
+            frequencies
+        ):
+            return ()
+        item = frequencies[index]
+        small_signal_gain = getattr(item, "small_signal_gain_db", None)
+        compression_type = getattr(item, "compression_type", None)
+        if small_signal_gain is None or not isinstance(compression_type, str):
+            return ()
+        target_db = _COMPRESSION_TARGETS_DB.get(compression_type.strip().lower())
+        if target_db is None:
+            return ()
+        try:
+            small_signal_gain_db = float(small_signal_gain)
+        except (TypeError, ValueError):
+            return ()
+        if not math.isfinite(small_signal_gain_db):
+            return ()
+        target_gain = small_signal_gain_db - target_db
+        return (
+            PlotTargetBand(
+                1,
+                target_gain - _TARGET_BAND_HALF_DB,
+                target_gain + _TARGET_BAND_HALF_DB,
+                f"{compression_type.strip()} 压缩目标",
+            ),
+        )
 
     def prev_frequency(self):
         if self.history.previous_frequency():
@@ -388,6 +482,20 @@ class VisualizationPage(QWidget):
         if self.history.next_frequency():
             self.update_frequency_display()
             self.display_current_frequency_data()
+
+    def _select_frequency(self, frequency):
+        """胶片条点击：按频率找到索引，切换后刷新标签与曲线。"""
+        loaded = self.history.loaded
+        if loaded is None:
+            return
+        try:
+            index = list(loaded.frequencies).index(float(frequency))
+        except (TypeError, ValueError):
+            return
+        if not self.history.select_frequency(index):
+            return
+        self.update_frequency_display()
+        self.display_current_frequency_data()
 
     def export(self, export_format: ExportFormat):
         """按选定格式另存**当前已加载**的历史结果；页面只构造导出请求。

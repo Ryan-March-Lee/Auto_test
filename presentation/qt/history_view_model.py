@@ -594,6 +594,15 @@ class HistoryViewModel:
         self._frequency_index += 1
         return True
 
+    def select_frequency(self, index: int) -> bool:
+        """直接切到指定频率索引；越界返回 ``False``，不抛异常打断点击。"""
+        if isinstance(index, bool) or not isinstance(index, int):
+            raise TypeError("频率索引必须是整数")
+        if not 0 <= index < self.frequency_count:
+            return False
+        self._frequency_index = index
+        return True
+
 
 __all__ = [
     "HistoryRow",

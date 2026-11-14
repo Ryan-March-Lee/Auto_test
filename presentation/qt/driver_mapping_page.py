@@ -24,10 +24,19 @@ from .measurement_start_facade import (
 from application.dto import DriverPowerMappingMeasurementResult
 from application.dto.measurement_requests import StageResultDigest
 from .archival_page import ArchivalPageMixin
+from .measurement_console import (
+    MeasurementRunConsole,
+    archive_check,
+    input_check,
+    run_session_check,
+    wiring_check,
+)
 from .measurement_controls import (
     MeasurementAction,
     MeasurementControlPresenter,
+    state_is_active,
 )
+from .measurement_readout import MeasurementReadout, ReadoutMetric
 from .measurement_state import (
     DriverMappingPageResultState,
     MeasurementKind,
@@ -43,7 +52,7 @@ from .measurement_surface import (
 )
 from .pages import PageControllerBindingMixin
 from .realtime_buffer import RealtimeMeasurementBuffer
-from .realtime_page import RealtimePageMixin
+from .realtime_page import RealtimePageMixin, format_latest_number
 from .stage_summary import (
     NOT_STARTED,
     StageMetric,
@@ -169,7 +178,11 @@ class DriverMappingPage(
         self.cable_loss_source_label.setWordWrap(True)
         control_layout.addWidget(self.cable_loss_source_label)
         left_layout.addWidget(control_surface)
+        # 运行控制台：运行标识、线损输入是否已选、接线与归档位置。
+        self.console = MeasurementRunConsole()
+        left_layout.addWidget(self.console)
         self._sync_cable_loss_label()
+        self._refresh_console()
         self.archival_banner = self._build_archival_banner()
         left_layout.addWidget(self.archival_banner)
         # 进度与实时日志由窗口挂进这块容器，占满控制面以下的剩余高度。
@@ -178,9 +191,11 @@ class DriverMappingPage(
         self.control_panel = left_panel
         layout.addWidget(left_panel)
 
-        # 结果面只承载“测量结果”这一块内容：频点浏览与四张图由绘图控件自带。
+        # 结果面只承载“测量结果”这一块内容：读数条在上，频点浏览与四张图由绘图控件自带。
         result_surface = build_surface(RESULT_SURFACE, title="测量结果")
         result_layout = result_surface.layout()
+        self.readout = MeasurementReadout(result_surface)
+        result_layout.addWidget(self.readout)
         # KPI 行只排版已有实时数据：频点数、当前频点与当前扫频点数。
         self.stage_metrics_row = StageMetricsRow(result_surface)
         result_layout.addWidget(self.stage_metrics_row)
@@ -192,9 +207,18 @@ class DriverMappingPage(
             prev_clicked.connect(self.previous_frequency)
         if next_clicked is not None:
             next_clicked.connect(self.next_frequency)
+        # 胶片条点击是“切到已测频点”，不是开始/停止测量；只有真实绘图控件提供
+        # 这个信号时接线，测试替身保持原样。
+        frequency_selected = getattr(
+            self.driver_plot_widget, "frequency_selected", None
+        )
+        if frequency_selected is not None:
+            frequency_selected.connect(self.select_frequency)
         result_layout.addWidget(self.driver_plot_widget, 1)
         layout.addWidget(result_surface, 1)
+        self.readout.set_reading("—", "", self._readout_metrics(), active=False)
         self._refresh_stage_summary()
+        self._refresh_console()
         return self
 
     def _connect_controller_signals(self, controller: Any) -> None:
@@ -280,6 +304,7 @@ class DriverMappingPage(
             digest=StageResultDigest(sha256=sha256, size_bytes=size_bytes),
         )
         self._sync_cable_loss_label()
+        self._refresh_console()
         self._log_callback(
             f"已选择驱动映射线损测量结果：{filename}"
             f"（测量时间：{created_at}）"
@@ -440,13 +465,111 @@ class DriverMappingPage(
         if update_plot is not None:
             update_plot(dict(data))
 
+    def _measurement_active(self) -> bool:
+        controller = getattr(self, "controller", None)
+        if controller is None:
+            return False
+        return state_is_active(getattr(controller, "state", None))
+
+    def _readout_metrics(
+        self, data: Mapping[str, Any] | None = None
+    ) -> tuple[ReadoutMetric, ...]:
+        """驱动映射读数：输入/输出功率与两处点数，不推算增益或效率。"""
+        if data is None:
+            return (
+                ReadoutMetric("输入功率", "—", "dBm"),
+                ReadoutMetric("输出功率", "—", "dBm"),
+                ReadoutMetric("扫频点", "—", "点"),
+                ReadoutMetric("已测频点", "—", "个"),
+            )
+        sweep = data.get("sweep_data", {})
+        if not isinstance(sweep, Mapping):
+            sweep = {}
+        inputs = sweep.get("input_power_sg", ())
+        outputs = sweep.get("output_power_driver", ())
+        points = max(
+            len(inputs) if isinstance(inputs, (list, tuple)) else 0,
+            len(outputs) if isinstance(outputs, (list, tuple)) else 0,
+        )
+        return (
+            ReadoutMetric(
+                "输入功率", format_latest_number(inputs, 1), "dBm"
+            ),
+            ReadoutMetric(
+                "输出功率", format_latest_number(outputs, 1), "dBm"
+            ),
+            ReadoutMetric("扫频点", str(points) if points else "—", "点"),
+            ReadoutMetric(
+                "已测频点",
+                str(len(self.realtime_buffer.frequencies)) or "—",
+                "个",
+            ),
+        )
+
+    def _update_readout(self, data: Mapping[str, Any]) -> None:
+        readout = getattr(self, "readout", None)
+        if readout is None:
+            return
+        frequency = str(data.get("frequency", "")).strip()
+        readout.set_reading(
+            frequency or "—",
+            "GHz" if frequency else "",
+            self._readout_metrics(data),
+            active=self._measurement_active(),
+        )
+
+    def _reset_readout(self) -> None:
+        readout = getattr(self, "readout", None)
+        if readout is not None:
+            readout.set_reading(
+                "—", "", self._readout_metrics(), active=self._measurement_active()
+            )
+
     def _on_state_changed(self, state: Any) -> None:
         self.controls.apply(state)
+        readout = getattr(self, "readout", None)
+        if readout is not None:
+            readout.set_active(self._measurement_active())
+        self._refresh_console()
+
+    def on_activated(self) -> None:
+        """回到本页时刷新运行事实：运行可能已重新连接，线损选择也可能已变化。"""
+        super().on_activated()
+        self._refresh_console()
+
+    def _refresh_console(self) -> None:
+        """把运行标识、线损选择与归档位置写进左栏控制台。"""
+        console = getattr(self, "console", None)
+        if console is None:
+            return
+        run_id = self._current_run_id()
+        configured = self._archival_location_provider is not None
+        directory = self._archival_directory(run_id)
+        console.set_run_facts(
+            run_id=run_id,
+            mode=None,
+            archive=directory,
+            archive_configured=configured,
+        )
+        console.set_checks(
+            (
+                run_session_check(run_id),
+                input_check("线损结果", self._cable_loss_selection is not None),
+                wiring_check(),
+                archive_check(directory, configured=configured),
+            )
+        )
+
+    def set_animations_enabled(self, enabled: bool) -> None:
+        """外壳关闭动效时，读数条的数值淡入与呼吸点一起落到静态外观。"""
+        self.readout.set_animations_enabled(enabled)
 
     def _on_error(self, message: str) -> None:
         if not self._archival_is_for_this_page():
             return
         self.controls.show_idle()
+        if getattr(self, "readout", None) is not None:
+            self.readout.set_active(False)
         self._archival_test_failed(message)
         self._error_callback(message)
 
@@ -454,6 +577,8 @@ class DriverMappingPage(
         if not self._archival_is_for_this_page():
             return
         self.controls.show_idle()
+        if getattr(self, "readout", None) is not None:
+            self.readout.set_active(False)
         self._archival_test_stopped(reason, self._partial_result_path())
         self._log_callback(f"测量已停止: {reason}")
         self._progress_callback(0)
@@ -462,6 +587,8 @@ class DriverMappingPage(
         if not self._archival_is_for_this_page():
             return
         self.controls.show_idle()
+        if getattr(self, "readout", None) is not None:
+            self.readout.set_active(False)
         self._progress_callback(100)
         self._archival_test_finished()
         self._log_callback("测量完成！")

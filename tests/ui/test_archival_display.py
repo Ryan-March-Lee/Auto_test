@@ -245,14 +245,20 @@ class AmplifierPageArchivalLogTests(unittest.TestCase):
             sha256="b" * 64,
             size_bytes=256,
         )
-        # 选择日志不属于本类要验证的归档提示。
+        # 选择日志不属于本类要验证的归档提示；控制台已在构造时定位过目录，
+        # 这里只观察“开始测量”本次是否又查询了归档位置。
         self.logs.clear()
+        self.locations.clear()
 
     def test_start_announces_automatic_archival(self):
         self.page.start_measurement()
 
         self.assertIn("测量结束后将自动归档结果", _log_text(self.logs))
-        self.assertEqual(self.locations, [])
+        # 控制台会在开始前展示运行目录；开始测量本身不能解析任何交付产物路径。
+        self.assertTrue(
+            all(relative is None for _, relative in self.locations),
+            "开始测量不应查询归档产物路径",
+        )
 
     def test_progress_until_scan_end_promises_saving_and_generation(self):
         self.page.start_measurement()

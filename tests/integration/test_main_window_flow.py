@@ -28,6 +28,7 @@ from infrastructure.persistence.configuration_snapshot_repository import (
 )
 from infrastructure.persistence.run_repository import RunRepository
 from presentation.qt.application_coordinator import RunFlowState
+from presentation.qt.measurement_console import CheckState
 from presentation.qt.measurement_controller_contract import ControllerState
 from presentation.qt.measurement_stage import StageState
 from presentation.qt.measurement_state import (
@@ -1265,6 +1266,21 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
 
         window.measurement_workspace.set_animations_enabled(True)
 
+    def test_disabling_animations_also_stops_the_page_readout(self):
+        """外壳动效开关同时覆盖页面里自绘的读数条，不只覆盖阶段条。"""
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+        readout = window.cable_loss_page.readout
+
+        self.assertTrue(readout.animations_enabled())
+
+        window.measurement_workspace.set_animations_enabled(False)
+        self.assertFalse(readout.animations_enabled())
+
+        window.measurement_workspace.set_animations_enabled(True)
+        self.assertTrue(readout.animations_enabled())
+
     def test_an_active_measurement_switches_pages_without_a_transition(self):
         """测量进行中切页必须瞬时，监控与数据不能被 220ms 过场推迟。"""
         self._silence_dialogs()
@@ -1643,6 +1659,21 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
             "模式只由徽标显示，运行标识不再重复拼一遍",
         )
         self.assertEqual(window.mode_badge.text(), "无驱放测试")
+
+    def test_measurement_console_shows_the_connected_run_and_archive(self):
+        """真实窗口里控制台读到的是协调器的当前运行，而不是页面自己猜的身份。"""
+        self._silence_dialogs()
+        window = self._connected_window()
+        page = window.cable_loss_page
+        window.tab_widget.setCurrentIndex(window.tab_widget.indexOf(page))
+        self.app.processEvents()
+        run_id = window.coordinator.current_run_id()
+
+        self.assertIsNotNone(run_id)
+        self.assertEqual(page.console.run_id_text(), run_id)
+        self.assertIs(page.console.check_state("执行会话"), CheckState.READY)
+        self.assertIs(page.console.check_state("结果归档"), CheckState.READY)
+        self.assertIn(run_id, page.console._archive_value.toolTip())
 
     def test_returning_to_welcome_clears_the_header_identity_and_mode(self):
         """回到欢迎页后页头不能继续挂着上一轮的 run 与模式。"""

@@ -176,6 +176,12 @@ class StageMetricsRowTests(unittest.TestCase):
             [label.text() for label in labels],
             ["频点", "6", "当前频点", "3.5 GHz"],
         )
+        for container, _label, _value in row._cells[: len(metrics)]:
+            self.assertEqual(container.objectName(), "measurementKpiChip")
+        self.assertIsNotNone(
+            row._layout.itemAt(row._layout.count() - 1).spacerItem(),
+            "KPI 芯片后面应保留尾部留白，不能把芯片均分拉满整行",
+        )
         caption_labels = [
             label
             for label in labels
@@ -238,6 +244,7 @@ class MeasurementSurfaceThemeTests(unittest.TestCase):
             "QFrame#measurementResultSurface QTableWidget",
             'QLabel[role="sectionCaption"]',
             "QLabel#measurementMetric",
+            "QFrame#measurementKpiChip",
             "QFrame#measurementHairline",
         ):
             with self.subTest(selector=selector):

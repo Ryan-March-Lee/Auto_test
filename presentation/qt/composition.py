@@ -19,6 +19,9 @@ from infrastructure.gui_data_service import (
     ResultQueryAdapter,
 )
 from infrastructure.persistence.artifact_generator import ArchiveArtifactGenerator
+from infrastructure.persistence.configuration_snapshot_repository import (
+    FileConfigurationSnapshotRepository,
+)
 from infrastructure.persistence.instrument_registry import InstrumentRegistry
 from infrastructure.persistence.run_deletion import FileRunDeletion
 from infrastructure.persistence.run_history_repository import FileRunHistoryRepository
@@ -35,6 +38,13 @@ def default_paths() -> PathService:
     表现层其它模块只透传这个对象，不 import 基础设施；路径规则变化只影响本模块。
     """
     return DEFAULT_PATHS
+
+
+def build_configuration_snapshot_repository(
+    paths: PathService | None = None,
+) -> FileConfigurationSnapshotRepository:
+    """装配用户配置快照仓储；配置页面不直接依赖基础设施实现。"""
+    return FileConfigurationSnapshotRepository(paths=paths or DEFAULT_PATHS)
 
 
 def build_gui_data_service(

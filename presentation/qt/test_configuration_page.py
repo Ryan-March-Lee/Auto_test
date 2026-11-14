@@ -17,10 +17,10 @@
 :mod:`presentation.qt.instrument_setup_page`：本页不再创建发现面板、不持有它，也不再提供
 设备发现入口，只保留写绑定的边界（整批校验 + 写地址/身份）与派生界面更新。写入结果经
 ``device_selection_finished`` 交给 :class:`presentation.qt.configuration_session`，
-由会话把状态行与绑定回写给仪表配置页的面板。连接仪器不再有独立入口：页面底部的最终
-按钮一次完成“校验 → 保存配置 → 释放旧端口 → 冻结待提交运行 → 完整只读连接检查”，
-与窗口的信号接线是 ``finalize_run_requested``。连接成功前运行只是内部待提交对象，
-不会成为测量页可消费的正式运行。
+由会话把状态行与绑定回写给仪表配置页的面板。页面底部的最终按钮一次完成“校验 →
+保存当前配置 → 释放旧端口 → 冻结执行上下文 → 完整只读连接检查”，与窗口的信号接线是
+``finalize_run_requested``。连接成功前执行上下文只是内部待提交对象，不会成为测量页可
+消费的正式会话。
 
 归属：Qt 视图。页面只负责控件、布局、信号与派生界面
 状态；设备选择的角色唯一性、引用/身份校验与整批替换规则在
@@ -119,8 +119,8 @@ __all__ = [
 
 class TestConfigurationPage(PageControllerBindingMixin, QWidget):
     save_requested = Signal()
+    load_config_requested = Signal()
     finalize_run_requested = Signal()
-    load_run_requested = Signal(str)
     #: 底部“上一步”：回上一级电源配置页；切页由主窗口完成，参数原地保留。
     power_step_requested = Signal()
     validation_failed = Signal(str)
@@ -341,7 +341,7 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         page_column.addWidget(params)
         self._build_driver_parameters(page_column)
         self._apply_driver_gain_state()
-        # 运行入口紧随测试参数，保存与返回放在页面底部固定操作栏。
+        # 连接入口紧随测试参数，命名配置保存/加载放在页面底部固定操作栏。
         self._build_run_widgets(page_column)
         page_column.addStretch(1)
         root.addWidget(self._build_action_bar())
@@ -763,42 +763,33 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         return labels
 
     def _build_run_widgets(self, layout):
-        """最终动作入口：一次完成校验、保存配置、创建运行与完整连接检查。
+        """最终动作入口：一次完成校验、保存当前配置、冻结执行上下文与连接检查。
 
         保存配置放在页面底部固定操作栏（``_build_action_bar``），
-        最终动作留在参数区下方，便于“改参数 → 完成配置并连接仪器”就近操作。
+        最终动作留在参数区下方，便于“改参数 → 连接仪器”就近操作。
         """
-        # 配置阶段入口：页面最终按钮。文案固定为“完成配置并连接仪器”；连接成功后
+        # 配置阶段入口：页面最终按钮。连接成功后
         # 由窗口切到测量区，页面不会自动开始任何测量。
-        run_group = QGroupBox("运行")
+        run_group = QGroupBox("仪器连接")
         run_layout = QVBoxLayout(run_group)
         run_layout.setSpacing(8)
-        self.finalize_run_btn = QPushButton("完成配置并连接仪器")
+        self.finalize_run_btn = QPushButton("连接仪器")
         self.finalize_run_btn.setToolTip(
-            "校验并保存配置，释放旧端口并冻结待提交运行，然后检查全部仪器；"
-            "连接成功后才提交运行，失败会留在本页"
+            "校验并保存当前配置，释放旧端口并冻结执行上下文，然后检查全部仪器；"
+            "连接成功后才进入测量，失败会留在本页"
         )
         set_button_variant(self.finalize_run_btn, "primary")
         self.run_status_label = QLabel(DEFAULT_RUN_STATUS)
         self.run_status_label.setWordWrap(True)
         self.run_status_label.setProperty("tone", "muted")
-        self.load_run_id_edit = QLineEdit()
-        self.load_run_id_edit.setPlaceholderText("输入 run_id 以重新打开已有运行")
-        self.load_run_btn = QPushButton("加载运行")
-        set_button_variant(self.load_run_btn, "secondary")
-        load_row = QHBoxLayout()
-        load_row.setSpacing(8)
-        load_row.addWidget(self.load_run_id_edit, 1)
-        load_row.addWidget(self.load_run_btn)
         run_layout.addWidget(self.finalize_run_btn)
         run_layout.addWidget(self.run_status_label)
-        run_layout.addLayout(load_row)
         layout.addWidget(run_group)
 
     def _connect_signals(self):
         self.save_config_btn.clicked.connect(self.request_save)
+        self.load_config_btn.clicked.connect(self.load_config_requested.emit)
         self.finalize_run_btn.clicked.connect(self.request_finalize_run)
-        self.load_run_btn.clicked.connect(self.request_load_run)
         self.previous_step_btn.clicked.connect(self.power_step_requested.emit)
         self.add_power_scan_plan_btn.clicked.connect(self.add_power_scan_plan)
         self.rebuild_power_scan_plan_btn.clicked.connect(self.rebuild_power_scan_plans)
@@ -898,9 +889,8 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         widgets = (
             self.finalize_run_btn,
             self.save_config_btn,
+            self.load_config_btn,
             self.previous_step_btn,
-            self.load_run_btn,
-            self.load_run_id_edit,
             self.test_parameters_group,
             self.driver_parameters_group,
         )
@@ -925,15 +915,8 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
             ):
                 widget.setEnabled(False)
 
-    def request_load_run(self):
-        run_id = self.load_run_id_edit.text().strip()
-        if not run_id:
-            self.validation_failed.emit("请输入要加载的 run_id")
-            return
-        self.load_run_requested.emit(run_id)
-
     def set_run_status(self, text: str) -> None:
-        """显示当前运行状态；由窗口在创建/加载运行后更新。
+        """显示当前执行状态；由窗口在连接/清理后更新。
 
         运行状态只写进视图模型（步骤 6），标签文案从返回的状态渲染：页面不再是运行状态
         的第二份来源。
@@ -947,13 +930,13 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         if self._reconnect_required:
             self.finalize_run_btn.setText("重新连接仪器")
             self.finalize_run_btn.setToolTip(
-                "不保存配置、不创建新运行，只使用当前运行的冻结快照重新连接仪器"
+                "使用当前执行上下文的冻结硬件快照重新连接仪器"
             )
             return
-        self.finalize_run_btn.setText("完成配置并连接仪器")
+        self.finalize_run_btn.setText("连接仪器")
         self.finalize_run_btn.setToolTip(
-            "校验并保存配置，释放旧端口并冻结待提交运行，然后检查全部仪器；"
-            "连接成功后才提交运行，失败会留在本页"
+            "校验并保存当前配置，释放旧端口并冻结执行上下文，然后检查全部仪器；"
+            "连接成功后才进入测量，失败会留在本页"
         )
 
     def validate(self):

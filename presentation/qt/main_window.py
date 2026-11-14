@@ -1,8 +1,9 @@
 """主窗口：Qt 窗口组装、页面注册和信号连接。
 
-配置读写、运行创建/加载、仪器连接和端口生命周期由
+配置读写、命名配置快照、执行上下文与仪器端口生命周期由
 :class:`presentation.qt.application_coordinator.ApplicationCoordinator` 持有；
-窗口只负责把用户意图转发给协调器、连接 Qt 信号并把结果展示给用户。
+窗口只负责把用户意图转发给协调器、连接 Qt 信号并把结果展示给用户。命名配置的
+弹窗与提示集中在 :mod:`presentation.qt.configuration_snapshot_actions`。
 """
 
 import logging
@@ -23,8 +24,13 @@ from PySide6.QtWidgets import (
 
 from infrastructure.logging.app_logging import setup_logging
 from presentation.qt.application_coordinator import ApplicationCoordinator, RunFlowState
-from presentation.qt.composition import build_device_scanner_factory, default_paths
+from presentation.qt.composition import (
+    build_configuration_snapshot_repository,
+    build_device_scanner_factory,
+    default_paths,
+)
 from presentation.qt.configuration_editor import ConfigurationEditor
+from presentation.qt.configuration_snapshot_actions import ConfigurationSnapshotActions
 from presentation.qt.test_configuration_page import TestConfigurationPage
 from presentation.qt.configuration_session import ConfigurationSession
 from presentation.qt.connection_dialog import ConnectionDialog
@@ -64,7 +70,7 @@ def apply_light_theme(app: QApplication) -> None:
     apply_theme(app)
 
 
-class MainWindow(QMainWindow):
+class MainWindow(ConfigurationSnapshotActions, QMainWindow):
     """主窗口：只组装 Qt 界面、注册页面并连接信号。"""
 
     def __init__(self, config_path=None, *, paths: Any | None = None):
@@ -80,6 +86,7 @@ class MainWindow(QMainWindow):
             error=self.on_measurement_error,
             paths=self.paths,
             config_path=config_path,
+            configuration_snapshots=build_configuration_snapshot_repository(self.paths),
         )
         self.measurement_controller.signals.thread_finished.connect(
             self._on_measurement_controller_thread_finished
@@ -191,7 +198,7 @@ class MainWindow(QMainWindow):
         self.view_stack.addWidget(self.workspace_page)
 
         # 仪表配置是欢迎页之后的整屏页面，不登记进标签栏：先选设备，再配测试参数，
-        # 最后由测试配置页的“完成配置并连接仪器”提交最终动作。仪表配置页只依赖配置
+        # 最后由测试配置页的“连接仪器”提交最终动作。仪表配置页只依赖配置
         # 会话的窄接口，不持有配置页实例；面板回写由窗口装配给会话。
         self.configuration_session = ConfigurationSession(self.test_config_page)
         self.connection_page = InstrumentSetupPage(
@@ -310,13 +317,6 @@ class MainWindow(QMainWindow):
             return self.coordinator.amplifier_driver_mode()
         return mode
 
-    def _on_run_loaded(self, run_id: str) -> None:
-        """加载冻结运行：只有真正切换成功才把它的模式带回工作台。"""
-        binding = getattr(self, "workspace_binding", None)
-        if binding is not None and self.coordinator.current_run_id() == run_id:
-            binding.bind_run_identity(run_id, self.coordinator.amplifier_driver_mode())
-        self._sync_finalize_entry()
-
     def _return_to_welcome(self) -> None:
         """返回欢迎页：先作废本次查找，再放弃会话，清理成功才切页。"""
         # 顺序不能反：迟到扫描结果要先失效；端口没清干净就不能进入欢迎页。
@@ -430,8 +430,7 @@ class MainWindow(QMainWindow):
         tab = TestConfigurationPage(self.config, self)
         tab.save_requested.connect(self.save_config)
         tab.finalize_run_requested.connect(self._finalize_run)
-        tab.load_run_requested.connect(self.coordinator.load_prepared_run)
-        tab.load_run_requested.connect(self._on_run_loaded)
+        tab.load_config_requested.connect(self._load_configuration_snapshot)
         tab.power_step_requested.connect(self._return_to_power_configuration)
         tab.validation_failed.connect(
             lambda message: self.add_log_message(f"配置校验失败: {message}")
@@ -491,29 +490,7 @@ class MainWindow(QMainWindow):
         self.status_panel.hide()
         self._status_panel_slot = None
 
-    # ---- 配置与运行入口（逻辑在协调器，窗口只转发） ----
-
-    def save_config(self):
-        """保存配置：文件写入由协调器完成，提示与对话框留在窗口。"""
-        self.coordinator.update_configuration_from_ui()
-        if not self.coordinator.save_configuration():
-            error = self.coordinator.last_save_error
-            self.add_log_message(f"配置保存失败: {error}")
-            QMessageBox.warning(self, "保存失败", f"配置保存失败: {error}")
-            return
-        editor = getattr(self, "configuration_editor", None)
-        if editor is not None:
-            editor.mark_clean()
-        # 保存后最近的后台上下文可能已经变化：最终按钮的“重连/完成配置”语义必须
-        # 立刻跟着更新，不能等到下一次连接失败才纠正。
-        self._sync_finalize_entry()
-        self.add_log_message("配置已保存")
-        if self.prepared_run is not None:
-            self.add_log_message(
-                f"注意：当前运行 {self.prepared_run.run_id} 的配置已冻结；"
-                "若要使用本次修改，请重新“完成配置并连接仪器”"
-            )
-        QMessageBox.information(self, "保存成功", "配置文件已保存")
+    # ---- 配置快照与连接入口（动作在 ConfigurationSnapshotActions） ----
 
     def _finalize_run(self):
         """执行一次最终化事务；连接成功且端口提交后才进入测量区。"""
@@ -542,7 +519,7 @@ class MainWindow(QMainWindow):
             page.set_reconnect_required(
                 self.coordinator.can_reconnect_current_run()
             )
-        # 加载运行或保存后切换后台上下文会改变页头身份；模式不在这里重算。
+        # 执行上下文切换后页头身份可能变化；配置保存/加载本身不创建执行上下文。
         binding = getattr(self, "workspace_binding", None)
         if binding is not None:
             binding.sync_run_identity(self.coordinator.current_run_id())

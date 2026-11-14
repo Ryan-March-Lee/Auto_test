@@ -25,10 +25,10 @@
 - “是不是阶段”由外壳回答（``workspace.has_stage``）：阶段页点亮阶段，其余**已登记**
   页面按工具页同步。新增报告/历史这类非阶段页不需要改窗口，也不会再出现“画得出、
   同步不了”的 ``KeyError``；工具页标题不再写进页头。
-- **会话模式与运行身份是两个状态**：模式只由 :meth:`start_session` 和
-  :meth:`bind_run_identity` 改写，``None`` 表示尚未选择测试模式；
-  :meth:`sync_run_identity` 只刷新页头，不能从冻结运行重新推导模式，否则旧运行会
-  覆盖用户在欢迎页的新选择。
+- **会话模式与运行身份是两个状态**：模式只由 :meth:`start_session`、
+  :meth:`set_session_mode` 和 :meth:`bind_run_identity` 改写，``None`` 表示尚未选择
+  测试模式；:meth:`sync_run_identity` 只刷新页头，不能从冻结运行重新推导模式，否则
+  旧运行会覆盖用户在欢迎页的新选择。
 - 本层不切 ``view_stack``、不隐藏标签栏、不调用页面生命周期；窗口仍是唯一装配根。
 """
 
@@ -244,6 +244,19 @@ class WorkspaceBinding:
         self._workspace.set_run_identity(None, None)
         self._workspace.set_measurement_active(False)
         self._sync_run_state(None)
+
+    def set_session_mode(self, driver_enabled: bool) -> None:
+        """只更新本次配置会话的编辑模式，不改运行身份。
+
+        加载一份命名配置时，用户还没有提交执行会话：配置里的驱放模式就是下一次
+        连接要用的模式，徽标、驱动映射标签页与阶段条必须一起更新。已经提交的会话
+        仍由 :meth:`bind_run_identity` 写入冻结模式；调用方不得用本方法把它改掉。
+        """
+        self._apply_driver_mode(bool(driver_enabled))
+        if self._identity_run_id is not None:
+            # 若调用方确实已经关联了运行，页头标签也必须与新会话模式一致，不能留下
+            # “徽标已改、页头仍是旧模式”的半更新。
+            self.sync_run_identity(self._identity_run_id)
 
     def bind_run_identity(
         self, run_id: str | None, driver_enabled: bool | None

@@ -75,12 +75,12 @@ class MeasurementCommand:
             raise ValueError("config_path 不能为空")
         if self.prepared_run is None:
             raise ValueError(
-                "测量命令必须携带运行契约 prepared_run；请先创建或重新加载运行"
+                "测量命令必须携带运行契约 prepared_run；请先完成配置并点击“连接仪器”"
             )
         if not is_valid_prepared_run(self.prepared_run):
             raise ValueError(
                 "测量命令携带的运行对象不满足运行契约（需要 run_id、run_directory、"
-                "运行仓储与 hardware_connection_path()）；请先创建或重新加载运行"
+                "运行仓储与 hardware_connection_path()）；请先完成配置并点击“连接仪器”"
             )
         object.__setattr__(self, "options", _freeze(self.options))
         cable_loss_path = coerce_input_path(self.cable_loss_path, "cable_loss_path")

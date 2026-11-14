@@ -1,14 +1,17 @@
 """门禁：正式用户配置只有一个写入入口（重构计划步骤 3）。
 
-配置 JSON 的生产写入点盘点后只剩三类用途，本文件把它们各自钉死：
+配置 JSON 的生产写入点盘点后只剩四类用途，本文件把它们各自钉死：
 
 1. **正式用户配置**（``config.json``）：唯一实现是
    ``JsonConfigurationRepository.save_document``——配置页面保存（
    :class:`infrastructure.gui_data_service.JsonConfigurationAdapter`）与旧电源配置迁移器
    都只委托它；
-2. **运行目录快照**（``runs/<run_id>/config.json`` 与 manifest）：仍由运行仓储与运行
+2. **用户命名配置快照**（``test_results/configurations/<名称>_<时间>/``）：由
+   :class:`infrastructure.persistence.configuration_snapshot_repository.FileConfigurationSnapshotRepository`
+   独占，和 ``config.json``、运行目录互不混用；
+3. **运行目录快照**（``runs/<run_id>/config.json`` 与 manifest）：仍由运行仓储与运行
    目录布局负责，配置仓储与 GUI 适配器不写运行目录；
-3. **其它 JSON 文档**（设备表、迁移摘要、测量结果）：各自仓储/工具负责，与配置文件
+4. **其它 JSON 文档**（设备表、迁移摘要、测量结果）：各自仓储/工具负责，与配置文件
    互不混用。
 
 因此这里断言的可观察契约是：
@@ -66,6 +69,9 @@ RUN_REPOSITORY_SOURCE = ROOT / "infrastructure" / "persistence" / "run_repositor
 ATOMIC_WRITE_IMPORTERS = {
     "infrastructure/config/json_config_repository.py": "正式用户配置的唯一写入口 save_document",
     "infrastructure/config/legacy_power_supply_migration.py": "迁移摘要文件（不是配置文件）",
+    "infrastructure/persistence/configuration_snapshot_repository.py": (
+        "用户命名配置快照（独立于 config.json 的配置文件与元数据）"
+    ),
     "infrastructure/persistence/instrument_registry.py": "设备表 instruments.json",
     "infrastructure/persistence/run_directory.py": "运行 manifest",
     "infrastructure/persistence/run_repository.py": "运行目录快照与阶段结果",
@@ -125,6 +131,7 @@ QUALIFIED_FILE_WRITE_APIS = {
 }
 
 CATEGORY_USER_CONFIGURATION = "user-configuration"
+CATEGORY_USER_CONFIGURATION_SNAPSHOT = "user-configuration-snapshot"
 CATEGORY_RUN_SNAPSHOT = "run-snapshot"
 CATEGORY_OTHER_JSON = "other-json"
 
@@ -138,6 +145,13 @@ JSON_WRITE_SITES = {
     ("infrastructure/config/legacy_power_supply_migration.py", "save_migration_summary"): (
         "旧电源配置迁移摘要（不是配置文件）",
         CATEGORY_OTHER_JSON,
+    ),
+    (
+        "infrastructure/persistence/configuration_snapshot_repository.py",
+        "FileConfigurationSnapshotRepository.save",
+    ): (
+        "用户命名配置快照（独立文件与元数据，不写 config.json）",
+        CATEGORY_USER_CONFIGURATION_SNAPSHOT,
     ),
     ("infrastructure/filesystem/atomic_json.py", "write_json_atomic"): (
         "原子 JSON 写入原语自身的 json.dump",
@@ -618,6 +632,18 @@ class ConfigurationWriteSourceBoundaryTests(unittest.TestCase):
         self.assertTrue(
             snapshot_modules <= set(ATOMIC_WRITE_IMPORTERS),
             "运行快照写入模块必须在原子写入用途清单里登记",
+        )
+
+    def test_user_configuration_snapshots_stay_in_the_snapshot_repository(self):
+        snapshot_modules = {
+            site[0]
+            for site, (_purpose, category) in JSON_WRITE_SITES.items()
+            if category == CATEGORY_USER_CONFIGURATION_SNAPSHOT
+        }
+        self.assertEqual(
+            snapshot_modules,
+            {"infrastructure/persistence/configuration_snapshot_repository.py"},
+            "命名配置快照的写入只能落在快照仓储，不能挤进 config.json 的唯一写入口",
         )
 
     def test_the_user_configuration_path_is_referenced_only_by_registered_roles(self):

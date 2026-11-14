@@ -219,7 +219,7 @@ class CableLossWorker(BaseWorker):
             self.emit_message("开始线损测量...")
             try:
                 create_measurement = self.measurement_factory or self._default_factory("create_cable_loss_measurement")
-                # 缺少运行契约时明确失败，绝不在 worker 内隐式创建运行。
+                # 缺少运行契约时明确失败，绝不在 worker 内隐式创建执行上下文。
                 prepared = require_prepared_run(self.prepared_run, "线损测量")
                 # 校验通过后、装配测量用例前再次检查停止意图：应用组装层可能连接仪器，
                 # 因此停止请求必须在这里拦下，而不是等到组装完成。
@@ -307,7 +307,7 @@ class DriverMappingWorker(BaseWorker):
                 return
             try:
                 create_measurement = self.measurement_factory or self._default_factory(factory_name)
-                # 缺少运行契约时明确失败，绝不在 worker 内隐式创建运行。
+                # 缺少运行契约时明确失败，绝不在 worker 内隐式创建执行上下文。
                 prepared = require_prepared_run(self.prepared_run, "驱动映射测量")
                 if self._stop_requested:
                     self._emit_stopped(self.stop_reason)
@@ -374,7 +374,7 @@ class AmplifierWorker(BaseWorker):
                 return
             try:
                 create_measurement = self.measurement_factory or self._default_factory("create_amplifier_measurement")
-                # 缺少运行契约时明确失败，绝不在 worker 内隐式创建运行。
+                # 缺少运行契约时明确失败，绝不在 worker 内隐式创建执行上下文。
                 prepared = require_prepared_run(self.prepared_run, "主功放测量")
                 if self._stop_requested:
                     self._emit_stopped(self.stop_reason)

@@ -1197,11 +1197,11 @@ class ConfigurationPageTests(unittest.TestCase):
         self.assertFalse(hasattr(page, "connect_btn"))
         self.assertFalse(hasattr(page, "connect_requested"))
         self.assertFalse(hasattr(page, "request_connect"))
-        self.assertEqual(page.finalize_run_btn.text(), "完成配置并连接仪器")
+        self.assertEqual(page.finalize_run_btn.text(), "连接仪器")
         self.assertIn(
-            "冻结待提交运行",
+            "冻结执行上下文",
             page.finalize_run_btn.toolTip(),
-            "最终按钮文案必须说明连接成功前运行只是待提交对象",
+            "最终按钮文案必须说明连接成功前执行上下文只是待提交对象",
         )
 
     def test_reconnect_mode_only_changes_the_final_button_semantics(self):
@@ -1210,11 +1210,11 @@ class ConfigurationPageTests(unittest.TestCase):
         page.set_reconnect_required(True)
 
         self.assertEqual(page.finalize_run_btn.text(), "重新连接仪器")
-        self.assertIn("不创建新运行", page.finalize_run_btn.toolTip())
+        self.assertIn("冻结硬件快照", page.finalize_run_btn.toolTip())
 
         page.set_reconnect_required(False)
 
-        self.assertEqual(page.finalize_run_btn.text(), "完成配置并连接仪器")
+        self.assertEqual(page.finalize_run_btn.text(), "连接仪器")
 
     def test_finalizing_disables_the_page_and_restores_previous_states(self):
         """最终动作只临时禁用控件，退出时恢复各控件原来的可用状态。"""

@@ -453,7 +453,7 @@ class OfficialConfigFileValidationTests(unittest.TestCase):
 
 
 class SimulatedDeviceBindingValidationTests(unittest.TestCase):
-    """模拟扫描的绑定只警告：可以保存、可以启动界面，但不能创建真实运行。"""
+    """模拟扫描的绑定只警告：可以保存、可以启动界面，但不能连接真实仪器。"""
 
     @classmethod
     def setUpClass(cls):
@@ -465,7 +465,7 @@ class SimulatedDeviceBindingValidationTests(unittest.TestCase):
         paths = {issue.path for issue in result.warnings}
         self.assertIn(expected_path, paths)
         self.assertIn("模拟扫描", result.warnings[-1].message)
-        self.assertIn("不能创建真实运行", result.warnings[-1].message)
+        self.assertIn("不能连接真实仪器", result.warnings[-1].message)
 
     def test_simulated_binding_is_a_warning_with_a_pointed_message(self):
         config = copy.deepcopy(self.base_config)

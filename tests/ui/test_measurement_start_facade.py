@@ -206,9 +206,9 @@ class MeasurementStartFacadeTests(unittest.TestCase):
 
     def test_invalid_run_reports_the_page_specific_message(self):
         expected = {
-            MeasurementKind.CABLE_LOSS: "正式线损测量必须先创建或按 run_id 重新加载运行",
-            MeasurementKind.DRIVER_MAPPING: "正式驱动映射测量必须先创建或按 run_id 重新加载运行",
-            MeasurementKind.AMPLIFIER: "正式主功放测量必须先创建或按 run_id 重新加载运行",
+            MeasurementKind.CABLE_LOSS: "正式线损测量必须先连接仪器",
+            MeasurementKind.DRIVER_MAPPING: "正式驱动映射测量必须先连接仪器",
+            MeasurementKind.AMPLIFIER: "正式主功放测量必须先连接仪器",
         }
         legacy = SimpleNamespace(run_id="legacy", run_repository=object())
         for kind, message in expected.items():

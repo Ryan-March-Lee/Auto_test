@@ -103,7 +103,7 @@ def create_measurement_port(
         if hardware_config_path is None:
             raise ValueError(
                 "hardware 模式必须提供运行快照的硬件配置路径（hardware_config_path）；"
-                "请先创建或重新加载运行"
+                "请先完成配置并点击“连接仪器”"
             )
         return _create_hardware_measurement_port(hardware_config_path, recorder=recorder)
     if mode != "simulation":

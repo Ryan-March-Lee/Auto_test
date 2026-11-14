@@ -23,6 +23,9 @@ from application.dto.run_history import ResultReportLocation, ResultReportState
 from application.ports.gui_data_service import LoadedResultDto
 from domain.run.models import RunStatus
 from infrastructure.filesystem.paths import PathService
+from infrastructure.persistence.configuration_snapshot_repository import (
+    FileConfigurationSnapshotRepository,
+)
 from infrastructure.persistence.run_repository import RunRepository
 from presentation.qt.application_coordinator import RunFlowState
 from presentation.qt.measurement_controller_contract import ControllerState
@@ -225,6 +228,14 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         )
         dialogs["question"] = patcher.start()
         self.addCleanup(patcher.stop)
+        # 命名配置的对话框在独立的窗口动作模块里：名称输入在那里弹出；QMessageBox 是
+        # 同一个类对象，上面的补丁已经同时覆盖该模块，不能再重复 patch 同一属性。
+        patcher = patch(
+            "presentation.qt.configuration_snapshot_actions.QInputDialog.getText",
+            return_value=("集成测试配置", True),
+        )
+        dialogs["input"] = patcher.start()
+        self.addCleanup(patcher.stop)
         return dialogs
 
     def _window(self):
@@ -302,91 +313,116 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIs(window.config, window.coordinator.config)
         self.assertIsNone(window.prepared_run)
         self.assertEqual(
-            window.test_config_page.run_status_label.text(), "当前运行: 未创建"
+            window.test_config_page.run_status_label.text(), "当前执行: 未连接"
         )
 
-    def test_save_creates_one_reusable_background_context_without_connecting(self):
-        """步骤 16：保存成功即创建运行快照；重复保存复用，不打开仪器。"""
+    def test_save_does_not_create_a_run_directory_or_connect(self):
+        """保存只写命名配置快照：执行上下文留到“连接仪器”时再冻结。"""
         self._silence_dialogs()
         window = self._window()
         repository = RunRepository(paths=self.paths)
         runs_root = repository.root
 
-        self.assertTrue(window.coordinator.save_configuration())
-        first = window.coordinator.background_run
-        self.assertIsNotNone(first)
-        self.assertTrue(Path(first.run_directory).is_dir())
+        window.save_config()
+
+        self.assertFalse(
+            runs_root.exists() and any(runs_root.iterdir()),
+            "保存配置不得创建 runs/<run_id>/ 执行上下文",
+        )
+        self.assertIsNone(window.coordinator.background_run)
         self.assertIsNone(window.coordinator.prepared_run)
         self.assertIsNone(window.coordinator.instrument_ctrl)
         self.assertIsNone(window.coordinator.instrument_worker)
-        self.assertEqual(len(list(runs_root.iterdir())), 1)
+        snapshots = [
+            path
+            for path in self.paths.configuration_snapshots_dir.glob("*/*.json")
+            if path.name != "metadata.json"
+        ]
+        self.assertEqual(len(snapshots), 1)
 
-        # 未修改配置再次保存：复用同一个运行，不产生第二份后台上下文。
-        self.assertTrue(window.coordinator.save_configuration())
-        second = window.coordinator.background_run
-        self.assertEqual(second.run_id, first.run_id)
-        self.assertEqual(len(list(runs_root.iterdir())), 1)
+    def test_loading_a_snapshot_syncs_the_session_mode_before_connecting(self):
+        """加载命名配置后，徽标、驱动页与阶段条要跟着配置里的模式一起切换。"""
+        self._silence_dialogs()
+        snapshot = FileConfigurationSnapshotRepository(paths=self.paths).save(
+            "驱放配置", _fully_valid_gui_config(driver_enabled=True)
+        )
+        window = self._window()
+        window._enter_test_mode(False)
+        self.assertEqual(window.mode_badge.text(), "无驱放测试")
 
-    def test_save_change_creates_a_new_background_context(self):
+        with patch(
+            "presentation.qt.configuration_snapshot_actions.QFileDialog.getOpenFileName",
+            return_value=(str(snapshot.configuration_path), ""),
+        ):
+            window._load_configuration_snapshot()
+        self.app.processEvents()
+
+        self.assertEqual(window.mode_badge.text(), "有驱放测试")
+        self.assertIs(window.workspace_binding.driver_mode(), True)
+        self.assertTrue(window.test_config_page.test_mode_enabled)
+        self.assertTrue(
+            window.tab_widget.isTabVisible(window._driver_mapping_tab_index)
+        )
+        self.assertTrue(
+            window.measurement_workspace.stage_rail().is_stage_enabled(
+                "driver_mapping"
+            )
+        )
+
+    def test_saving_a_changed_config_leaves_the_connected_session_untouched(self):
         self._silence_dialogs()
         window = self._window()
-        repository = RunRepository(paths=self.paths)
-        runs_root = repository.root
+        coordinator = window.coordinator
+        coordinator._instrument_worker_factory = _RecordingConnectionWorker
 
-        self.assertTrue(window.coordinator.save_configuration())
-        first = window.coordinator.background_run
+        self.assertTrue(coordinator.finalize_configuration())
+        old = coordinator._pending_run
+        self.assertTrue(coordinator.commit_finalization(_ConnectedPort()))
 
-        window.coordinator.config["test_frequencies"] = [2.5]
-        self.assertTrue(window.coordinator.save_configuration())
-        second = window.coordinator.background_run
+        self.assertTrue(coordinator.release_instrument_port())
+        coordinator._set_state(RunFlowState.RECONNECT_REQUIRED)
+        window._sync_finalize_entry()
+        self.assertEqual(
+            window.test_config_page.finalize_run_btn.text(), "重新连接仪器"
+        )
 
-        self.assertNotEqual(second.run_id, first.run_id)
-        self.assertEqual(len(list(runs_root.iterdir())), 2)
-        self.assertIsNone(window.coordinator.prepared_run)
+        changed = copy.deepcopy(coordinator.config)
+        changed["test_frequencies"] = [2.5]
+        window.test_config_page.apply_config(changed)
+        window.power_page.apply_config(changed)
+        window.save_config()
 
-    def test_saved_configuration_replaces_reconnecting_the_stale_run(self):
-        """端口丢失后保存新配置：最终入口连接新上下文，不能静默重连旧运行。"""
+        # 保存不改写当前执行会话，也不自动重连：按钮回到“连接仪器”。
+        self.assertIs(coordinator.prepared_run, old)
+        self.assertFalse(coordinator.can_reconnect_current_run())
+        self.assertEqual(
+            window.test_config_page.finalize_run_btn.text(), "连接仪器"
+        )
+
+    def test_finalize_after_saving_a_changed_config_freezes_a_new_context(self):
         self._silence_dialogs()
         window = self._window()
         coordinator = window.coordinator
         coordinator._instrument_worker_factory = _RecordingConnectionWorker
         repository = RunRepository(paths=self.paths)
 
-        # 首次最终化：真实保存、真实冻结、真实运行目录；只替换连接 worker。
         self.assertTrue(coordinator.finalize_configuration())
         old = coordinator._pending_run
-        self.assertIsNotNone(old)
         self.assertTrue(coordinator.commit_finalization(_ConnectedPort()))
-        self.assertIs(coordinator.prepared_run, old)
 
-        # 端口丢失后页面进入“重新连接仪器”。
-        self.assertTrue(coordinator.release_instrument_port())
-        coordinator._set_state(RunFlowState.RECONNECT_REQUIRED)
-        window._sync_finalize_entry()
-        self.assertTrue(coordinator.can_reconnect_current_run())
-        self.assertEqual(
-            window.test_config_page.finalize_run_btn.text(), "重新连接仪器"
-        )
-
-        # 用户修改频点并保存：产生新的后台上下文，按钮回到“完成配置并连接仪器”。
         changed = copy.deepcopy(coordinator.config)
         changed["test_frequencies"] = [2.5]
         window.test_config_page.apply_config(changed)
         window.power_page.apply_config(changed)
         window.save_config()
-        newer = coordinator.background_run
-        self.assertNotEqual(newer.run_id, old.run_id)
-        self.assertFalse(coordinator.can_reconnect_current_run())
-        self.assertEqual(
-            window.test_config_page.finalize_run_btn.text(), "完成配置并连接仪器"
-        )
 
-        # 再次最终化必须连接新配置；旧运行仍是提交前的当前运行，目录不被删除。
         window._finalize_run()
 
         self.assertIs(coordinator.state, RunFlowState.FINALIZING)
         self.assertFalse(coordinator._reconnecting)
-        self.assertIs(coordinator._pending_run, newer)
+        newer = coordinator._pending_run
+        self.assertIsNotNone(newer)
+        self.assertNotEqual(newer.run_id, old.run_id)
         self.assertIs(coordinator.instrument_worker.run, newer)
         self.assertIs(coordinator.prepared_run, old)
         self.assertTrue((repository.root / old.run_id).is_dir())
@@ -547,7 +583,8 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIs(window.view_stack.currentWidget(), window.connection_page)
         self.assertTrue(window.test_config_page.finalize_run_btn.isEnabled())
 
-    def test_failed_connection_keeps_the_saved_context_and_clears_pending(self):
+    def test_failed_connection_discards_the_unstarted_run(self):
+        """连接未成功时执行上下文只是本次事务的新建目录：补偿要把它撤销干净。"""
         self._silence_dialogs()
         window = self._window()
         window._enter_test_mode(False)
@@ -555,18 +592,17 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         prepared = window.coordinator.prepare_pending_run()
         self.assertIsNotNone(prepared)
         self.assertTrue(prepared.run_directory.is_dir())
-        # 最终化包含一次配置保存：运行上下文属于那次已完成的保存，连接失败不能撤销它。
-        self.assertIs(window.coordinator.background_run, prepared)
 
         window.coordinator.fail_finalization("电源型号不符")
 
-        self.assertTrue(prepared.run_directory.is_dir())
-        self.assertIs(window.coordinator.background_run, prepared)
+        self.assertFalse(prepared.run_directory.exists(), "未开始的运行目录应被撤销")
+        self.assertIsNone(window.coordinator.background_run)
         self.assertIsNone(window.prepared_run)
         self.assertIsNone(window.coordinator._pending_run)
         self.assertIs(window.coordinator.state, RunFlowState.CONFIGURING)
 
-    def test_abandoning_a_started_saved_context_keeps_its_directory(self):
+    def test_abandoning_a_started_context_blocks_instead_of_deleting_it(self):
+        """已开始的运行不能被当作未开始运行撤销：保留目录并要求人工处理。"""
         self._silence_dialogs()
         window = self._window()
         window._enter_test_mode(False)
@@ -579,12 +615,13 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         )
         repository.update_manifest(prepared.run_id, manifest)
 
-        # 保存阶段建立的上下文只被连接事务借用：放弃待提交引用时保留目录。
-        self.assertTrue(window.coordinator.abandon_pending_run())
+        self.assertFalse(window.coordinator.abandon_pending_run())
 
         self.assertTrue(prepared.run_directory.is_dir())
-        self.assertFalse(window.coordinator.has_pending_run())
-        self.assertIs(window.coordinator.background_run, prepared)
+        self.assertTrue(window.coordinator.has_pending_run())
+        self.assertIs(
+            window.coordinator.state, RunFlowState.MANUAL_CLEANUP_REQUIRED
+        )
 
     def test_user_stop_with_unconfirmed_cleanup_requires_manual_cleanup(self):
         dialogs = self._silence_dialogs()
@@ -1304,16 +1341,16 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         )
         self.assertIs(rail.state_for("cable_loss"), StageState.COMPLETED)
 
-        # 修改频点并保存会产生第二份后台上下文；再次最终化提交的是新 run。
+        # 修改频点并保存；再次最终化时为这份新配置冻结第二个执行上下文。
         changed = copy.deepcopy(window.coordinator.config)
         changed["test_frequencies"] = [2.5]
         window.test_config_page.apply_config(changed)
         window.power_page.apply_config(changed)
         window.save_config()
-        newer = window.coordinator.background_run
-        self.assertNotEqual(newer.run_id, first_run_id)
 
         window._finalize_run()
+        newer = window.coordinator._pending_run
+        self.assertNotEqual(newer.run_id, first_run_id)
         window.on_instrument_controller_ready(_ConnectedPort())
         window.on_instrument_connected()
 
@@ -1550,7 +1587,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         dialogs["critical"].reset_mock()
         self.assertIsNone(window.coordinator.resolve_measurement_run())
         dialogs["critical"].assert_called_once()
-        self.assertIn("尚未创建运行", dialogs["critical"].call_args.args[2])
+        self.assertIn("尚未创建执行会话", dialogs["critical"].call_args.args[2])
 
         dialogs["critical"].reset_mock()
         window.cable_loss_page.start_measurement()
@@ -1558,14 +1595,14 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         dialogs["critical"].assert_called()
         self.assertTrue(
             any(
-                "尚未创建运行" in call.args[2]
+                "尚未创建执行会话" in call.args[2]
                 for call in dialogs["critical"].call_args_list
             ),
             "测量入口必须说明没有可用的当前运行",
         )
 
-    def test_abandoned_run_remains_loadable_from_the_history_entry(self):
-        """步骤 7：返回欢迎页只清会话身份，磁盘上的运行仍可从历史入口重新加载。"""
+    def test_abandoned_run_stays_on_disk_without_a_config_page_reentry(self):
+        """返回欢迎页只清会话身份；配置页不再提供按 run_id 重新打开的入口。"""
         self._silence_dialogs()
         self.config_path.write_text(
             json.dumps(_fully_valid_gui_config(driver_enabled=True)),
@@ -1580,22 +1617,10 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         window._return_to_welcome()
         self.assertIsNone(window.coordinator.prepared_run)
         self.assertTrue(old_run.run_directory.is_dir(), "返回欢迎页不能删运行目录")
+        self.assertFalse(hasattr(window.test_config_page, "load_run_requested"))
 
-        window.test_config_page.load_run_requested.emit(old_run.run_id)
-        self.app.processEvents()
-
-        self.assertEqual(window.prepared_run.run_id, old_run.run_id)
-        self.assertEqual(window.coordinator.current_run_id(), old_run.run_id)
-        self.assertEqual(
-            window.measurement_workspace.run_identity(),
-            (old_run.run_id, "有驱放测试"),
-        )
-        self.assertEqual(window.mode_badge.text(), "有驱放测试")
-        self.assertIs(window.coordinator.state, RunFlowState.RECONNECT_REQUIRED)
-        self.assertIsNone(window.coordinator.instrument_ctrl)
-
-    def test_loading_a_frozen_run_refreshes_identity_and_driver_mode_together(self):
-        """加载已冻结运行会改变驱动模式：页头、徽标、标签页与阶段条一起更新。"""
+    def test_coordinator_can_still_reopen_a_frozen_context_internally(self):
+        """执行上下文的重新打开保留在协调器内部，不再由配置页驱动界面身份。"""
         from app.gui_runtime import prepare_configuration
 
         self._silence_dialogs()
@@ -1613,24 +1638,14 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
 
         window = self._window()
         window._enter_test_mode(False)
-        rail = window.measurement_workspace.stage_rail()
-        self.assertFalse(
-            window.tab_widget.isTabVisible(window._driver_mapping_tab_index)
-        )
-        self.assertFalse(rail.is_stage_enabled("driver_mapping"))
 
-        window.test_config_page.load_run_requested.emit(run_id)
+        prepared = window.coordinator.load_prepared_run(run_id)
         self.app.processEvents()
 
-        self.assertEqual(window.prepared_run.run_id, run_id)
-        self.assertEqual(
-            window.measurement_workspace.run_identity(), (run_id, "有驱放测试")
-        )
-        self.assertEqual(window.mode_badge.text(), "有驱放测试")
-        self.assertTrue(
-            window.tab_widget.isTabVisible(window._driver_mapping_tab_index)
-        )
-        self.assertTrue(rail.is_stage_enabled("driver_mapping"))
+        self.assertIsNotNone(prepared)
+        self.assertEqual(window.coordinator.current_run_id(), run_id)
+        self.assertTrue(window.coordinator.amplifier_driver_mode())
+        self.assertIs(window.coordinator.state, RunFlowState.RECONNECT_REQUIRED)
 
     def test_no_driver_mode_disables_the_driver_mapping_stage(self):
         """无驱放测试：02 号阶段保留但停用，启用后恢复可点。"""
@@ -2445,7 +2460,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIs(window.prepared_run, prepared)
         self.assertTrue(prepared.run_directory.is_dir())
         self.assertEqual(
-            window.test_config_page.run_status_label.text(), f"当前运行: {prepared.run_id}"
+            window.test_config_page.run_status_label.text(), "当前执行会话已就绪"
         )
         # 创建运行只冻结参数：接线不再是配置字段，冻结快照与保存的配置里都没有它。
         frozen = json.loads(prepared.config_path.read_text(encoding="utf-8"))
@@ -2474,7 +2489,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertEqual(port.close_calls, 1)
         self.assertTrue(window.coordinator.has_unreleased_ports())
         self.assertEqual(
-            window.test_config_page.run_status_label.text(), "当前运行: 未创建"
+            window.test_config_page.run_status_label.text(), "当前执行: 未连接"
         )
         dialogs["warning"].assert_called_once()
 

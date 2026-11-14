@@ -250,7 +250,7 @@ class MeasurementStartFacade:
                 request=request,
                 controller=controller,
                 message=(
-                    f"正式{START_LABELS[request.kind]}必须先创建或按 run_id 重新加载运行"
+                    f"正式{START_LABELS[request.kind]}必须先连接仪器"
                 ),
             )
         if not confirm_connection():

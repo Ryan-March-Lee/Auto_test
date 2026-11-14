@@ -62,9 +62,13 @@ def build_action_bar(page) -> QWidget:
     page.previous_step_btn = QPushButton("上一步")
     page.previous_step_btn.setToolTip("回到上一级“电源配置”页，保留已经填好的电源参数")
     set_button_variant(page.previous_step_btn, "secondary")
+    page.load_config_btn = QPushButton("加载配置")
+    page.load_config_btn.setToolTip("从已保存的配置快照加载参数，不连接仪器")
+    set_button_variant(page.load_config_btn, "secondary")
     page.save_config_btn = QPushButton("保存配置")
     set_button_variant(page.save_config_btn, "primary")
     row.addWidget(page.previous_step_btn)
+    row.addWidget(page.load_config_btn)
     row.addWidget(page.save_config_btn)
     return bar
 

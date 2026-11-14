@@ -560,6 +560,16 @@ class WorkspaceBindingTests(unittest.TestCase):
         self.assertTrue(rail.is_stage_enabled("driver_mapping"))
         self.assertIs(self.binding.driver_mode(), True)
 
+    def test_set_session_mode_updates_mode_without_touching_identity(self):
+        self.binding.start_session(False)
+
+        self.binding.set_session_mode(True)
+
+        self.assertIs(self.binding.driver_mode(), True)
+        self.assertEqual(self.workspace.run_identity(), (None, None))
+        self.assertEqual(self.mode_badge.text(), "有驱放测试")
+        self.assertTrue(self._driver_tab_visible())
+
     def test_reset_identity_restores_the_unselected_state(self):
         rail = self.workspace.stage_rail()
         self.binding.bind_run_identity("run-1", True)

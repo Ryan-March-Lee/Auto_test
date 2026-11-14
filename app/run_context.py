@@ -92,12 +92,12 @@ class PreparedRun:
         if not self.has_run_contract:
             raise RunNotResumable(
                 "运行缺少运行契约（运行标识、运行目录、运行仓储与冻结快照解析入口），"
-                "不能连接仪器；请重新创建或重新加载运行"
+                "不能连接仪器；请重新连接仪器"
             )
         if self.hardware_config_path is None:
             raise RunNotResumable(
                 f"运行 {self.run_id} 缺少有效的硬件配置快照，不能连接仪器；"
-                "请重新创建或重新加载运行"
+                "请重新连接仪器"
             )
         return self._verified_hardware_snapshot(Path(self.hardware_config_path))
 
@@ -118,7 +118,7 @@ class PreparedRun:
         if not usable:
             raise RunNotResumable(
                 f"运行 {self.run_id} 缺少有效的硬件配置快照"
-                f"（{frozen} 不存在或不是普通文件）；请重新创建或重新加载运行"
+                f"（{frozen} 不存在或不是普通文件）；请重新连接仪器"
             )
         repository = self.run_repository
         # 能进入本方法说明该对象被视为运行契约运行；仓储能力不完整必须明确失败，
@@ -204,7 +204,7 @@ def _require_connectable_hardware(hardware_config: Mapping[str, Any]) -> None:
     result = validate_hardware_connections(dict(hardware_config))
     if not result.valid:
         details = "; ".join(f"{issue.path}: {issue.message}" for issue in result.errors)
-        raise ValueError(f"硬件配置的供电连接存在冲突，不能创建运行: {details}")
+        raise ValueError(f"硬件配置的供电连接存在冲突，不能连接仪器: {details}")
 
 
 def load_prepared_run(

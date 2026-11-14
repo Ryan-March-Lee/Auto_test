@@ -205,8 +205,8 @@ def _reject_simulated_bindings(hardware_config: Mapping[str, Any]) -> None:
         return
     details = "；".join(issue.path for issue in issues)
     raise ConfigurationError(
-        "配置中的设备绑定来自模拟扫描，不能创建真实运行："
-        "请用“真实网络扫描”重新获取设备并应用后再创建运行（"
+        "配置中的设备绑定来自模拟扫描，不能连接真实仪器："
+        "请用“真实网络扫描”重新获取设备并应用后再连接仪器（"
         + details
         + "）"
     )
@@ -233,7 +233,7 @@ def require_run_contract(prepared_run: PreparedRun) -> PreparedRun:
         raise RunNotResumable(
             "运行契约缺失：硬件装配与测量必须绑定 runs/<run_id>/ 运行目录"
             "（运行标识、运行目录、运行仓储与冻结快照解析入口）；"
-            "请先创建或重新加载运行"
+            "请先完成配置并点击“连接仪器”"
         )
     return prepared_run
 
@@ -436,7 +436,7 @@ def _ensure_domain_snapshot_is_intact(run_repository: Any, run_id: str) -> None:
         )
         raise RunNotResumable(
             f"运行 {run_id} 的配置快照校验失败，拒绝连接仪器；"
-            f"请重新创建运行: {details}"
+            f"请重新保存配置并连接仪器: {details}"
         )
     # 规则 16：1.0 历史快照可查看已保存结果，但不能继续运行/连接仪器。
     version_issues = require_current_schema_version(loaded.configuration)
@@ -445,7 +445,7 @@ def _ensure_domain_snapshot_is_intact(run_repository: Any, run_id: str) -> None:
             f"{issue.path}: {issue.message}" for issue in version_issues
         )
         raise RunNotResumable(
-            f"运行 {run_id} 使用旧版配置，不能继续测量；请重新创建运行: {details}"
+            f"运行 {run_id} 使用旧版配置，不能继续测量；请重新保存配置并连接仪器: {details}"
         )
 
 

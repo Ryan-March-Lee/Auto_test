@@ -151,7 +151,7 @@ class GuiWorkerTests(unittest.TestCase):
         self.assertIsNone(worker.service)
         self.assertEqual(
             errors,
-            ["应用用例构造失败: 线损测量必须携带有效运行契约（PreparedRun）；请先创建或重新加载运行"],
+            ["应用用例构造失败: 线损测量必须携带有效执行会话契约（PreparedRun）；请先完成配置并点击“连接仪器”"],
         )
 
     def test_workers_do_not_implicitly_prepare_a_legacy_run(self):
@@ -170,7 +170,7 @@ class GuiWorkerTests(unittest.TestCase):
                 prepare.assert_not_called()
                 factory.assert_not_called()
                 self.assertEqual(len(errors), 1)
-                self.assertIn("必须携带有效运行契约（PreparedRun）", errors[0])
+                self.assertIn("必须携带有效执行会话契约（PreparedRun）", errors[0])
 
     def test_workers_reject_non_contract_run_objects(self):
         """传入的不是运行契约对象时同样在创建测量前失败。"""
@@ -189,7 +189,7 @@ class GuiWorkerTests(unittest.TestCase):
                 self.assertIsNone(worker.service)
                 self.assertEqual(
                     errors,
-                    [f"应用用例构造失败: {label}测量必须携带有效运行契约（PreparedRun）；请先创建或重新加载运行"],
+                    [f"应用用例构造失败: {label}测量必须携带有效执行会话契约（PreparedRun）；请先完成配置并点击“连接仪器”"],
                 )
 
     def test_cable_loss_stop_during_run_contract_validation_skips_measurement(self):
@@ -544,7 +544,7 @@ class GuiWorkerTests(unittest.TestCase):
             worker.run()
         connect.assert_not_called()
         self.assertIsNone(worker.measurement_port)
-        self.assertEqual(errors, ["仪器连接失败: 仪器连接必须携带有效运行契约（PreparedRun）；请先创建或重新加载运行"])
+        self.assertEqual(errors, ["仪器连接失败: 仪器连接必须携带有效执行会话契约（PreparedRun）；请先完成配置并点击“连接仪器”"])
 
     def test_instrument_worker_rejects_the_legacy_positional_config_path(self):
         """旧调用形态（位置上传配置路径）不得冒充运行契约：必须明确失败。"""
@@ -555,7 +555,7 @@ class GuiWorkerTests(unittest.TestCase):
             worker.run()
         connect.assert_not_called()
         self.assertIsNone(worker.measurement_port)
-        self.assertIn("必须携带有效运行契约（PreparedRun）", errors[0])
+        self.assertIn("必须携带有效执行会话契约（PreparedRun）", errors[0])
 
     def test_instrument_worker_accepts_explicit_connect_factory(self):
         class _Port:

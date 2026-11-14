@@ -5,6 +5,11 @@ from .config_repository import (
     RunMappingRepository,
     TestPlanRepository,
 )
+from .configuration_snapshots import (
+    ConfigurationSaveOutcome,
+    ConfigurationSnapshot,
+    ConfigurationSnapshotRepository,
+)
 from .device_binding import DeviceBindingPort
 from .measurement_session import (
     CleanupRecord,
@@ -57,6 +62,9 @@ __all__ = [
     "CleanupStepStatus",
     "ConfigurationLoadResult",
     "ConfigurationRepository",
+    "ConfigurationSaveOutcome",
+    "ConfigurationSnapshot",
+    "ConfigurationSnapshotRepository",
     "DeviceBindingPort",
     "GeneratedArtifact",
     "LoadedStageResult",

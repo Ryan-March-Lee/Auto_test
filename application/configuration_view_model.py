@@ -6,11 +6,10 @@
 - 状态包含配置草稿 :class:`ConfigurationDraft`、设备绑定快照、最近一次结构化问题、
   运行状态文本和 dirty 标记；
 - 每个动作是显式方法，返回新的不可变状态或结构化结果：``load``、``update_test_parameters``、
-  ``apply_device_selection``、``validate``、``save``、``create_run``、``set_run_status``、
-  ``mark_clean``；
-- 不导入 PySide6，不读控件，不读写文件，不创建仪器，不弹窗。文件保存与运行创建仍由
-  ``ApplicationCoordinator`` / 应用端口执行，因此 :meth:`ConfigurationViewModel.save` /
-  :meth:`ConfigurationViewModel.create_run` 只返回一个明确的页面 Effect
+  ``apply_device_selection``、``validate``、``save``、``set_run_status``、``mark_clean``；
+- 不导入 PySide6，不读控件，不读写文件，不创建仪器，不弹窗。文件保存与执行上下文创建
+  仍由 ``ApplicationCoordinator`` / 应用端口执行，因此
+  :meth:`ConfigurationViewModel.save` 只返回一个明确的页面 Effect
   (:class:`ConfigurationAction`)，由页面/协调器决定何时真正落盘。
 
 迁移边界（步骤 6 先接入“测试参数 + 设备绑定”；步骤 7 收口整份表单）：控件读数经
@@ -20,9 +19,9 @@
 短委托。因此：
 
 - 视图模型对整份配置页业务状态（草稿、设备绑定、运行状态、dirty）是唯一来源；
-- ``save`` / ``create_run`` 返回的 Effect 文档现在是完整的配置编辑文档（含电源通道、
-  上电计划与设备绑定）；实际保存/创建运行仍由 ``ApplicationCoordinator`` 调用页面的
-  ``build_config`` 执行，本步骤不改保存链路，也不在视图模型里写文件。
+- ``save`` 返回的 Effect 文档现在是完整的配置编辑文档（含电源通道、上电计划与设备
+  绑定）；实际保存仍由 ``ApplicationCoordinator`` 调用页面的 ``build_config`` 执行，
+  本模块不改保存链路，也不在视图模型里写文件。
 
 校验问题的边界与步骤 3–5 一致：用户可修正的配置问题通过
 :class:`application.configuration_editing.ValidationResult` 返回；调用方契约错误（文档不是
@@ -55,7 +54,6 @@ from application.dto.amplifier_inputs import PowerSweep
 from domain.measurement.values import Decibels, Frequency, PowerDbm
 
 __all__ = [
-    "CREATE_RUN",
     "ConfigurationAction",
     "ConfigurationBindingOutcome",
     "ConfigurationPageState",
@@ -67,11 +65,10 @@ __all__ = [
 ]
 
 # 运行状态文本的初始值；与配置页原来挂在 ``run_status_label`` 上的文案一致。
-DEFAULT_RUN_STATUS = "当前运行: 未创建"
+DEFAULT_RUN_STATUS = "当前执行: 未连接"
 # 页面 Effect 的种类：只描述“接下来该做什么”，不在这里执行。
 SAVE_CONFIGURATION = "save_configuration"
-CREATE_RUN = "create_run"
-_ACTION_KINDS = frozenset({SAVE_CONFIGURATION, CREATE_RUN})
+_ACTION_KINDS = frozenset({SAVE_CONFIGURATION})
 
 # 测试参数在配置编辑文档里的键：更新测试参数时只替换这些段，其余段（电源通道、分配、
 # 设备绑定里不属于测试参数的部分）保持加载时的内容。
@@ -392,15 +389,14 @@ class ConfigurationBindingOutcome:
 
 @dataclass(frozen=True)
 class ConfigurationAction:
-    """配置页请求的下一步动作（Effect）：保存配置或创建运行。
+    """配置页请求的下一步动作（Effect）：保存配置。
 
-    视图模型不写文件、不创建运行；它只回答“以什么文档、在什么校验结论下执行哪个动作”。
-    ``validation`` 不是 ``valid`` 时 ``document`` 为空，调用方不得落盘。
+    视图模型不写文件、不创建执行上下文；它只回答“以什么文档、在什么校验结论下执行
+    哪个动作”。``validation`` 不是 ``valid`` 时 ``document`` 为空，调用方不得落盘。
 
     接入状态：步骤 7 已把整份控件读数收进视图模型，因此这里的 ``document`` 是完整的
-    配置编辑文档。实际保存/创建运行仍由 ``ApplicationCoordinator`` 调用页面的
-    ``build_config`` 执行，本 Effect 只提供“动作是否可执行、要执行什么文档”的明确
-    结果，不在视图模型里写文件或创建运行。
+    配置编辑文档。实际保存仍由 ``ApplicationCoordinator`` 调用页面的 ``build_config``
+    执行，本 Effect 只提供“动作是否可执行、要执行什么文档”的明确结果。
     """
 
     kind: str
@@ -622,12 +618,8 @@ class ConfigurationViewModel:
         """请求保存配置：返回带正式文档的 Effect；校验失败时文档为空。"""
         return self._action(SAVE_CONFIGURATION)
 
-    def create_run(self) -> ConfigurationAction:
-        """请求创建运行：与 :meth:`save` 使用同一份校验与正式文档。"""
-        return self._action(CREATE_RUN)
-
     def set_run_status(self, text: str) -> ConfigurationPageState:
-        """更新运行状态文本（由协调器在创建/加载运行后调用）。"""
+        """更新执行状态文本（由协调器在连接/清理后调用）。"""
         if not isinstance(text, str):
             raise TypeError(f"运行状态必须是字符串，收到 {type(text).__name__}")
         if not text.strip():

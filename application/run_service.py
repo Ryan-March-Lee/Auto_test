@@ -269,20 +269,22 @@ def create_run_snapshot(
         raise ValueError("hardware_config 必须是配置映射")
     if not loaded.valid:
         raise ValueError(
-            "运行配置校验失败，不能创建运行快照: " + _validation_details(loaded.validation)
+            "运行配置校验失败，不能创建执行上下文: "
+            + _validation_details(loaded.validation)
         )
     # 规则 16：1.0 配置可查看/导出，但不能据此创建新运行；升级只能经迁移器。
     version_issues = require_current_schema_version(loaded.configuration)
     if version_issues:
         raise ValueError(
-            "旧版配置不能创建运行快照: " + _validation_details(
+            "旧版配置不能创建执行上下文: " + _validation_details(
                 ConfigValidationResult(errors=version_issues, warnings=[])
             )
         )
     full_validation = validate_run_configuration(loaded.configuration)
     if not full_validation.valid:
         raise ValueError(
-            "完整运行配置校验失败，不能创建运行快照: " + _validation_details(full_validation)
+            "完整运行配置校验失败，不能创建执行上下文: "
+            + _validation_details(full_validation)
         )
     # 功率范围语义是运行级门禁，不是读取级错误：旧配置仍可打开并显示兼容提示，
     # 但在用户按“主功放输入功率”核对并重新保存前，不能创建运行。这样既保留旧配置的
@@ -292,14 +294,14 @@ def create_run_snapshot(
     )
     if semantics_issue is not None:
         raise ValueError(
-            "完整运行配置校验失败，不能创建运行快照: " + semantics_issue
+            "完整运行配置校验失败，不能创建执行上下文: " + semantics_issue
         )
     # 旧配置允许加载与文件级检查，但有驱放的新运行必须显式冻结源功率硬上限。
     # 该兼容门禁放在创建运行边界，而不是通用 schema 校验中，避免历史配置失去可读性。
     plan = loaded.configuration.test_plan
     if plan.driver_enabled and plan.driver_max_input_power is None:
         raise ValueError(
-            "完整运行配置校验失败，不能创建运行快照: "
+            "完整运行配置校验失败，不能创建执行上下文: "
             "test_plan.driver_mode.max_input_power：驱动模式启用时必须配置"
             "驱放最大输入功率，以限制信号源输出设定值"
         )
@@ -533,7 +535,7 @@ def ensure_run_repository_supports_run_contract(run_repository: Any) -> None:
     if missing:
         raise RunNotResumable(
             "运行契约仓储不完整，缺少 " + ", ".join(missing)
-            + "，无法校验冻结快照；请重新创建或重新加载运行"
+            + "，无法校验冻结快照；请重新连接仪器"
         )
 
 
@@ -585,7 +587,7 @@ def find_run_hardware_config(
     )
     if reference is None:
         raise RunNotResumable(
-            f"运行 {run_id} 缺少硬件配置快照，不能继续测量；请重新创建运行"
+            f"运行 {run_id} 缺少硬件配置快照，不能继续测量；请重新保存配置并连接仪器"
         )
     try:
         return run_repository.verify_file(run_id, reference)

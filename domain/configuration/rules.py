@@ -664,8 +664,8 @@ def simulated_binding_issues(document: Any) -> List[ConfigIssue]:
             ConfigIssue(
                 "warning",
                 f"{path}.source",
-                "该设备绑定来自模拟扫描，只能用于离线演示：可以保存并启动界面，但不能创建"
-                "真实运行；请用“真实网络扫描”重新获取设备并应用后再创建运行",
+                "该设备绑定来自模拟扫描，只能用于离线演示：可以保存并启动界面，但不能连接"
+                "真实仪器；请用“真实网络扫描”重新获取设备并应用后再连接仪器",
             )
         )
     return issues

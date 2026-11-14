@@ -3,8 +3,10 @@
 import json
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from application.ports.configuration_snapshots import ConfigurationSaveOutcome
 from presentation.qt.application_coordinator import ApplicationCoordinator
 from presentation.qt.config_form_state import ConfigFormState
 
@@ -744,46 +746,179 @@ class CoordinatorConfigSaveTests(unittest.TestCase):
         self.assertTrue(validate_run_configuration(configuration).valid)
 
 
-class MainWindowSaveConfigDialogTests(unittest.TestCase):
-    """窗口只负责保存配置的用户可见反馈。"""
+class ConfigurationSnapshotActionTests(unittest.TestCase):
+    """命名配置快照的窗口动作只负责对话框与反馈，不创建执行上下文。"""
 
     def setUp(self):
-        from presentation.qt.main_window import MainWindow
-
-        self.window = MainWindow.__new__(MainWindow)
-        self.window.coordinator = MagicMock()
-        self.window.coordinator.prepared_run = None
-        self.window.coordinator.last_save_error = None
+        self.coordinator = MagicMock()
+        self.coordinator.last_save_error = None
+        self.coordinator.last_load_error = None
         self.messages = []
-        self.window.add_log_message = self.messages.append
+        self.saved = []
+        self.loaded = []
         self.calls = []
+        self.snapshot = SimpleNamespace(
+            configuration_path=Path(
+                "test_results/configurations/功放测试_20261114_0905/功放测试.json"
+            )
+        )
 
     def _record(self, icon, title, text):
         self.calls.append((title, text))
 
-    def test_save_config_success(self):
-        self.window.coordinator.save_configuration.return_value = True
+    def _save(self, name, accepted=True):
+        from presentation.qt.configuration_snapshot_actions import (
+            save_named_configuration,
+        )
 
         with patch(
-            'presentation.qt.main_window.QMessageBox.information', side_effect=self._record
+            "presentation.qt.configuration_snapshot_actions.QInputDialog.getText",
+            return_value=(name, accepted),
+        ), patch(
+            "presentation.qt.configuration_snapshot_actions.QMessageBox.information",
+            side_effect=self._record,
+        ), patch(
+            "presentation.qt.configuration_snapshot_actions.QMessageBox.warning",
+            side_effect=self._record,
         ):
-            self.window.save_config()
+            return save_named_configuration(
+                None,
+                self.coordinator,
+                log=self.messages.append,
+                on_saved=lambda: self.saved.append(True),
+            )
 
-        self.assertEqual(self.calls, [('保存成功', '配置文件已保存')])
-        self.assertIn('配置已保存', self.messages)
-
-    def test_save_config_failure(self):
-        self.window.coordinator.save_configuration.return_value = False
-        self.window.coordinator.last_save_error = OSError("test write failure")
+    def _load(self, path):
+        from presentation.qt.configuration_snapshot_actions import (
+            load_named_configuration,
+        )
 
         with patch(
-            'presentation.qt.main_window.QMessageBox.warning', side_effect=self._record
+            "presentation.qt.configuration_snapshot_actions.QFileDialog.getOpenFileName",
+            return_value=(path, ""),
         ):
-            self.window.save_config()
+            return load_named_configuration(
+                None,
+                self.coordinator,
+                directory=Path("configurations"),
+                log=self.messages.append,
+                on_loaded=lambda: self.loaded.append(True),
+            )
 
-        self.assertTrue(any('保存失败' in title for title, _ in self.calls))
-        self.assertTrue(any('配置保存失败' in message for message in self.messages))
+    def test_save_writes_a_named_snapshot_and_reports_its_path(self):
+        self.coordinator.save_named_configuration.return_value = (
+            ConfigurationSaveOutcome(True, self.snapshot, None)
+        )
+
+        self.assertTrue(self._save("功放测试"))
+
+        self.coordinator.save_named_configuration.assert_called_once_with("功放测试")
+        self.assertEqual(self.saved, [True])
+        self.assertIn(str(self.snapshot.configuration_path), self.calls[0][1])
+        self.assertTrue(any("配置已保存" in message for message in self.messages))
+
+    def test_cancelled_name_does_not_save(self):
+        self.assertFalse(self._save("功放测试", accepted=False))
+
+        self.coordinator.save_named_configuration.assert_not_called()
+        self.assertEqual(self.saved, [])
+
+    def test_blank_name_is_rejected_before_saving(self):
+        self.assertFalse(self._save("   "))
+
+        self.coordinator.save_named_configuration.assert_not_called()
+        self.assertTrue(any("保存失败" in title for title, _ in self.calls))
+
+    def test_save_failure_keeps_the_draft_and_reports_the_error(self):
+        failure = OSError("test write failure")
+        self.coordinator.save_named_configuration.return_value = (
+            ConfigurationSaveOutcome(False, None, failure)
+        )
+        self.coordinator.last_save_error = failure
+
+        self.assertFalse(self._save("功放测试"))
+
+        self.assertEqual(self.saved, [])
+        self.assertTrue(any("保存失败" in title for title, _ in self.calls))
+        self.assertTrue(any("配置保存失败" in message for message in self.messages))
+
+    def test_partial_save_reports_that_the_current_configuration_was_saved(self):
+        failure = RuntimeError("快照写入失败")
+        self.coordinator.save_named_configuration.return_value = (
+            ConfigurationSaveOutcome(True, None, failure)
+        )
+
+        self.assertFalse(self._save("功放测试"))
+
+        self.assertEqual(self.saved, [])
+        self.assertTrue(any("部分保存" in title for title, _ in self.calls))
+        self.assertTrue(
+            any("当前工作配置已保存" in message for message in self.messages)
+        )
+
+    def test_load_backfills_without_reporting_a_run(self):
+        self.coordinator.load_named_configuration.return_value = True
+
+        self.assertTrue(self._load("configurations/功放测试/功放测试.json"))
+
+        self.coordinator.load_named_configuration.assert_called_once_with(
+            "configurations/功放测试/功放测试.json"
+        )
+        self.assertEqual(self.loaded, [True])
+        self.assertTrue(any("已加载配置" in message for message in self.messages))
+
+    def test_load_failure_is_logged_and_does_not_touch_the_draft_callback(self):
+        self.coordinator.load_named_configuration.return_value = False
+        self.coordinator.last_load_error = ValueError("坏文件")
+
+        self.assertFalse(self._load("configurations/x/x.json"))
+
+        self.assertEqual(self.loaded, [])
+        self.assertTrue(any("配置加载失败" in message for message in self.messages))
+
+    def test_cancelled_file_selection_loads_nothing(self):
+        self.assertFalse(self._load(""))
+
+        self.coordinator.load_named_configuration.assert_not_called()
+        self.assertEqual(self.loaded, [])
 
 
-if __name__ == '__main__':
+class MainWindowConfigurationModeTests(unittest.TestCase):
+    """加载命名配置后的模式同步：没有已提交会话时才改写本次会话模式。"""
+
+    def _window(self):
+        from presentation.qt.main_window import MainWindow
+
+        window = MainWindow.__new__(MainWindow)
+        window.coordinator = MagicMock()
+        window.coordinator.prepared_run = None
+        window.coordinator.amplifier_driver_mode.return_value = True
+        window.workspace_binding = MagicMock()
+        window.configuration_editor = MagicMock()
+        window._sync_finalize_entry = MagicMock()
+        window.add_log_message = MagicMock()
+        return window
+
+    def test_loaded_mode_updates_the_session_before_connecting(self):
+        window = self._window()
+
+        window._after_configuration_loaded()
+
+        window.workspace_binding.set_session_mode.assert_called_once_with(True)
+        window.configuration_editor.mark_clean.assert_called_once_with()
+        window._sync_finalize_entry.assert_called_once_with()
+
+    def test_loaded_mode_does_not_override_a_committed_session(self):
+        window = self._window()
+        window.coordinator.prepared_run = object()
+
+        window._after_configuration_loaded()
+
+        window.workspace_binding.set_session_mode.assert_not_called()
+        self.assertTrue(
+            any("已冻结" in call.args[0] for call in window.add_log_message.call_args_list)
+        )
+
+
+if __name__ == "__main__":
     unittest.main()

@@ -25,7 +25,7 @@ def require_prepared_run(value: Any, label: str) -> Any:
     连接仪器时会拼出“正式仪器连接”这种病句。
     """
     if not has_run_contract(value):
-        raise ValueError(f"{label}必须携带有效运行契约（PreparedRun）；请先创建或重新加载运行")
+        raise ValueError(f"{label}必须携带有效执行会话契约（PreparedRun）；请先完成配置并点击“连接仪器”")
     return value
 
 

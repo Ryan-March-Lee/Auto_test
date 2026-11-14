@@ -304,7 +304,7 @@ class ConfigurationAuthoringService:
                         path=section,
                         code="configuration.stale_formal_sections",
                         message="正式段与编辑段不一致：文件可能被手改或写入中断；"
-                        "请重新保存后再创建运行",
+                        "请重新保存后再连接仪器",
                         severity="error",
                     )
                 )

@@ -1,7 +1,7 @@
 """配置页状态视图模型测试（GUI 重构步骤 6，不需要 Qt）。
 
-覆盖：载入草稿与绑定、测试参数更新、整批设备绑定、正式校验、保存/创建运行 Effect、
-运行状态切换与 dirty 基线，以及“视图模型不碰 Qt / 文件 / 控件”的静态边界。
+覆盖：载入草稿与绑定、测试参数更新、整批设备绑定、正式校验、保存 Effect、
+执行状态切换与 dirty 基线，以及“视图模型不碰 Qt / 文件 / 控件”的静态边界。
 页面侧只验证它把状态与动作委托给视图模型。
 """
 
@@ -11,7 +11,6 @@ from dataclasses import replace
 from pathlib import Path
 
 from application.configuration_view_model import (
-    CREATE_RUN,
     DEFAULT_RUN_STATUS,
     SAVE_CONFIGURATION,
     ConfigurationAction,
@@ -523,26 +522,21 @@ class ConfigurationViewModelValidationTests(unittest.TestCase):
         document["test_frequencies"].append(9.9)
         self.assertEqual(action.to_document()["test_frequencies"], [2.4])
 
-    def test_create_run_uses_the_same_document_but_a_different_kind(self):
-        view = _loaded()
+    def test_only_the_save_action_kind_is_exposed(self):
+        """“创建运行”不再是一个配置页动作：保存与执行上下文创建已经分开。"""
+        with self.assertRaises(ValueError):
+            ConfigurationAction(kind="create_run")
 
-        saved = view.save()
-        run = view.create_run()
-
-        self.assertEqual(run.kind, CREATE_RUN)
-        self.assertTrue(run.ok, run.validation.messages())
-        self.assertEqual(run.to_document(), saved.to_document())
-
-    def test_invalid_configuration_blocks_both_actions(self):
+    def test_invalid_configuration_blocks_the_save_action(self):
         document = _config()
         document["test_frequencies"] = []
         view = _loaded(document)
 
-        for action in (view.save(), view.create_run()):
-            with self.subTest(kind=action.kind):
-                self.assertFalse(action.ok)
-                self.assertEqual(action.to_document(), {})
-                self.assertFalse(action.validation.valid)
+        action = view.save()
+
+        self.assertFalse(action.ok)
+        self.assertEqual(action.to_document(), {})
+        self.assertFalse(action.validation.valid)
 
     def test_unmodelled_top_level_fields_survive_the_action(self):
         document = _config()

@@ -31,6 +31,11 @@ class PathService:
         return self.root / "test_results"
 
     @property
+    def configuration_snapshots_dir(self) -> Path:
+        """用户可复用配置快照的独立目录。"""
+        return self.test_results_dir / "configurations"
+
+    @property
     def cable_loss_results_dir(self) -> Path:
         """线损正式结果的阶段目录。"""
         return self.test_results_dir / "cable_loss"

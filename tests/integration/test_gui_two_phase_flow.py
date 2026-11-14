@@ -2,8 +2,8 @@
 
 覆盖验收标准：
 
-- 配置页面通过“完成配置并连接仪器”创建 ``PreparedRun``，并提供按 ``run_id`` 重新打开
-  已有运行的入口。
+- 配置页面通过“连接仪器”在后台创建执行上下文 ``PreparedRun``；用户界面不再暴露
+  “创建运行/加载运行”入口，配置只以命名快照保存和加载。
 - 三个测量页面只接受当前 ``PreparedRun``，不再在开始前重新保存 GUI 配置。
 - controller / worker 直接消费运行契约，不再重复执行配置预检。
 - 重新打开 GUI 后可以仅凭 ``run_id`` 重建运行上下文，不依赖 GUI 内存配置。
@@ -816,7 +816,7 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
         coordinator.prepared_run = None
         with self.assertRaises(RunNotResumable) as raised:
             coordinator.measurement_config_path()
-        self.assertIn("尚未创建运行", str(raised.exception))
+        self.assertIn("尚未创建执行会话", str(raised.exception))
         self.assertNotIn("global-config.json", str(raised.exception))
 
     def test_measurement_config_path_does_not_fallback_for_contract_run(self):
@@ -844,7 +844,7 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
         # 对象没有契约校验入口（例如被替换成错误类型）也必须明确失败。
         coordinator.prepared_run = object()
 
-        with self.assertRaisesRegex(RunNotResumable, "运行契约不可用"):
+        with self.assertRaisesRegex(RunNotResumable, "契约不可用"):
             coordinator.measurement_config_path()
 
     def test_invalid_contract_blocks_instrument_connection(self):
@@ -892,7 +892,7 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
         worker_factory.assert_not_called()
         self.assertIsNone(coordinator.instrument_worker)
         warn.assert_called_once()
-        self.assertIn("尚未创建运行", str(warn.call_args.args[1]))
+        self.assertIn("尚未创建执行会话", str(warn.call_args.args[1]))
         self.assertTrue(
             any("无法连接仪器" in str(call.args[0]) for call in log.call_args_list)
         )
@@ -913,7 +913,7 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
         worker_factory.assert_called_once()
         self.assertTrue(
             any(
-                "尚未创建运行的修改" in str(call.args[0])
+                "尚未连接使用的修改" in str(call.args[0])
                 for call in log.call_args_list
             )
         )
@@ -931,7 +931,7 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
 
         self.assertFalse(
             any(
-                "尚未创建运行的修改" in str(call.args[0])
+                "尚未连接使用的修改" in str(call.args[0])
                 for call in log.call_args_list
             )
         )
@@ -998,7 +998,7 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
         warn.assert_called_once()
         messages = [str(call.args[0]) for call in log.call_args_list if call.args]
         self.assertTrue(any("回填失败" in message for message in messages))
-        self.assertFalse(any("已加载运行" in message for message in messages))
+        self.assertFalse(any("已重新打开执行会话" in message for message in messages))
 
     def test_measurement_port_is_owned_by_the_coordinator(self):
         port = MagicMock()
@@ -1100,15 +1100,14 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         self.assertIn("必须配置非空的 DUT 上电顺序", failures[0])
         self.assertIn("必须至少登记一台本机供电电源", failures[0])
 
-    def test_load_run_signal_carries_the_run_id(self):
+    def test_load_config_signal_is_emitted_without_a_run_id(self):
         from presentation.qt.test_configuration_page import TestConfigurationPage
 
         page = TestConfigurationPage({})
         requested = []
-        page.load_run_requested.connect(requested.append)
-        page.load_run_id_edit.setText(RUN_ID)
-        page.load_run_btn.click()
-        self.assertEqual(requested, [RUN_ID])
+        page.load_config_requested.connect(lambda: requested.append(True))
+        page.load_config_btn.click()
+        self.assertEqual(requested, [True])
 
     def test_validate_no_longer_blocks_duplicate_power_channel_roles(self):
         """步骤 5/11：角色重复不再是否决条件，电源表单也不再提供角色控件。"""
@@ -1141,17 +1140,19 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         self.assertTrue(failures, "缺少仪器/频率等配置仍应阻止发起运行")
         self.assertFalse(any("供电角色" in message for message in failures), failures)
 
-    def test_load_run_requires_a_run_id(self):
+    def test_configuration_page_no_longer_exposes_run_id_loading(self):
+        """用户界面不再有“加载运行”入口；执行会话只由连接事务在后台创建。"""
         from presentation.qt.test_configuration_page import TestConfigurationPage
 
         page = TestConfigurationPage({})
-        failures = []
-        requested = []
-        page.validation_failed.connect(failures.append)
-        page.load_run_requested.connect(requested.append)
-        page.load_run_btn.click()
-        self.assertEqual(requested, [])
-        self.assertEqual(len(failures), 1)
+
+        for attribute in (
+            "load_run_requested",
+            "load_run_id_edit",
+            "load_run_btn",
+            "request_load_run",
+        ):
+            self.assertFalse(hasattr(page, attribute), attribute)
 
     def test_run_status_label_is_updated_by_the_window(self):
         from presentation.qt.test_configuration_page import TestConfigurationPage

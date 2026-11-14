@@ -1100,15 +1100,6 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         self.assertIn("必须配置非空的 DUT 上电顺序", failures[0])
         self.assertIn("必须至少登记一台本机供电电源", failures[0])
 
-    def test_load_config_signal_is_emitted_without_a_run_id(self):
-        from presentation.qt.test_configuration_page import TestConfigurationPage
-
-        page = TestConfigurationPage({})
-        requested = []
-        page.load_config_requested.connect(lambda: requested.append(True))
-        page.load_config_btn.click()
-        self.assertEqual(requested, [True])
-
     def test_validate_no_longer_blocks_duplicate_power_channel_roles(self):
         """步骤 5/11：角色重复不再是否决条件，电源表单也不再提供角色控件。"""
         from presentation.qt.power_configuration_page import PowerConfigurationPage

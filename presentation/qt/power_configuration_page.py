@@ -689,6 +689,10 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
 
     # ---- 卡片视图 -----------------------------------------------------------
 
+    def rack_slots(self) -> dict[str, int]:
+        """当前卡片墙使用的九宫格格位副本，供保存快照与窗口同步读取。"""
+        return dict(self._rack_slots)
+
     def set_rack_slots(self, slots: Any) -> None:
         """接收仪器排布页的九宫格结果，卡片按同一相对位置摆放。"""
         cleaned: dict[str, int] = {}

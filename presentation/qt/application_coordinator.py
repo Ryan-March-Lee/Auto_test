@@ -502,9 +502,15 @@ class ApplicationCoordinator:
         return True
 
     def save_named_configuration(
-        self, display_name: str
+        self,
+        display_name: str,
+        *,
+        rack_slots: Mapping[str, int] | None = None,
     ) -> ConfigurationSaveOutcome:
         """保存用户命名的可复用配置快照，不创建执行上下文。
+
+        ``rack_slots`` 是仪器排布页当前的九宫格格位，只随快照元数据保存，供下次
+        加载时恢复界面；它不写进正式配置文档，也不参与运行校验。
 
         命名快照是**可继续编辑的配置草稿**，不是一次可运行会话：保存前必须把两页
         当前读数合并进同一份文档（电源页的未保存修改也要落盘），但不要求电源上电
@@ -535,7 +541,12 @@ class ApplicationCoordinator:
         if not self.save_configuration():
             return ConfigurationSaveOutcome(False, None, self.last_save_error)
         try:
-            snapshot = self.configuration_snapshots.save(display_name, self.config)
+            if rack_slots:
+                snapshot = self.configuration_snapshots.save(
+                    display_name, self.config, rack_slots=rack_slots
+                )
+            else:
+                snapshot = self.configuration_snapshots.save(display_name, self.config)
         except (OSError, ValueError) as failure:
             # 根配置已经在上一行写成功：这份结果必须保留“部分成功”的事实。
             self.last_configuration_snapshot = None

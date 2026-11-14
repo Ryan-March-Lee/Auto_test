@@ -63,6 +63,8 @@ SCALE_MAX = 1.5
 TITLE_POINT_SIZE = 56.0
 SUBTITLE_POINT_SIZE = 13.0
 MODE_BUTTON_POINT_SIZE = 13.0
+#: 模式按钮下方的“加载配置”文字链接：比模式按钮更小，只作为次要入口。
+LOAD_LINK_POINT_SIZE = 11.0
 
 
 # ---- 模式按钮（自绘 + 悬停动效） --------------------------------------------
@@ -444,6 +446,8 @@ class WelcomePage(QWidget):
     """
 
     mode_selected = Signal(bool)
+    #: 用户点击模式按钮下方的“加载配置”链接；选择已保存配置与切页由窗口完成。
+    load_config_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -480,11 +484,35 @@ class WelcomePage(QWidget):
         buttons.addStretch(1)
         layout.addLayout(buttons)
 
+        # 模式按钮不是唯一入口：已保存配置可以直接从这里加载。链接是透明的白色
+        # 下划线小字，紧跟在按钮行下面并保持居中；具体外观在 theme.py 的
+        # ``QPushButton#welcomeLoadConfig`` 里，字号随窗口缩放。
+        load_link = QPushButton("加载配置")
+        load_link.setObjectName("welcomeLoadConfig")
+        load_link.setFlat(True)
+        load_link.setCursor(Qt.PointingHandCursor)
+        load_link.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        link_font = QFont()
+        link_font.setFamilies(list(FONT_FAMILIES))
+        link_font.setWeight(QFont.Normal)
+        link_font.setUnderline(True)
+        load_link.setFont(link_font)
+        load_link.clicked.connect(self.load_config_requested.emit)
+
+        link_row = QHBoxLayout()
+        link_row.setSpacing(0)
+        link_row.addStretch(1)
+        link_row.addWidget(load_link)
+        link_row.addStretch(1)
+        layout.addSpacing(14)
+        layout.addLayout(link_row)
+
         layout.addStretch(5)
 
         self._title = title
         self._subtitle = subtitle
         self._buttons = (no_driver, with_driver)
+        self._load_link = load_link
         # 构造时窗口还没有实际尺寸，先按缩放 1 落一遍字号，避免露出样式表的通用字号。
         self._apply_scale(force=True)
 
@@ -508,18 +536,20 @@ class WelcomePage(QWidget):
         self._scale = scale
         self._apply_font_size(self._title, TITLE_POINT_SIZE * scale)
         self._apply_font_size(self._subtitle, SUBTITLE_POINT_SIZE * scale)
+        self._apply_font_size(self._load_link, LOAD_LINK_POINT_SIZE * scale)
         for button in self._buttons:
             button.set_scale(scale)
 
     @staticmethod
-    def _apply_font_size(label: QLabel, point_size: float) -> None:
+    def _apply_font_size(widget: QWidget, point_size: float) -> None:
         """把字号写进控件自己的样式表。
 
         全局样式表里的 ``QWidget { font-size }`` 会盖掉 ``setFont``，而控件自己的
         样式表优先于应用样式表，因此这里是唯一能让字号随窗口变化、又不失其他规则的
-        写法；``QLabel#welcomeTitle`` 里的颜色、字重与内边距仍然照旧生效。
+        写法；``QLabel#welcomeTitle`` 与 ``QPushButton#welcomeLoadConfig`` 的颜色、
+        字重、下划线与内边距仍然照旧生效。
         """
-        label.setStyleSheet(f"font-size: {point_size:.1f}pt;")
+        widget.setStyleSheet(f"font-size: {point_size:.1f}pt;")
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

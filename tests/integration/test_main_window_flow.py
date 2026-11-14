@@ -340,23 +340,24 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         ]
         self.assertEqual(len(snapshots), 1)
 
-    def test_loading_a_snapshot_syncs_the_session_mode_before_connecting(self):
-        """加载命名配置后，徽标、驱动页与阶段条要跟着配置里的模式一起切换。"""
+    def test_loading_a_snapshot_from_welcome_opens_the_workspace_in_that_mode(self):
+        """欢迎页加载配置：回填后直接进工作区测试配置页，并按配置切换模式。"""
         self._silence_dialogs()
         snapshot = FileConfigurationSnapshotRepository(paths=self.paths).save(
             "驱放配置", _fully_valid_gui_config(driver_enabled=True)
         )
         window = self._window()
-        window._enter_test_mode(False)
-        self.assertEqual(window.mode_badge.text(), "无驱放测试")
+        self.assertIs(window.view_stack.currentWidget(), window.welcome_page)
 
         with patch(
-            "presentation.qt.configuration_snapshot_actions.QFileDialog.getOpenFileName",
-            return_value=(str(snapshot.configuration_path), ""),
+            "presentation.qt.configuration_snapshot_actions.choose_configuration_snapshot",
+            return_value=snapshot,
         ):
-            window._load_configuration_snapshot()
+            window.welcome_page.load_config_requested.emit()
         self.app.processEvents()
 
+        self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
+        self.assertIs(window.tab_widget.currentWidget(), window.test_config_page)
         self.assertEqual(window.mode_badge.text(), "有驱放测试")
         self.assertIs(window.workspace_binding.driver_mode(), True)
         self.assertTrue(window.test_config_page.test_mode_enabled)
@@ -368,6 +369,243 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
                 "driver_mapping"
             )
         )
+        self.assertIsNone(window.coordinator.prepared_run)
+        self.assertIsNone(window.coordinator.background_run)
+
+    def test_loading_a_snapshot_restores_the_rack_layout_and_back_navigation(self):
+        """加载配置后，测试配置 → 电源配置 → 仪器排布都能回退且位置不丢。"""
+        self._silence_dialogs()
+        snapshot = FileConfigurationSnapshotRepository(paths=self.paths).save(
+            "带排布的配置",
+            _fully_valid_gui_config(driver_enabled=True),
+            rack_slots={"DP8B1519": 4},
+        )
+        window = self._window()
+
+        with patch(
+            "presentation.qt.configuration_snapshot_actions.choose_configuration_snapshot",
+            return_value=snapshot,
+        ):
+            window.welcome_page.load_config_requested.emit()
+        self.app.processEvents()
+
+        self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
+        self.assertFalse(window.power_page.back_btn.isHidden())
+        self.assertEqual(window.power_page.rack_slots(), {"DP8B1519": 4})
+        self.assertEqual(window.rack_page.slot_assignments(), {"DP8B1519": 4})
+        self.assertTrue(window.rack_page.next_btn.isEnabled())
+
+        window.test_config_page.previous_step_btn.click()
+        self.app.processEvents()
+        self.assertIs(window.view_stack.currentWidget(), window.power_page)
+
+        window.power_page.back_btn.click()
+        self.app.processEvents()
+        self.assertIs(window.view_stack.currentWidget(), window.rack_page)
+        self.assertEqual(window.rack_page.slot_assignments(), {"DP8B1519": 4})
+
+        window.rack_page.back_btn.click()
+        window.rack_page.finish_transition()
+        self.app.processEvents()
+        self.assertIs(window.view_stack.currentWidget(), window.connection_page)
+
+    def test_loading_an_old_snapshot_without_layout_fills_default_positions(self):
+        """旧快照没有排布元数据：按配置顺序补位，仍可回退并保存。"""
+        self._silence_dialogs()
+        snapshot = FileConfigurationSnapshotRepository(paths=self.paths).save(
+            "旧配置", _fully_valid_gui_config()
+        )
+        window = self._window()
+
+        with patch(
+            "presentation.qt.configuration_snapshot_actions.choose_configuration_snapshot",
+            return_value=snapshot,
+        ):
+            window.welcome_page.load_config_requested.emit()
+        self.app.processEvents()
+
+        self.assertEqual(window.power_page.rack_slots(), {"DP8B1519": 0})
+        self.assertEqual(window.rack_page.slot_assignments(), {"DP8B1519": 0})
+        self.assertFalse(window.power_page.back_btn.isHidden())
+
+    def test_forward_from_instrument_setup_keeps_the_loaded_power_values(self):
+        """加载后回到仪表配置页重新扫描：继续前进不能把已加载的电源参数重置。"""
+        self._silence_dialogs()
+        snapshot = FileConfigurationSnapshotRepository(paths=self.paths).save(
+            "带排布的配置",
+            _fully_valid_gui_config(),
+            rack_slots={"DP8B1519": 4},
+        )
+        window = self._window()
+        with patch(
+            "presentation.qt.configuration_snapshot_actions.choose_configuration_snapshot",
+            return_value=snapshot,
+        ):
+            window.welcome_page.load_config_requested.emit()
+        self.app.processEvents()
+
+        # 按真实向导退到仪表配置页：测试配置 → 电源配置 → 仪器排布 → 仪表配置。
+        window.test_config_page.previous_step_btn.click()
+        window.power_page.back_btn.click()
+        window.rack_page.back_btn.click()
+        window.rack_page.finish_transition()
+        self.app.processEvents()
+        self.assertIs(window.view_stack.currentWidget(), window.connection_page)
+
+        from infrastructure.discovery.instrument_discovery import (
+            SCAN_MODE_SIMULATED,
+            build_scanner,
+        )
+        from infrastructure.discovery.simulated_network import demo_idn_responses
+        from infrastructure.persistence.instrument_registry import InstrumentRegistry
+
+        # 使用与加载配置一致的设备表：信号源、频谱仪和带 DP8B1519 短标签的电源。
+        registry = InstrumentRegistry(
+            document={
+                "schema_version": 4,
+                "instruments": [
+                    {
+                        "vendor": "Rohde&Schwarz",
+                        "model": "SMW200A",
+                        "full_code": "105462",
+                        "label": "5462",
+                        "role": "signal_generator",
+                        "status": "online",
+                        "known_ips": [],
+                    },
+                    {
+                        "vendor": "Ceyear Technologies",
+                        "model": "4082F",
+                        "full_code": "QZNI000866",
+                        "label": "QZNI0866",
+                        "role": "spectrum_analyzer",
+                        "status": "online",
+                        "known_ips": [],
+                    },
+                    {
+                        "vendor": "RIGOL TECHNOLOGIES",
+                        "model": "DP832A",
+                        "full_code": "DP8B214901519",
+                        "label": "DP8B1519",
+                        "role": "power_supply",
+                        "status": "online",
+                        "known_ips": [],
+                    },
+                ],
+            }
+        )
+        panel = window.connection_page.discovery_panel
+        panel.scanner_factory = lambda _mode: build_scanner(
+            registry=registry,
+            mode=SCAN_MODE_SIMULATED,
+            responses=demo_idn_responses(),
+            timeout_s=0.02,
+        )
+        panel.request_scan()
+        self.assertIsNotNone(panel.worker)
+        panel.worker.wait(5000)
+        self.app.processEvents()
+        self.app.processEvents()
+        self.assertIsNone(panel.worker)
+        panel.wait_stack.finish_cycle()
+        self.app.processEvents()
+        self.app.processEvents()
+        if panel.deal_animation.is_running():
+            panel.deal_animation.finish()
+            self.app.processEvents()
+        for card in panel.cards():
+            if card.checkable:
+                panel.set_card_checked(card.data.heading, True)
+        self.app.processEvents()
+
+        window.connection_page.request_next()
+        self.app.processEvents()
+        self.assertIs(window.view_stack.currentWidget(), window.rack_page)
+        self.assertEqual(window.rack_page.slot_assignments(), {"DP8B1519": 4})
+
+        window.rack_page.finish_transition()
+        window.rack_page.next_btn.click()
+        window.rack_page.finish_transition()
+        self.app.processEvents()
+        self.assertIs(window.view_stack.currentWidget(), window.power_page)
+        channels = window.power_page.build_config()["instruments"]["power_supplies"][
+            "DP8B1519"
+        ]["channels"]
+        self.assertEqual(channels["CH1"]["voltage"]["value"], 2.8)
+        self.assertEqual(channels["CH2"]["voltage"]["value"], 28.0)
+
+    def test_loaded_rack_layout_survives_reentering_the_rack_page(self):
+        """从仪表配置页重新进入排布页时，本次会话记住的格位要重新应用。"""
+        self._silence_dialogs()
+        snapshot = FileConfigurationSnapshotRepository(paths=self.paths).save(
+            "带排布的配置",
+            _fully_valid_gui_config(),
+            rack_slots={"DP8B1519": 6},
+        )
+        window = self._window()
+        with patch(
+            "presentation.qt.configuration_snapshot_actions.choose_configuration_snapshot",
+            return_value=snapshot,
+        ):
+            window.welcome_page.load_config_requested.emit()
+        self.app.processEvents()
+
+        from presentation.qt.rack_overview_page import RackOverviewPage
+
+        window.rack_page.enter(
+            RackOverviewPage.entries_from_configuration(window.coordinator.config),
+            driver_enabled=window._current_driver_mode(),
+        )
+        self.assertEqual(window.rack_page.slot_assignments(), {})
+        window._restore_loaded_rack_layout()
+        self.assertEqual(window.rack_page.slot_assignments(), {"DP8B1519": 6})
+        window.rack_page.finish_transition()
+
+    def test_saving_writes_the_current_rack_layout_into_snapshot_metadata(self):
+        self._silence_dialogs()
+        window = self._window()
+        window.power_page.set_rack_slots({"DP8B1519": 6})
+
+        window.save_config()
+
+        snapshot = FileConfigurationSnapshotRepository(paths=self.paths).list()[0]
+        self.assertEqual(snapshot.rack_slots, {"DP8B1519": 6})
+        self.assertNotIn(
+            "rack_slots",
+            json.loads(snapshot.configuration_path.read_text(encoding="utf-8")),
+            "排布不能写进正式配置文档",
+        )
+
+    def test_cancelled_welcome_snapshot_selection_stays_on_welcome(self):
+        self._silence_dialogs()
+        window = self._window()
+
+        with patch(
+            "presentation.qt.configuration_snapshot_actions.choose_configuration_snapshot",
+            return_value=None,
+        ):
+            window.welcome_page.load_config_requested.emit()
+        self.app.processEvents()
+
+        self.assertIs(window.view_stack.currentWidget(), window.welcome_page)
+
+    def test_failed_welcome_snapshot_load_stays_on_welcome(self):
+        self._silence_dialogs()
+        snapshot = FileConfigurationSnapshotRepository(paths=self.paths).save(
+            "坏配置", _fully_valid_gui_config()
+        )
+        window = self._window()
+        with patch.object(
+            window.coordinator, "load_named_configuration", return_value=False
+        ):
+            with patch(
+                "presentation.qt.configuration_snapshot_actions.choose_configuration_snapshot",
+                return_value=snapshot,
+            ):
+                window.welcome_page.load_config_requested.emit()
+        self.app.processEvents()
+
+        self.assertIs(window.view_stack.currentWidget(), window.welcome_page)
 
     def test_saving_a_changed_config_leaves_the_connected_session_untouched(self):
         self._silence_dialogs()

@@ -149,6 +149,9 @@ class MainWindow(ConfigurationSnapshotActions, QMainWindow):
         self.view_stack = QStackedWidget()
         self.welcome_page = WelcomePage()
         self.welcome_page.mode_selected.connect(self._enter_test_mode)
+        self.welcome_page.load_config_requested.connect(
+            self.load_configuration_from_welcome
+        )
         self.view_stack.addWidget(self.welcome_page)
 
         # 常驻外壳接管测量区外观：标签页降为内容宿主，注册与生命周期都不变。
@@ -248,6 +251,9 @@ class MainWindow(ConfigurationSnapshotActions, QMainWindow):
         self.configuration_editor.set_read_only(read_only_reason)
         if read_only_reason:
             self.add_log_message(f"配置只读: {read_only_reason}")
+        # 正常流程会经过仪器排布；每次从欢迎页进入都保证电源页“上一步”可用。
+        self.power_page.back_btn.setVisible(True)
+        self._clear_loaded_rack_layout()
         self.workspace_binding.start_session(driver_enabled)
         self.tab_widget.setCurrentIndex(0)
         self.coordinator.begin_device_selection()
@@ -262,6 +268,7 @@ class MainWindow(ConfigurationSnapshotActions, QMainWindow):
         self.view_stack.setCurrentWidget(self.rack_page)
         entries = RackOverviewPage.entries_from_cards(cards)
         self.rack_page.enter(entries, driver_enabled=self._current_driver_mode())
+        self._restore_loaded_rack_layout()
 
     def _open_test_configuration_page(self) -> None:
         """排布完成：进整屏电源配置页，把排布页的电源卡片展开成通道卡片。"""
@@ -269,6 +276,7 @@ class MainWindow(ConfigurationSnapshotActions, QMainWindow):
         # 新测试会话的第一次进入从电源初始值开始；本次会话内返回再进入保留已填参数。
         self.power_page.enter()
         self.power_page.set_rack_slots(self.rack_page.slot_assignments())
+        self._remember_rack_layout()
         self.view_stack.setCurrentWidget(self.power_page)
         self._sync_status_panel_visibility()
         self._sync_finalize_entry()
@@ -323,6 +331,7 @@ class MainWindow(ConfigurationSnapshotActions, QMainWindow):
         self.connection_page.discovery_panel.clear_results()
         if self.coordinator.abandon_current_session():
             self.workspace_binding.reset_identity()
+            self._clear_loaded_rack_layout()
             self.view_stack.setCurrentWidget(self.welcome_page)
 
     def _register_pages(self):
@@ -430,7 +439,6 @@ class MainWindow(ConfigurationSnapshotActions, QMainWindow):
         tab = TestConfigurationPage(self.config, self)
         tab.save_requested.connect(self.save_config)
         tab.finalize_run_requested.connect(self._finalize_run)
-        tab.load_config_requested.connect(self._load_configuration_snapshot)
         tab.power_step_requested.connect(self._return_to_power_configuration)
         tab.validation_failed.connect(
             lambda message: self.add_log_message(f"配置校验失败: {message}")

@@ -1122,6 +1122,17 @@ class ConfigurationSnapshotCoordinatorTests(unittest.TestCase):
             "功放测试", coordinator.config
         )
 
+    def test_save_named_configuration_forwards_the_rack_layout_metadata(self):
+        coordinator = self._snapshot_coordinator()
+
+        coordinator.save_named_configuration(
+            "功放测试", rack_slots={"DP8B1519": 4}
+        )
+
+        coordinator.configuration_snapshots.save.assert_called_once_with(
+            "功放测试", coordinator.config, rack_slots={"DP8B1519": 4}
+        )
+
     def test_save_named_configuration_rejects_an_invalid_name_before_writing(self):
         coordinator = self._snapshot_coordinator()
 

@@ -452,6 +452,30 @@ QLabel#welcomeSubtitle {
     color: #E8F1FF;
     padding: 0 18px;
 }
+/* 模式按钮下方的“加载配置”：透明底、白色、下划线小字。字号由
+   ``welcome_page.WelcomePage`` 随窗口缩放写进控件样式表；下划线同时由 QFont
+   设置，避免不同 Qt 版本对 ``text-decoration`` 的支持差异。 */
+QPushButton#welcomeLoadConfig {
+    background: transparent;
+    border: none;
+    color: #FFFFFF;
+    font-weight: 500;
+    text-decoration: underline;
+    min-height: 0px;
+    padding: 0px;
+}
+QPushButton#welcomeLoadConfig:hover {
+    background: transparent;
+    border: none;
+    color: #E8F1FF;
+    text-decoration: underline;
+}
+QPushButton#welcomeLoadConfig:pressed {
+    background: transparent;
+    border: none;
+    color: #D6E6FF;
+    text-decoration: underline;
+}
 /* 模式按钮（#welcomeChoice）在这里没有规则：它由 ``welcome_page.ModeChoiceButton``
    自绘，悬停时一块圆形色块从左侧涌入并放大、箭头同时旋转。伪元素、``transition`` 与
    ``transform`` 都不在 QSS 的能力里，整块画下来才做得出来；用到的颜色仍取自 TOKENS。 */

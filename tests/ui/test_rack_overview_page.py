@@ -152,6 +152,75 @@ class RackOverviewPageTests(unittest.TestCase):
         self.assertEqual(page.slot_assignments(), {})
         self.assertFalse(page.next_btn.isEnabled())
 
+    def test_animated_enter_can_be_skipped_for_a_loaded_configuration(self):
+        page = RackOverviewPage()
+        page.resize(1180, 760)
+        page.show()
+        self.addCleanup(page.close)
+        self.addCleanup(page.deleteLater)
+
+        page.enter(_entries(), animate=False)
+
+        self.assertFalse(page.transition_running())
+        self.assertFalse(page.next_btn.isEnabled(), "电源还没恢复格位")
+        page.set_slot_assignments({"DP8B1519": 4, "DP8B0885": 7})
+        self.assertTrue(page.next_btn.isEnabled())
+
+    def test_set_slot_assignments_filters_unknown_and_invalid_entries(self):
+        page = self._page()
+        page.finish_transition()
+
+        page.set_slot_assignments(
+            {
+                "UNKNOWN": 0,
+                "DP8B1519": 99,
+                "DP8B0885": 3,
+            }
+        )
+
+        self.assertEqual(page.slot_assignments(), {"DP8B0885": 3})
+        self.assertFalse(page.next_btn.isEnabled())
+
+        page.set_slot_assignments({"DP8B1519": 2, "DP8B0885": 2})
+        self.assertEqual(
+            page.slot_assignments(),
+            {"DP8B1519": 2},
+            "同一格位只能留给第一台电源",
+        )
+
+    def test_configuration_entries_rebuild_the_same_instrument_roles(self):
+        config = {
+            "instruments": {
+                "signal_generator": {"model": "SMW200A", "address": "sim::sg"},
+                "spectrum_analyzer": {"model": "4082F", "address": "sim::sa"},
+                "power_supplies": {
+                    "PS1": {"model": "DP832A", "address": "sim::ps1"},
+                    "PS2": {"model": "DP832A", "address": "sim::ps2"},
+                },
+            },
+            "device_bindings": {
+                "signal_generator": {"visa_address": "sim::sg", "source": "scan"},
+                "spectrum_analyzer": {"visa_address": "sim::sa", "source": "scan"},
+                "power_supplies": {
+                    "PS1": {"visa_address": "sim::ps1", "source": "scan"},
+                    "PS2": {"visa_address": "sim::ps2", "source": "scan"},
+                },
+            },
+        }
+
+        entries = RackOverviewPage.entries_from_configuration(config)
+
+        self.assertEqual(
+            [entry.role_key for entry in entries],
+            ["signal_generator", "spectrum_analyzer", "power_supply", "power_supply"],
+        )
+        self.assertEqual(
+            [entry.code for entry in entries[2:]],
+            ["PS1", "PS2"],
+            "电源条目的 code 必须是配置里的 supply_id，九宫格映射才不丢",
+        )
+        self.assertTrue(all(not entry.front.isNull() for entry in entries))
+
     def test_next_emits_only_when_the_button_is_ready(self):
         page = self._page()
         emitted = []

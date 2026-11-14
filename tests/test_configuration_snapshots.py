@@ -196,3 +196,52 @@ class ConfigurationSnapshotRepositoryTests(unittest.TestCase):
     def test_missing_root_lists_nothing(self):
         self.assertEqual(self.repository.list(), ())
         self.assertFalse(self.root.exists())
+
+    def test_rack_slots_are_saved_in_metadata_not_in_the_configuration(self):
+        snapshot = self.repository.save(
+            "功放测试",
+            self._document(),
+            rack_slots={"DP8B1519": 4},
+        )
+
+        metadata = json.loads(snapshot.metadata_path.read_text(encoding="utf-8"))
+        self.assertEqual(metadata["rack_slots"], {"DP8B1519": 4})
+        self.assertEqual(snapshot.rack_slots, {"DP8B1519": 4})
+        self.assertEqual(
+            json.loads(snapshot.configuration_path.read_text(encoding="utf-8")),
+            self._document(),
+            "排布只进元数据，不能污染正式配置文档",
+        )
+        self.assertEqual(self.repository.list()[0].rack_slots, {"DP8B1519": 4})
+
+    def test_overwriting_without_rack_slots_clears_the_old_layout(self):
+        self.repository.save("功放测试", self._document(), rack_slots={"PS1": 2})
+
+        second = self.repository.save("功放测试", self._document(3.5))
+
+        metadata = json.loads(second.metadata_path.read_text(encoding="utf-8"))
+        self.assertNotIn("rack_slots", metadata)
+        self.assertIsNone(second.rack_slots)
+        self.assertIsNone(self.repository.list()[0].rack_slots)
+
+    def test_invalid_rack_slots_do_not_make_the_snapshot_unloadable(self):
+        snapshot = self.repository.save(
+            "功放测试",
+            self._document(),
+            rack_slots={"PS1": 99, "PS2": "bad", "": 1, "PS3": True},
+        )
+
+        self.assertIsNone(snapshot.rack_slots)
+        self.assertEqual(
+            self.repository.load(snapshot.configuration_path), self._document()
+        )
+
+    def test_hand_edited_metadata_layout_is_sanitized_on_list(self):
+        snapshot = self.repository.save("功放测试", self._document())
+        metadata = json.loads(snapshot.metadata_path.read_text(encoding="utf-8"))
+        metadata["rack_slots"] = {"PS1": 3, "PS2": -1, "PS3": "bad", "": 0}
+        snapshot.metadata_path.write_text(
+            json.dumps(metadata, ensure_ascii=False), encoding="utf-8"
+        )
+
+        self.assertEqual(self.repository.list()[0].rack_slots, {"PS1": 3})

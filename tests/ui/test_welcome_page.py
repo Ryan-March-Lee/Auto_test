@@ -62,6 +62,29 @@ class WelcomePageModeButtonTests(unittest.TestCase):
         buttons[1].click()
         self.assertEqual(choices, [False, True])
 
+    def test_load_configuration_link_sits_below_the_mode_buttons(self):
+        """加载配置是按钮下一行居中的白色下划线小字，点击只发出加载意图。"""
+        page, buttons = _page()
+        link = page._load_link
+
+        self.assertEqual(link.text(), "加载配置")
+        self.assertTrue(link.font().underline(), "加载配置应显示下划线")
+        self.assertLess(
+            link.font().pointSizeF(),
+            page._subtitle.font().pointSizeF(),
+            "加载配置应比副标题更小",
+        )
+        self.assertGreater(
+            link.geometry().top(),
+            buttons[0].geometry().bottom(),
+            "加载配置应位于两个模式按钮的下一行",
+        )
+
+        requests = []
+        page.load_config_requested.connect(lambda: requests.append(True))
+        link.click()
+        self.assertEqual(requests, [True])
+
     def test_hover_sweeps_the_fill_in_and_back_out(self):
         _, buttons = _page()
         button = buttons[0]

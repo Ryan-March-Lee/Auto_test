@@ -1193,6 +1193,9 @@ class ConfigurationPageTests(unittest.TestCase):
         # 配置流程内不提供返回欢迎页：按钮与页面信号都已删除，返回入口只在仪表配置页。
         self.assertFalse(hasattr(page, "return_welcome_btn"))
         self.assertFalse(hasattr(page, "return_welcome_requested"))
+        # 加载配置已移到欢迎页；本页不再提供按钮或信号。
+        self.assertFalse(hasattr(page, "load_config_btn"))
+        self.assertFalse(hasattr(page, "load_config_requested"))
         # 旧连接入口（按钮、信号、请求方法）都已删除；连接只由最终按钮发起。
         self.assertFalse(hasattr(page, "connect_btn"))
         self.assertFalse(hasattr(page, "connect_requested"))

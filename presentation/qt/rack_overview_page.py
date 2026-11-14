@@ -8,9 +8,11 @@
 - 中间的线缆、箭头、九宫格与功放示意作为一个整体从页面下方滑入。
 
 动画约 700 ms，点击示意图可立即结束。九宫格是现场电源架的 3×3 摆位：把每台
-电源拖到与实际一致的格子里，全部放好后“下一步”才可用。格位只属于本页，不写入配置、
+电源拖到与实际一致的格子里，全部放好后“下一步”才可用。格位不写入正式配置文档，
 也不改变“电源配置”页的卡片顺序——它只帮助操作者在进入电源参数前把软件画面与现场
-对上。拖到已占用的格子会交换两台电源；拖回顶部托盘会把电源从格子里取出。
+对上；保存命名配置快照时，格位作为界面恢复信息写进快照的 ``metadata.json``，加载
+时由窗口重建本页并把同一份格位交给电源配置页。拖到已占用的格子会交换两台电源；
+拖回顶部托盘会把电源从格子里取出。
 
 点“下一步”时，本页先把除电源卡片以外的内容淡出，再把卡片的屏幕位置交给电源配置页；
 那边由 :class:`presentation.qt.power_card_morph.PowerCardMorphOverlay` 把卡片展开成
@@ -25,7 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 from PySide6.QtCore import (
     QEasingCurve,
@@ -63,12 +65,20 @@ from PySide6.QtWidgets import (
 from domain.instruments.models import POWER_SUPPLY_ROLE
 
 from .card_assets import render_card_front
+from .config_form_bindings import (
+    binding_address,
+    effective_device_bindings,
+    power_supply_bindings,
+)
 from .device_cards import (
     CARD_HEIGHT,
     CARD_WIDTH,
     InstrumentCardData,
     card_row_plan,
+    instrument_picture_path,
 )
+from .instrument_discovery_panel import role_label
+from .rack_layout import configured_power_supply_ids
 from .theme import (
     CARD_RADIUS,
     PAGE_CONTENT_MAX_WIDTH,
@@ -313,6 +323,11 @@ def _draw_pixmap(painter: QPainter, pixmap: QPixmap, target: QRectF) -> None:
     painter.restore()
 
 
+def _text(value: Any) -> str:
+    """把配置或绑定记录里的可显示字段收成去空白文本。"""
+    return value.strip() if isinstance(value, str) else ""
+
+
 @dataclass(frozen=True)
 class RackCardEntry:
     """一张要进入本页的仪器卡片：角色、缩写设备码、正面位图与动画起点。
@@ -423,8 +438,12 @@ class _RackBoard(QWidget):
         entries: Iterable[RackCardEntry],
         *,
         driver_enabled: bool = True,
+        animate: bool = True,
     ) -> None:
-        """接收本次勾选的卡片并播放一次入场变形；每次进入都从托盘重新摆起。
+        """接收本次卡片的入口条目；默认播放一次入场变形。
+
+        ``animate=False`` 用于从加载配置重建：卡片没有真实的屏幕起点，直接呈现
+        最终版面，不播放从仪表配置页飞入的动画。
 
         ``driver_enabled`` 来自欢迎页选择的测试模式：无驱放测试没有驱动功放，
         链路里只画一台主功放（DUT），信号源与频谱仪之间不再出现 Driver。
@@ -452,7 +471,7 @@ class _RackBoard(QWidget):
         self._exit_tile_rects.clear()
         self._configure_animation(1)
         self._progress = 0.0
-        self._running = bool(self._entries)
+        self._running = bool(self._entries) and bool(animate)
         if self._running:
             self._animation.start()
         else:
@@ -597,6 +616,35 @@ class _RackBoard(QWidget):
     def slot_assignments(self) -> dict[str, int]:
         """``supply_id -> 格位下标`` 的只读副本（只在本页内有效）。"""
         return dict(self._slot_of)
+
+    def set_slot_assignments(self, assignments: Mapping[str, int] | None) -> None:
+        """一次性写回格位；用于加载配置和从设备选择页返回。
+
+        只接受本页电源与合法且不重复的格位；未给出的电源留在托盘里。调用方通常
+        已经用 :func:`presentation.qt.rack_layout.normalize_rack_slots` 补过位。
+        """
+        cleaned: dict[str, int] = {}
+        used: set[int] = set()
+        if isinstance(assignments, Mapping):
+            for raw_id, raw_index in assignments.items():
+                supply_id = str(raw_id or "").strip()
+                if (
+                    not supply_id
+                    or supply_id not in self._power_ids
+                    or supply_id in cleaned
+                    or isinstance(raw_index, bool)
+                ):
+                    continue
+                try:
+                    index = int(raw_index)
+                except (TypeError, ValueError):
+                    continue
+                if 0 <= index < _SLOT_COUNT and index not in used:
+                    cleaned[supply_id] = index
+                    used.add(index)
+        self._slot_of = cleaned
+        self._notify_state()
+        self.update()
 
     def placed_count(self) -> int:
         return len(self._slot_of)
@@ -1528,10 +1576,13 @@ class RackOverviewPage(QWidget):
         entries: Iterable[RackCardEntry],
         *,
         driver_enabled: bool = True,
+        animate: bool = True,
     ) -> None:
-        """按本次勾选的卡片重建页面并播放一次入场动画。
+        """按本次卡片重建页面；默认播放一次入场动画。
 
-        ``driver_enabled`` 是欢迎页选择的测试模式：无驱放测试的链路里不画 Driver。
+        ``animate=False`` 用于从加载配置重建：直接呈现最终版面，卡片没有可用的
+        屏幕起点。``driver_enabled`` 是当前配置会话的测试模式：无驱放测试的链路
+        里不画 Driver。
         """
         self._sync_board_geometry()
         self._back_pending = False
@@ -1541,7 +1592,7 @@ class RackOverviewPage(QWidget):
         self._header_pending = False
         self._header_animation.stop()
         self._set_header_opacity(0.0)
-        self.board.enter(entries, driver_enabled=driver_enabled)
+        self.board.enter(entries, driver_enabled=driver_enabled, animate=animate)
         if self.board.transition_running():
             # 卡片还在飞：标题行留到动画结束（见 :meth:`_sync_header_visibility`）。
             self._header_pending = True
@@ -1590,6 +1641,10 @@ class RackOverviewPage(QWidget):
 
     def slot_assignments(self) -> dict[str, int]:
         return self.board.slot_assignments()
+
+    def set_slot_assignments(self, assignments: Mapping[str, int] | None) -> None:
+        """一次性恢复九宫格格位；未给出的电源留在托盘。"""
+        self.board.set_slot_assignments(assignments)
 
     def place_supply(self, supply_id: str, slot_index: int) -> None:
         self.board.place_supply(supply_id, slot_index)
@@ -1769,3 +1824,90 @@ class RackOverviewPage(QWidget):
                 )
             )
         return entries
+
+    @classmethod
+    def entries_from_configuration(cls, config: Any) -> list[RackCardEntry]:
+        """从一份配置重建本页卡片，供欢迎页加载配置后直接回退查看。
+
+        设备发现页的卡片来自一次真实扫描；加载配置时没有扫描结果，但配置里的设备
+        绑定与旧 ``instruments`` 条目足以画出同样的仪器身份。这里按配置顺序生成
+        条目，卡片没有屏幕起点，因此调用方必须用 ``animate=False`` 进入本页。
+        """
+        if not isinstance(config, Mapping):
+            return []
+        bindings = effective_device_bindings(config)
+        instruments = config.get("instruments")
+        instruments = instruments if isinstance(instruments, Mapping) else {}
+        entries: list[RackCardEntry] = []
+        for role_key in ("signal_generator", "spectrum_analyzer"):
+            record = bindings.get(role_key) if isinstance(bindings, Mapping) else None
+            record = record if isinstance(record, Mapping) else {}
+            instrument = instruments.get(role_key)
+            instrument = instrument if isinstance(instrument, Mapping) else {}
+            entry = cls._entry_from_records(role_key, record, instrument)
+            if entry is not None:
+                entries.append(entry)
+
+        records = power_supply_bindings(bindings) if isinstance(bindings, Mapping) else {}
+        supplies = instruments.get("power_supplies")
+        supplies = supplies if isinstance(supplies, Mapping) else {}
+        for supply_id in configured_power_supply_ids(config):
+            record = records.get(supply_id)
+            record = record if isinstance(record, Mapping) else {}
+            instrument = supplies.get(supply_id)
+            instrument = instrument if isinstance(instrument, Mapping) else {}
+            entry = cls._entry_from_records(
+                POWER_SUPPLY_ROLE, record, instrument, supply_id=supply_id
+            )
+            if entry is not None:
+                entries.append(entry)
+        return entries
+
+    @classmethod
+    def _entry_from_records(
+        cls,
+        role_key: str,
+        record: Mapping[str, Any],
+        instrument: Mapping[str, Any],
+        *,
+        supply_id: str | None = None,
+    ) -> RackCardEntry | None:
+        """把一条绑定记录与对应的旧 instruments 条目合成一张卡片条目。"""
+        model = _text(record.get("model")) or _text(instrument.get("model"))
+        label = _text(record.get("label")) or _text(instrument.get("label"))
+        full_code = _text(record.get("full_code")) or _text(instrument.get("full_code"))
+        address = binding_address(record) or _text(record.get("last_ip"))
+        if not address:
+            address = _text(instrument.get("address"))
+        code = supply_id or label or full_code or model
+        if not code and not model and not address:
+            return None
+        power = role_key == POWER_SUPPLY_ROLE
+        data = InstrumentCardData(
+            heading=code or role_label(role_key),
+            code=code,
+            model=model,
+            role=role_label(role_key),
+            role_key=role_key,
+            address=address,
+            checked=True,
+            picture_path=instrument_picture_path(
+                POWER_SUPPLY_ROLE if power else role_key, model
+            ),
+        )
+        selected = replace(data, checked=True)
+        front = render_card_front(
+            selected,
+            width=CARD_WIDTH,
+            height=CARD_HEIGHT,
+            device_pixel_ratio=1.0,
+            include_code=not power,
+        )
+        code_row = card_row_plan(selected, CARD_WIDTH, CARD_HEIGHT).code if power else None
+        return RackCardEntry(
+            role_key=role_key,
+            code=code,
+            front=front,
+            start_rect_global=QRect(),
+            code_row=code_row,
+        )

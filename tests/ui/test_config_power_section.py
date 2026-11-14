@@ -287,7 +287,6 @@ class PowerSectionOwnershipTests(unittest.TestCase):
         for signal in (
             "save_requested",
             "finalize_run_requested",
-            "load_config_requested",
             "validation_failed",
         ):
             self.assertIn(signal, signals)

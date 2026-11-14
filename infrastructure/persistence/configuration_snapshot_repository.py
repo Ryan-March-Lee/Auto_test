@@ -6,8 +6,9 @@
     test_results/configurations/<名称>_<YYYYMMDD_HHMM>/metadata.json
 
 同一用户名称再次保存时，查找已有快照并**整代替换**其中的配置文件与元数据；新名称
-才创建新的带时间后缀目录。``metadata.json`` 只保存展示和审计信息，不承载正式配置
-字段，因此配置文件仍可直接交给现有配置加载器。
+才创建新的带时间后缀目录。``metadata.json`` 只保存展示、审计与界面恢复信息，不承载
+正式配置字段，因此配置文件仍可直接交给现有配置加载器。仪器排布页的九宫格格位以
+``rack_slots`` 单独记录在这里，不进入正式配置文档。
 
 一致性与失败语义：
 
@@ -45,6 +46,8 @@ logger = logging.getLogger(__name__)
 
 _METADATA_FILENAME = "metadata.json"
 _METADATA_SCHEMA = "auto_test.configuration_snapshot/1"
+#: 与仪器排布页的 3×3 九宫格一致；元数据只接受这个范围内的格位下标。
+_RACK_SLOT_COUNT = 9
 #: 暂存/备份目录名：``.<目标目录名>.staging-<uuid>``。点前缀让用户目录列表不把它
 #: 当成快照；UUID 后缀用于精确识别进程中断留下的目录。
 _TRANSIENT_DIRECTORY = re.compile(
@@ -69,6 +72,28 @@ def _folder_moment(now: datetime | None) -> datetime:
     return now or datetime.now().astimezone()
 
 
+def _clean_rack_slots(value: Any) -> dict[str, int]:
+    """清洗九宫格排布元数据：只保留合法电源键与 0..8 的整数格位。
+
+    排布是界面恢复信息，坏数据不能让整份快照不可加载；清洗后为空就当作没有保存
+    过排布，界面会按配置顺序补位。
+    """
+    if not isinstance(value, Mapping):
+        return {}
+    cleaned: dict[str, int] = {}
+    for raw_key, raw_index in value.items():
+        key = str(raw_key or "").strip()
+        if not key or key in cleaned or isinstance(raw_index, bool):
+            continue
+        try:
+            index = int(raw_index)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= index < _RACK_SLOT_COUNT:
+            cleaned[key] = index
+    return cleaned
+
+
 class FileConfigurationSnapshotRepository:
     """把用户命名配置保存到独立目录的适配器。"""
 
@@ -91,11 +116,13 @@ class FileConfigurationSnapshotRepository:
         display_name: str,
         configuration: Mapping[str, Any],
         *,
+        rack_slots: Mapping[str, int] | None = None,
         now: datetime | None = None,
     ) -> ConfigurationSnapshot:
         name = validate_configuration_name(display_name)
         if not isinstance(configuration, Mapping):
             raise ValueError("配置快照必须是对象")
+        layout = _clean_rack_slots(rack_slots)
 
         with _SAVE_LOCK:
             self._recover_interrupted_commits()
@@ -113,15 +140,15 @@ class FileConfigurationSnapshotRepository:
             staging.mkdir(parents=True, exist_ok=False)
             try:
                 write_json_atomic(staging / configuration_path.name, configuration)
-                write_json_atomic(
-                    staging / _METADATA_FILENAME,
-                    {
-                        "schema": _METADATA_SCHEMA,
-                        "display_name": name,
-                        "configuration_file": configuration_path.name,
-                        "saved_at": saved_at,
-                    },
-                )
+                metadata: dict[str, Any] = {
+                    "schema": _METADATA_SCHEMA,
+                    "display_name": name,
+                    "configuration_file": configuration_path.name,
+                    "saved_at": saved_at,
+                }
+                if layout:
+                    metadata["rack_slots"] = layout
+                write_json_atomic(staging / _METADATA_FILENAME, metadata)
                 self._commit_staging(staging, directory)
             finally:
                 # 提交成功时暂存目录已被移走；失败或中断时这里保证不留下可被误读的
@@ -134,6 +161,7 @@ class FileConfigurationSnapshotRepository:
                 configuration_path=configuration_path,
                 metadata_path=metadata_path,
                 saved_at=saved_at,
+                rack_slots=layout or None,
             )
 
     def load(self, path: PathLike) -> Mapping[str, Any]:
@@ -268,12 +296,14 @@ class FileConfigurationSnapshotRepository:
                 return None
         except OSError:
             return None
+        layout = _clean_rack_slots(metadata.get("rack_slots"))
         return ConfigurationSnapshot(
             display_name=name,
             directory=directory,
             configuration_path=configuration_path,
             metadata_path=metadata_path,
             saved_at=saved_at,
+            rack_slots=layout or None,
         )
 
     def _require_configuration_path(self, path: PathLike) -> Path:

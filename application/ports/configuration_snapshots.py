@@ -17,13 +17,20 @@ from .types import PathLike
 
 @dataclass(frozen=True)
 class ConfigurationSnapshot:
-    """一份可复用配置快照的持久化位置和展示信息。"""
+    """一份可复用配置快照的持久化位置和展示信息。
+
+    ``rack_slots`` 是仪器排布页的界面恢复信息（``supply_id -> 九宫格格位``），
+    与正式配置文档分开保存：正式配置仍只由 ``configuration_path`` 指向的文件
+    表达，排布不会进入运行校验、执行上下文或配置迁移。旧快照没有这段信息时为
+    ``None``，界面按配置顺序补位。
+    """
 
     display_name: str
     directory: Path
     configuration_path: Path
     metadata_path: Path
     saved_at: str
+    rack_slots: Mapping[str, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -58,9 +65,13 @@ class ConfigurationSnapshotRepository(Protocol):
         display_name: str,
         configuration: Mapping[str, Any],
         *,
+        rack_slots: Mapping[str, int] | None = None,
         now: datetime | None = None,
     ) -> ConfigurationSnapshot:
-        """按用户名称保存；同名快照直接覆盖其配置文件。"""
+        """按用户名称保存；同名快照直接覆盖其配置文件。
+
+        ``rack_slots`` 只作为界面恢复信息随快照保存，不写进正式配置文档。
+        """
         ...
 
     def load(self, path: PathLike) -> Mapping[str, Any]:

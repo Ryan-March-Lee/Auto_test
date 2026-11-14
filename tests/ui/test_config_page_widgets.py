@@ -41,6 +41,14 @@ class BuildActionBarTests(unittest.TestCase):
 
         self.assertFalse(hasattr(page, "return_welcome_btn"))
 
+    def test_action_bar_does_not_register_the_load_configuration_entry(self):
+        """加载配置已移到欢迎页；配置页底部只保留回退与保存。"""
+        page = QWidget()
+
+        build_action_bar(page)
+
+        self.assertFalse(hasattr(page, "load_config_btn"))
+
 
 class InputFactoryTests(unittest.TestCase):
     """数值框与下拉框工厂：范围、初值与“还没有值”的语义。"""

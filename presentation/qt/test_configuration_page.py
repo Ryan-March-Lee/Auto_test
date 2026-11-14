@@ -119,7 +119,6 @@ __all__ = [
 
 class TestConfigurationPage(PageControllerBindingMixin, QWidget):
     save_requested = Signal()
-    load_config_requested = Signal()
     finalize_run_requested = Signal()
     #: 底部“上一步”：回上一级电源配置页；切页由主窗口完成，参数原地保留。
     power_step_requested = Signal()
@@ -341,7 +340,7 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         page_column.addWidget(params)
         self._build_driver_parameters(page_column)
         self._apply_driver_gain_state()
-        # 连接入口紧随测试参数，命名配置保存/加载放在页面底部固定操作栏。
+        # 连接入口紧随测试参数，命名配置保存放在页面底部固定操作栏。
         self._build_run_widgets(page_column)
         page_column.addStretch(1)
         root.addWidget(self._build_action_bar())
@@ -788,7 +787,6 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
 
     def _connect_signals(self):
         self.save_config_btn.clicked.connect(self.request_save)
-        self.load_config_btn.clicked.connect(self.load_config_requested.emit)
         self.finalize_run_btn.clicked.connect(self.request_finalize_run)
         self.previous_step_btn.clicked.connect(self.power_step_requested.emit)
         self.add_power_scan_plan_btn.clicked.connect(self.add_power_scan_plan)
@@ -889,7 +887,6 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         widgets = (
             self.finalize_run_btn,
             self.save_config_btn,
-            self.load_config_btn,
             self.previous_step_btn,
             self.test_parameters_group,
             self.driver_parameters_group,

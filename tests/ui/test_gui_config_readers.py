@@ -749,18 +749,21 @@ class CoordinatorConfigSaveTests(unittest.TestCase):
 class ConfigurationSnapshotActionTests(unittest.TestCase):
     """命名配置快照的窗口动作只负责对话框与反馈，不创建执行上下文。"""
 
+    _UNSET = object()
+
     def setUp(self):
         self.coordinator = MagicMock()
         self.coordinator.last_save_error = None
         self.coordinator.last_load_error = None
         self.messages = []
         self.saved = []
-        self.loaded = []
         self.calls = []
+        self.repository = object()
         self.snapshot = SimpleNamespace(
+            display_name="功放测试",
             configuration_path=Path(
                 "test_results/configurations/功放测试_20261114_0905/功放测试.json"
-            )
+            ),
         )
 
     def _record(self, icon, title, text):
@@ -788,21 +791,28 @@ class ConfigurationSnapshotActionTests(unittest.TestCase):
                 on_saved=lambda: self.saved.append(True),
             )
 
-    def _load(self, path):
+    def _choose(self, *, accepted=True, selected=None, repository=_UNSET):
         from presentation.qt.configuration_snapshot_actions import (
-            load_named_configuration,
+            choose_configuration_snapshot,
         )
 
+        target = self.repository if repository is self._UNSET else repository
+
+        class _Dialog:
+            def __init__(self, repo, *, log_callback, parent):
+                self.selected_snapshot = selected
+
+            def exec(self):
+                return 1 if accepted else 0
+
         with patch(
-            "presentation.qt.configuration_snapshot_actions.QFileDialog.getOpenFileName",
-            return_value=(path, ""),
+            "presentation.qt.configuration_snapshot_actions.ConfigurationSnapshotDialog",
+            _Dialog,
         ):
-            return load_named_configuration(
+            return choose_configuration_snapshot(
                 None,
-                self.coordinator,
-                directory=Path("configurations"),
+                target,
                 log=self.messages.append,
-                on_loaded=lambda: self.loaded.append(True),
             )
 
     def test_save_writes_a_named_snapshot_and_reports_its_path(self):
@@ -856,31 +866,21 @@ class ConfigurationSnapshotActionTests(unittest.TestCase):
             any("当前工作配置已保存" in message for message in self.messages)
         )
 
-    def test_load_backfills_without_reporting_a_run(self):
-        self.coordinator.load_named_configuration.return_value = True
+    def test_choosing_a_snapshot_returns_the_selected_snapshot(self):
+        self.assertIs(self._choose(selected=self.snapshot), self.snapshot)
 
-        self.assertTrue(self._load("configurations/功放测试/功放测试.json"))
+    def test_cancelled_dialog_returns_nothing(self):
+        self.assertIsNone(self._choose(accepted=False, selected=self.snapshot))
+        self.assertTrue(any("已取消加载配置" in message for message in self.messages))
 
-        self.coordinator.load_named_configuration.assert_called_once_with(
-            "configurations/功放测试/功放测试.json"
-        )
-        self.assertEqual(self.loaded, [True])
-        self.assertTrue(any("已加载配置" in message for message in self.messages))
+    def test_missing_repository_is_reported_before_opening_the_dialog(self):
+        with patch(
+            "presentation.qt.configuration_snapshot_actions.QMessageBox.warning"
+        ) as warning:
+            self.assertIsNone(self._choose(repository=None))
 
-    def test_load_failure_is_logged_and_does_not_touch_the_draft_callback(self):
-        self.coordinator.load_named_configuration.return_value = False
-        self.coordinator.last_load_error = ValueError("坏文件")
-
-        self.assertFalse(self._load("configurations/x/x.json"))
-
-        self.assertEqual(self.loaded, [])
-        self.assertTrue(any("配置加载失败" in message for message in self.messages))
-
-    def test_cancelled_file_selection_loads_nothing(self):
-        self.assertFalse(self._load(""))
-
-        self.coordinator.load_named_configuration.assert_not_called()
-        self.assertEqual(self.loaded, [])
+        warning.assert_called_once()
+        self.assertTrue(any("仓储未装配" in message for message in self.messages))
 
 
 class MainWindowConfigurationModeTests(unittest.TestCase):

@@ -38,6 +38,7 @@ __all__ = [
     "LABEL_ROLES",
     "PAGE_CONTENT_MAX_WIDTH",
     "CARD_RADIUS",
+    "SOFT_CARD_RADIUS",
     "ASSETS_DIR",
     "build_palette",
     "build_stylesheet",
@@ -58,28 +59,37 @@ __all__ = [
 #: 样式表取它写 ``border-radius``，“查找设备”自绘卡面也从这里取同一个值。
 CARD_RADIUS = 8.0
 
+#: 柔光卡片的圆角：配置页分组框与测量面共用。它比仪器卡片（:data:`CARD_RADIUS`）
+#: 更圆，只服务于“后面的配置与测量页面”，不改变设备发现卡片的形状。
+SOFT_CARD_RADIUS = 14.0
+
 TOKENS = {
     # 底色与容器
-    "canvas": "#F5F7FA",
+    "canvas": "#F4F7FD",
     "surface": "#FFFFFF",
-    "surface_sunken": "#F8FAFC",
-    "surface_alt": "#FAFBFC",
-    "border": "#E2E8F0",
-    "border_strong": "#CBD5E1",
-    "table_grid": "#F1F5F9",
-    "header_text": "#475569",
-    # 卡片圆角：仪器卡片与“查找设备”卡片共用同一个值（见 :data:`CARD_RADIUS`）。
+    "surface_tint": "#FBFDFF",
+    "surface_sunken": "#F7FAFF",
+    "surface_alt": "#FBFDFF",
+    "border": "#E4ECF8",
+    "border_strong": "#CFDDF1",
+    "table_grid": "#F0F5FC",
+    "header_text": "#5A6B84",
+    # 卡片圆角：仪器卡片与“查找设备”卡片共用同一个值（见 :data:`CARD_RADIUS`）；
+    # 配置/测量页的柔光卡片使用 :data:`SOFT_CARD_RADIUS`。
     "radius_card": f"{CARD_RADIUS:g}px",
+    "radius_soft": f"{SOFT_CARD_RADIUS:g}px",
+    "radius_control": "8px",
     # 文字
-    "text": "#1F2937",
+    "text": "#1E2A3B",
     "text_secondary": "#64748B",
     "text_muted": "#94A3B8",
-    # 主色
-    "primary": "#2563EB",
-    "primary_hover": "#1D4ED8",
-    "primary_pressed": "#1E40AF",
-    "primary_soft": "#EFF6FF",
-    "primary_soft_border": "#DBEAFE",
+    # 主色：只有一个蓝色主色，柔光页面也只从这组蓝里取色。
+    "primary": "#2F6BFF",
+    "primary_top": "#3B82F6",
+    "primary_hover": "#1F5AF0",
+    "primary_pressed": "#1746C9",
+    "primary_soft": "#EAF2FF",
+    "primary_soft_border": "#D7E6FF",
     # 强调填充色：欢迎页模式按钮悬停时从左侧涌入的圆形色块（emerald-500）。
     "accent": "#10B981",
     "accent_pressed": "#047857",
@@ -112,34 +122,38 @@ TOKENS = {
     "danger_pressed": "#991B1B",
     "danger_soft": "#FEF2F2",
     # 图表曲线（实时图与历史图共用同一组序列色）
-    "series_1": "#2563EB",
+    "series_1": "#2F6BFF",
     "series_2": "#16A34A",
     "series_3": "#D97706",
     "series_4": "#7C3AED",
     # 测量读数条：结果面顶部的一条深色玻璃带。它借用电源通道滚筒的深色语言，
     # 但只占一条带，不把整页变暗；读数条上的文字、芯片与呼吸点都从这组令牌取色。
-    "readout_body": "#161616",
-    "readout_body_bottom": "#0B0B0B",
-    "readout_border": "#2E2E2E",
+    # 柔光主题把这条带压成深海军蓝，呼吸点用天蓝，和浅蓝内容页仍属同一色系。
+    "readout_body": "#0F1B33",
+    "readout_body_bottom": "#0A1226",
+    "readout_border": "#25395C",
     "readout_text": "#F8FAFC",
-    "readout_text_muted": "#9CA3AF",
-    "readout_chip_bg": "#1C1C1C",
-    "readout_chip_border": "#2A2A2A",
-    "readout_accent": "#10B981",
+    "readout_text_muted": "#9FB0C9",
+    "readout_chip_bg": "#15233D",
+    "readout_chip_border": "#263A5A",
+    "readout_accent": "#38BDF8",
     # 自定义绘制用的网格线：只取颜色，透明度由绘制代码按屏幕像素比决定。
     "readout_grid": "#FFFFFF",
     # 结果面的 KPI 芯片：比白底卡再低一层的“读数底座”，不引入新的边框层级。
-    "kpi_chip_bg": "#F8FAFC",
-    "kpi_chip_border": "#E2E8F0",
+    "kpi_chip_bg": "#F4F8FF",
+    "kpi_chip_border": "#E1EBFA",
     # 控件表面：输入区“凹”、按钮“凸”。
     # 输入区用浅灰底 + 细边，按钮用白面 + 稍深的下边；两者因此不靠文字也能分辨。
     "button_face_top": "#FFFFFF",
-    "button_face_bottom": "#F2F5FA",
-    "button_shadow": "#BFCBDA",
+    "button_face_bottom": "#F4F9FF",
+    "button_shadow": "#D4E2F4",
+    # 卡片底部的一条极浅的“承托边”：QSS 没有 box-shadow，这条 2px 描边就是柔光
+    # 卡片唯一的阴影语言，不能再用更深/更粗的边，否则会变成硬边框。
+    "card_shadow": "#E7F0FC",
     # 禁用与悬浮提示（工具提示保留深色，与浅色界面区分开）
-    "disabled_bg": "#F1F5F9",
-    "disabled_text": "#94A3B8",
-    "scroll": "#CBD5E1",
+    "disabled_bg": "#F2F6FC",
+    "disabled_text": "#9AAAC0",
+    "scroll": "#C9D8EC",
     "tooltip_bg": "#0F172A",
     "tooltip_text": "#CBD5E1",
     "tooltip_border": "#1E293B",
@@ -411,19 +425,19 @@ QToolTip {
     background-color: $tooltip_bg;
     color: $tooltip_text;
     border: 1px solid $tooltip_border;
-    border-radius: 4px;
-    padding: 4px 8px;
+    border-radius: 10px;
+    padding: 6px 10px;
     font-size: $font_small;
 }
 QMenu {
     background-color: $surface;
     border: 1px solid $border;
-    border-radius: 8px;
-    padding: 4px;
+    border-radius: 12px;
+    padding: 5px;
 }
 QMenu::item {
-    padding: 6px 20px 6px 14px;
-    border-radius: 4px;
+    padding: 7px 20px 7px 14px;
+    border-radius: 7px;
     color: $text;
 }
 QMenu::item:selected {
@@ -440,11 +454,21 @@ QMenu::separator {
 QLabel#appModeBadge {
     background-color: $primary_soft;
     border: 1px solid $primary_soft_border;
-    border-radius: 10px;
+    border-radius: 11px;
     color: $primary_pressed;
     font-size: $font_small;
     font-weight: 600;
-    padding: 3px 10px;
+    padding: 3px 11px;
+}
+
+/* ===== 工作台顶栏 =====
+   顶栏保持原有 52px 结构与左右 16px 边距，只把画布色换成一条白色柔光带：
+   1px 冷蓝分隔线 + 极浅的竖向渐变。导航项、状态簇与“配置”都留原位，
+   阶段条的自绘指示块因此看起来像浮在白条上，而不是散在画布里。 */
+QWidget#measurementWorkspaceTopBar {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 $surface, stop:1 $surface_tint);
+    border-bottom: 1px solid $border;
 }
 
 /* 阶段条与状态簇之间的细分隔线：只做分区，不抢注意力。 */
@@ -512,7 +536,7 @@ QTabWidget#mainTabs QTabBar {
 QTabWidget#mainTabs QTabBar::tab {
     background: transparent;
     border: 1px solid transparent;
-    border-radius: 6px;
+    border-radius: 9px;
     color: $text_secondary;
     font-size: $font_body;
     margin: 0 2px;
@@ -551,31 +575,42 @@ QTabWidget#subTabs > QTabBar::tab:selected {
     color: $primary;
     font-weight: 600;
 }
-/* ===== 卡片（QGroupBox） ===== */
+/* ===== 卡片（QGroupBox） =====
+   配置页的卡片是柔光主题的主角：14px 圆角、白到极浅蓝的竖向渐变、冷蓝细边，
+   底边再加 2px 的承托色——QSS 没有 box-shadow，这条细边就是“卡片浮起”的全部
+   语言，不能再加粗。标题做成主色浅底的小胶囊，让每张卡的第一眼有落点。 */
 QGroupBox {
-    background-color: $surface;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 $surface, stop:1 $surface_tint);
     border: 1px solid $border;
-    border-radius: 8px;
+    border-bottom: 2px solid $card_shadow;
+    border-radius: $radius_soft;
     margin-top: 0;
-    padding: 32px 12px 12px 12px;
+    padding: 34px 14px 13px 14px;
     font-size: $font_body;
 }
 QGroupBox::title {
-    background: transparent;
-    color: $text;
+    background-color: $primary_soft;
+    border: 1px solid $primary_soft_border;
+    border-radius: $radius_control;
+    color: $primary_pressed;
     font-weight: 600;
     left: 12px;
-    padding: 0;
+    padding: 1px 9px;
     subcontrol-origin: padding;
     subcontrol-position: top left;
-    top: 10px;
+    top: 9px;
 }
 QGroupBox QGroupBox {
     background-color: $surface_sunken;
     border-color: $border;
-    padding: 28px 10px 10px 10px;
+    border-bottom: 1px solid $border;
+    border-radius: $radius_control;
+    padding: 30px 12px 12px 12px;
 }
 QGroupBox QGroupBox::title {
+    background-color: transparent;
+    border-color: transparent;
     color: $header_text;
     font-size: $font_small;
     left: 10px;
@@ -583,12 +618,16 @@ QGroupBox QGroupBox::title {
 }
 
 /* ===== 配置页底部操作栏 =====
-   动作条贴在页面底部：一条 1px 发丝线把它与上方可滚动内容分开，动作层级仍由按钮的
-   variant 决定（“保存配置”是次要操作，最终动作是底栏唯一的主操作）。 */
+   动作条贴在页面底部：柔光白面、14px 圆角与 1px 冷蓝边把它托起来，和上方卡片是
+   同一张纸；动作层级仍由按钮的 variant 决定（“保存配置”是次要操作，最终动作是
+   底栏唯一的主操作）。 */
 QFrame#pageActionBar {
-    background: transparent;
-    border: none;
-    border-top: 1px solid $border;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 $surface, stop:1 $surface_tint);
+    border: 1px solid $border;
+    border-bottom: 2px solid $card_shadow;
+    border-radius: $radius_soft;
+    padding: 0px 14px;
 }
 
 /* ===== 整屏页面标题 =====
@@ -727,7 +766,7 @@ QWidget#deviceDiscoveryPanel QComboBox {
 QLineEdit, QSpinBox, QDoubleSpinBox {
     background-color: $surface_sunken;
     border: 1px solid $border;
-    border-radius: 6px;
+    border-radius: $radius_control;
     color: $text;
     min-height: 20px;
     padding: 5px 9px;
@@ -810,7 +849,7 @@ QSpinBox::down-arrow:disabled, QDoubleSpinBox::down-arrow:disabled {
 QComboBox {
     background-color: $surface;
     border: 1px solid $border_strong;
-    border-radius: 6px;
+    border-radius: $radius_control;
     color: $text;
     min-height: 20px;
     padding: 5px 30px 5px 9px;
@@ -845,17 +884,17 @@ QComboBox::down-arrow:disabled {
 QComboBox QAbstractItemView {
     background-color: $surface;
     border: 1px solid $border;
-    border-radius: 6px;
+    border-radius: 10px;
     color: $text;
     outline: none;
-    padding: 4px;
+    padding: 5px;
     selection-background-color: $primary_soft;
     selection-color: $primary_pressed;
 }
 QComboBox QAbstractItemView::item {
-    min-height: 24px;
+    min-height: 26px;
     padding: 2px 8px;
-    border-radius: 4px;
+    border-radius: 7px;
 }
 QComboBox QAbstractItemView::item:hover {
     background-color: $surface_sunken;
@@ -878,9 +917,9 @@ QCheckBox:disabled, QRadioButton:disabled {
 QCheckBox::indicator {
     background-color: $surface;
     border: 1px solid $border_strong;
-    border-radius: 4px;
-    height: 15px;
-    width: 15px;
+    border-radius: 5px;
+    height: 16px;
+    width: 16px;
 }
 QCheckBox::indicator:hover {
     border-color: $primary;
@@ -907,7 +946,7 @@ QCheckBox::indicator:checked:disabled {
 QTextEdit, QPlainTextEdit {
     background-color: $surface;
     border: 1px solid $border;
-    border-radius: 6px;
+    border-radius: 10px;
     color: $text;
     padding: 6px 8px;
     selection-background-color: $primary;
@@ -921,7 +960,7 @@ QTextEdit:focus, QPlainTextEdit:focus {
 QTextEdit#logView {
     background-color: $surface_sunken;
     border: 1px solid $border;
-    border-radius: 6px;
+    border-radius: 10px;
     color: $text;
     font-family: "$font_mono";
     font-size: $font_small;
@@ -941,7 +980,7 @@ QPushButton {
         stop:0 $button_face_top, stop:1 $button_face_bottom);
     border: 1px solid $border_strong;
     border-bottom: 2px solid $button_shadow;
-    border-radius: 6px;
+    border-radius: $radius_control;
     color: $text;
     font-weight: 500;
     min-height: 20px;
@@ -963,7 +1002,8 @@ QPushButton:focus {
     outline: none;
 }
 QPushButton[variant="primary"] {
-    background-color: $primary;
+    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 $primary_top, stop:1 $primary);
     border: 1px solid $primary;
     border-bottom: 2px solid $primary_pressed;
     color: #FFFFFF;
@@ -1091,7 +1131,7 @@ QTableWidget, QTableView {
     alternate-background-color: $surface_alt;
     background-color: $surface;
     border: 1px solid $border;
-    border-radius: 8px;
+    border-radius: $radius_soft;
     color: $text;
     gridline-color: $table_grid;
     selection-background-color: $primary_soft;
@@ -1133,7 +1173,7 @@ QTableCornerButton::section {
 QProgressBar {
     background-color: $disabled_bg;
     border: 1px solid $border;
-    border-radius: 6px;
+    border-radius: 999px;
     color: $text_secondary;
     font-size: $font_small;
     max-height: 12px;
@@ -1143,7 +1183,7 @@ QProgressBar {
 QProgressBar::chunk {
     background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
         stop:0 $primary, stop:1 $series_4);
-    border-radius: 5px;
+    border-radius: 999px;
 }
 
 /* ===== 滚动条 ===== */
@@ -1155,7 +1195,7 @@ QScrollBar:vertical {
 }
 QScrollBar::handle:vertical {
     background-color: $scroll;
-    border-radius: 5px;
+    border-radius: 999px;
     min-height: 30px;
 }
 QScrollBar::handle:vertical:hover {
@@ -1169,7 +1209,7 @@ QScrollBar:horizontal {
 }
 QScrollBar::handle:horizontal {
     background-color: $scroll;
-    border-radius: 5px;
+    border-radius: 999px;
     min-width: 30px;
 }
 QScrollBar::handle:horizontal:hover {
@@ -1189,7 +1229,7 @@ QScrollBar::add-page, QScrollBar::sub-page {
 QFrame#archivalBanner {
     background-color: $warning_soft;
     border: 1px solid $warning;
-    border-radius: 6px;
+    border-radius: 10px;
 }
 QLabel#archivalBannerMessage {
     color: $text;
@@ -1201,15 +1241,24 @@ QLabel#archivalBannerMessage {
    圆角，但内部不再嵌套 QGroupBox；分区靠 sectionCaption 小标题、留白和 1px
    发丝线表达，而不是“分区再套一张卡”。 */
 QFrame#measurementSurface, QFrame#measurementResultSurface {
-    background-color: $surface;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 $surface, stop:1 $surface_tint);
     border: 1px solid $border;
-    border-radius: 8px;
+    border-bottom: 2px solid $card_shadow;
+    border-radius: $radius_soft;
 }
 /* 面内小标题：比正文更小、更淡，只说明这一块是什么。 */
 QLabel[role="sectionCaption"] {
     color: $text_secondary;
     font-size: $font_small;
     font-weight: 600;
+}
+/* 面标题：测量卡片的标题（测量控制 / 测量结果 / 运行控制台），只比面内小标题
+   用更强的主色字重，不增加新的标题层级或图标控件。 */
+QLabel#measurementSurfaceTitle {
+    color: $primary_pressed;
+    font-size: $font_small;
+    font-weight: 700;
 }
 /* 结果面里的关键数字：比正文大一级，现场读数时先看到它。 */
 QLabel#measurementMetric {
@@ -1223,7 +1272,7 @@ QLabel#measurementMetric {
 QFrame#measurementKpiChip {
     background-color: $kpi_chip_bg;
     border: 1px solid $kpi_chip_border;
-    border-radius: 6px;
+    border-radius: 10px;
 }
 /* 读数条：深色玻璃带由 MeasurementReadout 自绘背景与网格，样式表只负责文字与芯片；
    背景留空，避免 QSS 再铺一层把自绘的渐变和细网格盖掉。 */
@@ -1273,7 +1322,7 @@ QLabel#measurementReadoutChipDelta {
 QFrame#measurementReadoutLive {
     background-color: $readout_chip_bg;
     border: 1px solid $readout_accent;
-    border-radius: 9px;
+    border-radius: 999px;
 }
 QLabel#measurementReadoutLiveText {
     color: $readout_accent;
@@ -1283,7 +1332,7 @@ QLabel#measurementReadoutLiveText {
 QFrame#measurementReadoutChip {
     background-color: $readout_chip_bg;
     border: 1px solid $readout_chip_border;
-    border-radius: 6px;
+    border-radius: 8px;
 }
 /* 空态：结果面里的线稿 + 一句说明。它不画外框，避免“卡片里再套一张卡”。 */
 QWidget#measurementEmptyState {
@@ -1333,7 +1382,7 @@ QTableWidget#measurementResultTable QHeaderView::section {
 QLabel#measurementResultSummary {
     background-color: $surface_sunken;
     border: 1px solid $border;
-    border-radius: 6px;
+    border-radius: 10px;
     color: $text_secondary;
     font-size: $font_small;
     padding: 6px 9px;
@@ -1354,7 +1403,7 @@ QWidget#frequencyFilmstripContent {
 QPushButton#frequencyChip {
     background-color: $surface_sunken;
     border: 1px solid $border;
-    border-radius: 10px;
+    border-radius: 999px;
     color: $text_secondary;
     font-family: "$font_mono";
     font-size: $font_small;
@@ -1418,7 +1467,8 @@ QFrame#statusPanel {
 QWidget#plotPanel {
     background-color: $surface;
     border: 1px solid $border;
-    border-radius: 8px;
+    border-bottom: 2px solid $card_shadow;
+    border-radius: $radius_soft;
 }
 QLabel#statusCaption {
     color: $text_secondary;
@@ -1427,7 +1477,7 @@ QLabel#statusCaption {
 QLabel#freqBadge {
     background-color: $primary_soft;
     border: 1px solid $primary_soft_border;
-    border-radius: 10px;
+    border-radius: 999px;
     color: $primary_pressed;
     font-weight: 600;
     padding: 3px 12px;

@@ -93,7 +93,7 @@ _STATUS_GAP = 6.0
 _STATUS_AREA = 12.0
 
 _INDICATOR_INSET = 2.0
-_INDICATOR_RADIUS = 8.0
+_INDICATOR_RADIUS = 11.0
 
 # 完成态扫过的绿色光带：占按钮宽度的比例与两侧渐隐长度，避免像一块实心色块。
 _SWEEP_BAND_RATIO = 0.42

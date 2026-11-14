@@ -89,7 +89,12 @@ def build_surface(
     layout.setContentsMargins(*SURFACE_MARGINS)
     layout.setSpacing(SURFACE_SPACING)
     if cleaned_title is not None:
-        layout.addWidget(section_caption(cleaned_title, parent=surface))
+        caption = section_caption(cleaned_title, parent=surface)
+        # 面标题比面内小标题高一级：柔光主题用主色字重把它和“前置检查”这类
+        # 面内小标题分开，但不新增控件、不改变角色的语义。objectName 只给样式表
+        # 使用，ID 选择器优先于 sectionCaption 的属性规则。
+        caption.setObjectName("measurementSurfaceTitle")
+        layout.addWidget(caption)
     return surface
 
 

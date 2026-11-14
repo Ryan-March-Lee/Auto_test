@@ -320,6 +320,10 @@ class MeasurementWorkspace(QWidget):
         """阶段条与状态簇共用的一条顶栏，高度只由阶段条决定。"""
         self.top_bar = QWidget(self)
         self.top_bar.setObjectName("measurementWorkspaceTopBar")
+        # 顶栏用样式表画白色柔光带：普通 QWidget 只有在显式声明时才绘制 QSS 背景。
+        self.top_bar.setAttribute(
+            Qt.WidgetAttribute.WA_StyledBackground, True
+        )
         top_layout = QHBoxLayout(self.top_bar)
         top_layout.setContentsMargins(*_TOP_BAR_MARGINS)
         top_layout.setSpacing(12)

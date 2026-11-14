@@ -28,7 +28,7 @@
   避免同一份摘要出现两个展示位。外壳不统计频点、不读结果 DTO，也不在工具页上
   显示摘要。
 
-设计约束（见 ``docs/测量工作台重构计划.md`` 步骤 4）：
+设计约束：
 
 - 外壳不拥有内容栈、不导入页面类、不调用页面生命周期；
 - 状态簇只做展示，``run_id`` 与模式文本由窗口传入；无运行时显示“未连接”；
@@ -456,8 +456,7 @@ class MeasurementWorkspace(QWidget):
         同样返回 ``None``，不抛异常打断切页。
 
         这里只回答方向，不播放动画：过渡由 :meth:`reveal_current_page` 在真正切页后
-        播放，动画开关与“测量进行中瞬时切换”也由那里统一判定（见
-        ``docs/测量工作台重构计划.md`` 步骤 13）。
+        播放，动画开关与“测量进行中瞬时切换”也由那里统一判定。
         """
         if not isinstance(previous_key, str) or not isinstance(current_key, str):
             return None

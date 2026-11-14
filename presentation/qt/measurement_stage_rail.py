@@ -6,7 +6,7 @@
 :meth:`MeasurementStageRail.set_current` / :meth:`~MeasurementStageRail.set_state`
 写入，点击只发出 :attr:`MeasurementStageRail.stage_selected`。
 
-设计约束（见 ``docs/测量工作台重构计划.md`` 步骤 3）：
+设计约束：
 
 - 每个阶段都是真正的 :class:`QAbstractButton` 子类，可以用 Tab 走到、用 Enter/Space
   触发，并带有 ``accessibleName``；命中区不靠画布上临时算坐标。

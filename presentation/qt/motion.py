@@ -7,7 +7,7 @@
 - :class:`SlideFadeEffect`：一个只负责透明度和水平偏移的 ``QGraphicsEffect``；
 - :func:`reveal`：把效果临时挂到控件上、用 ``OutCubic`` 推进，结束后立即摘除。
 
-设计约束（见 ``docs/测量工作台重构计划.md`` 步骤 2）：
+设计约束：
 
 - 只动画**进入的**控件。旧页面由调用方立即隐藏；这里不 ``grab()`` 旧页快照，
   因为 matplotlib 页面抓图很贵，双页快照会让切页比现在更慢。

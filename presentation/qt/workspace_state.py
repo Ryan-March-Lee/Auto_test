@@ -6,7 +6,7 @@
 外壳。这样做的原因是 controller 只暴露“当前这一次测量”的快照：下一个阶段一启动，
 上一次的 ``COMPLETED`` 就不在 controller 里了，但阶段条必须继续显示“01 已完成”。
 
-设计约束（见 ``docs/测量工作台重构计划.md`` 步骤 8）：
+设计约束：
 
 - **纯 Python**：不导入 Qt、不复制 ``MeasurementLifecycle``、不解析结果 DTO，也不
   统计频点；只消费 ``ControllerState`` 的 ``kind`` / ``status``。

@@ -114,6 +114,66 @@ class SlideFadeEffectTests(_MotionTestCase):
         self.assertEqual(effect.offset(), 0.0)
 
 
+class SnapshotReuseTests(_MotionTestCase):
+    """一次过渡只渲染源控件一次。
+
+    逐帧 ``sourcePixmap`` 是一次整页离屏渲染；测量页切页时它与阶段条 180ms 的指示块
+    动画抢同一个事件循环，蓝条因此发顿。快照必须复用，尺寸变化时才重新抓取。
+    """
+
+    def _counted_effect(self, widget):
+        effect = SlideFadeEffect()
+        self.addCleanup(effect.deleteLater)
+        widget.setGraphicsEffect(effect)
+        grabs = []
+        original = effect.sourcePixmap
+
+        def counting(*args, **kwargs):
+            grabs.append(1)
+            return original(*args, **kwargs)
+
+        effect.sourcePixmap = counting
+        return effect, grabs
+
+    def _paint_frame(self, widget, effect, opacity):
+        """以指定不透明度触发一次真实绘制（效果的抓图只在绘制上下文里有效）。"""
+        effect.set_opacity(opacity)
+        widget.repaint()
+        self.app.processEvents()
+
+    def test_frames_reuse_one_source_render(self):
+        widget = self._widget()
+        effect, grabs = self._counted_effect(widget)
+
+        for opacity in (0.2, 0.4, 0.6, 0.8, 1.0):
+            self._paint_frame(widget, effect, opacity)
+
+        self.assertTrue(effect.has_snapshot())
+        self.assertEqual(len(grabs), 1, "过渡中的每一帧都应复用同一张快照")
+
+    def test_resize_invalidates_the_snapshot(self):
+        widget = self._widget()
+        effect, grabs = self._counted_effect(widget)
+
+        self._paint_frame(widget, effect, 0.5)
+        widget.resize(200, 90)
+        self._paint_frame(widget, effect, 0.8)
+
+        self.assertEqual(len(grabs), 2, "尺寸变化后必须重新抓取快照")
+
+    def test_clear_snapshot_forces_a_fresh_render(self):
+        widget = self._widget()
+        effect, grabs = self._counted_effect(widget)
+
+        self._paint_frame(widget, effect, 0.5)
+        effect.clear_snapshot()
+        self.assertFalse(effect.has_snapshot())
+        self._paint_frame(widget, effect, 0.8)
+
+        self.assertEqual(len(grabs), 2)
+
+
+
 
 
 

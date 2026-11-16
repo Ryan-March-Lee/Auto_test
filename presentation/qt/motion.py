@@ -25,6 +25,12 @@
 手工设置透明度并平移，而不是 ``drawSource()``——控件源会绕过调用方 painter 的
 透明度与坐标变换（Qt 直接在效果上下文里重画控件），那样既不会淡也不会移。
 
+快照**每次过渡只抓一次**：透明度与位移的后续帧复用同一张位图。整页 ``sourcePixmap``
+是一次完整的离屏渲染，测量页在 1440×900 下约 10–15ms；如果每帧都重抓，220ms 过渡会
+累计十几次整页渲染（实测约 180ms 的 UI 线程占用），与阶段条 180ms 的指示块动画抢
+同一个事件循环，蓝条就会发顿。一次过渡的页面内容本来就是静态的（``reveal`` 只在
+没有活动测量时播放），复用快照不改变观感。源控件尺寸变化时快照自动失效。
+
 测量页里有 matplotlib 画布这类原生子窗口：它们不会被效果的快照捕获，而是在效果
 输出下面直接绘制（半透明阶段会透出未初始化的黑底）。因此效果支持一个可选的
 ``background``：合成前先用不透明底色铺满控件矩形，让淡入始终发生在页面底色上，
@@ -41,10 +47,11 @@ from PySide6.QtCore import (
     QObject,
     QPoint,
     QRect,
+    QSize,
     Qt,
     QVariantAnimation,
 )
-from PySide6.QtGui import QColor, QPainter, QTransform
+from PySide6.QtGui import QColor, QPainter, QPixmap, QTransform
 from PySide6.QtWidgets import QGraphicsEffect, QWidget
 
 from .theme import MOTION_REVEAL_MS, MOTION_SLIDE_PX
@@ -102,6 +109,10 @@ class SlideFadeEffect(QGraphicsEffect):
     ``background`` 给出时，每一帧先用这张不透明底色铺满控件矩形，再把半透明快照
     合成上去：matplotlib 画布这类原生子窗口不会被快照捕获、只在效果输出下面直接
     绘制，不铺底色就会在半透明阶段透出黑底。不给底色时行为与步骤 2 完全一致。
+
+    快照在第一次绘制时抓取，之后复用；源控件尺寸变化后自动重新抓取。过渡期间源
+    控件内部的刷新不会逐帧反映到画面上，这是“一次过渡只付一次整页渲染”的代价；
+    ``reveal`` 只用于空闲切页，页面内容在过渡窗口内本来就是静态的。
     """
 
     def __init__(
@@ -113,6 +124,9 @@ class SlideFadeEffect(QGraphicsEffect):
         super().__init__(parent)
         self._opacity = 1.0
         self._offset = 0.0
+        self._snapshot: QPixmap | None = None
+        self._snapshot_offset = QPoint()
+        self._snapshot_extent = QSize()
         if background is not None and not isinstance(background, (QColor, str)):
             raise TypeError("background 必须是 QColor、颜色字符串或 None")
         color = QColor(background) if background is not None else None
@@ -132,6 +146,22 @@ class SlideFadeEffect(QGraphicsEffect):
         """合成时铺在快照下面的不透明底色；``None`` 表示纯透明合成。"""
         return self._background
 
+    def has_snapshot(self) -> bool:
+        """是否已经抓取过本次过渡的源快照。"""
+        return self._snapshot is not None
+
+    def clear_snapshot(self) -> None:
+        """丢弃已抓取的快照，下一帧重新渲染源控件。
+
+        源控件尺寸变化会自动失效；过渡期间内容换了、又必须立刻反映到画面时，调用方
+        可以用它显式重抓一次（代价是一次整页渲染）。
+        """
+        if self._snapshot is None:
+            return
+        self._snapshot = None
+        self._snapshot_extent = QSize()
+        self.update()
+
     def set_opacity(self, opacity: float) -> None:
         """设置不透明度；超出 0–1 的值会被夹紧。"""
         value = max(0.0, min(1.0, float(opacity)))
@@ -148,16 +178,17 @@ class SlideFadeEffect(QGraphicsEffect):
         self._offset = value
         self.update()
 
-    def draw(self, painter: QPainter) -> None:
-        """按当前不透明度与偏移合成源控件。
+    def _source_extent(self) -> QSize:
+        """源控件的逻辑尺寸；PySide 没有暴露 ``source()``，用边界矩形代替。"""
+        rect = self.sourceBoundingRect()
+        return QSize(round(rect.width()), round(rect.height()))
 
-        不能用 ``drawSource()``：控件源会在效果上下文里直接重画控件，调用方 painter
-        的透明度与坐标变换都不生效，淡入和位移都不会落到像素上。这里按 Qt 自带透明度
-        效果的写法取设备坐标快照，再手工合成。
-        """
-        if self._opacity <= 0.0 and self._background is None:
-            # 第一帧完全透明且没有底色：不抓快照，省掉一次整页重绘。
-            return
+    def _snapshot_pixmap(self) -> tuple[QPixmap | None, QPoint]:
+        """取本次过渡的源快照；源控件尺寸没变时复用上一帧的位图。"""
+        extent = self._source_extent()
+        pixmap = self._snapshot
+        if pixmap is not None and extent == self._snapshot_extent:
+            return pixmap, QPoint(self._snapshot_offset)
         offset = QPoint()
         pixmap = self.sourcePixmap(
             Qt.CoordinateSystem.DeviceCoordinates,
@@ -165,6 +196,24 @@ class SlideFadeEffect(QGraphicsEffect):
             QGraphicsEffect.PixmapPadMode.NoPad,
         )
         if pixmap.isNull():
+            return None, offset
+        self._snapshot = pixmap
+        self._snapshot_offset = QPoint(offset)
+        self._snapshot_extent = QSize(extent)
+        return pixmap, self._snapshot_offset
+
+    def draw(self, painter: QPainter) -> None:
+        """按当前不透明度与偏移合成源控件。
+
+        不能用 ``drawSource()``：控件源会在效果上下文里直接重画控件，调用方 painter
+        的透明度与坐标变换都不生效，淡入和位移都不会落到像素上。这里按 Qt 自带透明度
+        效果的写法取设备坐标快照，再手工合成；快照一次过渡只抓一次。
+        """
+        if self._opacity <= 0.0 and self._background is None:
+            # 第一帧完全透明且没有底色：不抓快照，省掉一次整页重绘。
+            return
+        pixmap, offset = self._snapshot_pixmap()
+        if pixmap is None:
             return
         # 设备坐标快照：10 个逻辑像素要按屏幕倍率换算。
         shift = round(self._offset * pixmap.devicePixelRatio())

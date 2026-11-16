@@ -1,7 +1,8 @@
-"""实时图表的 P2 编码：最新点、值芯片、目标带、节流与胶片条。"""
+"""实时图表的 P2 编码：最新点、图例、目标带、节流、blit 与胶片条。"""
 
 import os
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -43,19 +44,20 @@ class _PlotCase(unittest.TestCase):
 
 
 class LatestPointTests(_PlotCase):
-    def test_each_subplot_shows_the_latest_value_in_its_legend(self):
+    def test_each_subplot_shows_a_static_metric_legend(self):
         plot = self._plot()
 
         plot.update_plot(dict(_SWEEP))
 
+        # 图例只显示指标与单位，属于背景缓存；最新值在点旁标注与页面读数条里。
         legends = [axis.get_legend().get_texts()[0].get_text() for axis in plot.figure.axes]
         self.assertEqual(
             legends,
             [
-                "输出功率 28.3 dBm",
-                "增益 28.3 dB",
-                "效率 51.2 %",
-                "DC功耗 58.80 W",
+                "输出功率 — dBm",
+                "增益 — dB",
+                "效率 — %",
+                "DC功耗 — W",
             ],
         )
 
@@ -149,24 +151,24 @@ class TargetBandTests(_PlotCase):
 
 
 class DrawThrottleTests(_PlotCase):
-    def test_rapid_updates_draw_at_most_once_per_interval(self):
+    def test_rapid_updates_render_at_most_once_per_interval(self):
         plot = self._plot()
-        draws = []
-        plot.canvas.draw_idle = lambda: draws.append(True)
+        renders = []
+        plot._render = lambda: renders.append(True)
 
         plot.update_plot(dict(_SWEEP))
         plot.update_plot(dict(_SWEEP))
 
-        self.assertEqual(draws, [True], "第二次更新只排队，不立即重绘")
+        self.assertEqual(renders, [True], "第二次更新只排队，不立即渲染")
 
         plot._flush_draw()
 
-        self.assertEqual(draws, [True, True], "冷却结束只补画最新一帧")
+        self.assertEqual(renders, [True, True], "冷却结束只补画最新一帧")
 
-    def test_flush_without_a_pending_update_does_not_draw(self):
+    def test_flush_without_a_pending_update_does_not_render(self):
         plot = self._plot()
-        draws = []
-        plot.canvas.draw_idle = lambda: draws.append(True)
+        renders = []
+        plot._render = lambda: renders.append(True)
         plot.update_plot(dict(_SWEEP))
 
         plot._draw_timer.stop()
@@ -174,7 +176,82 @@ class DrawThrottleTests(_PlotCase):
         plot._draw_pending = False
         plot._flush_draw()
 
-        self.assertEqual(draws, [True])
+        self.assertEqual(renders, [True])
+
+
+class BlitRenderTests(_PlotCase):
+    """背景缓存 + blit：稳态更新不重画整图，只有量程扩展才重建一次。"""
+
+    def _shown_plot(self):
+        plot = self._plot()
+        plot.resize(700, 440)
+        plot.show()
+        self.app.processEvents()
+        plot.canvas.cancel_rebuild()
+        plot.rebuild_background()
+        return plot
+
+    def test_steady_updates_within_the_view_only_blit(self):
+        plot = self._shown_plot()
+        plot.update_plot(dict(_SWEEP))
+        plot._render()  # 首次数据：移除等待提示、扩展量程，允许一次重建
+
+        with patch.object(
+            plot, "rebuild_background", wraps=plot.rebuild_background
+        ) as rebuild:
+            for _ in range(20):
+                plot.update_plot(dict(_SWEEP))
+                plot._render()
+
+        self.assertEqual(rebuild.call_count, 0, "同一量程内的更新只 blit")
+
+    def test_range_expansion_rebuilds_once(self):
+        plot = self._shown_plot()
+        plot.update_plot(dict(_SWEEP))
+        plot._render()
+
+        bigger = dict(_SWEEP)
+        bigger["sweep_data"] = dict(_SWEEP["sweep_data"])
+        bigger["sweep_data"]["dc_power"] = [500.0] * 5
+
+        with patch.object(
+            plot, "rebuild_background", wraps=plot.rebuild_background
+        ) as rebuild:
+            plot.update_plot(bigger)
+            plot._render()
+
+        self.assertEqual(rebuild.call_count, 1)
+
+    def test_hidden_updates_do_not_rebuild(self):
+        plot = self._shown_plot()
+        plot.update_plot(dict(_SWEEP))
+        plot._render()
+        plot.hide()
+        self.app.processEvents()
+
+        with patch.object(
+            plot, "rebuild_background", wraps=plot.rebuild_background
+        ) as rebuild:
+            for _ in range(5):
+                plot.update_plot(dict(_SWEEP))
+                plot._render()
+
+        self.assertEqual(rebuild.call_count, 0)
+        self.assertTrue(plot._render_pending, "隐藏页只记待办，等显示后再画")
+
+    def test_blit_matches_full_redraw(self):
+        import numpy as np
+
+        plot = self._shown_plot()
+        plot.update_plot(dict(_SWEEP))
+        plot._render()
+        plot._render()
+
+        blitted = np.asarray(plot.canvas.buffer_rgba()).copy()
+        plot.canvas.draw()
+        full = np.asarray(plot.canvas.buffer_rgba())
+
+        self.assertLess(float(np.mean(blitted != full)), 0.001)
 
 
 class FilmstripOnPlotTests(_PlotCase):

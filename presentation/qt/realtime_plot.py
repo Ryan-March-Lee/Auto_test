@@ -6,20 +6,28 @@
 P2 在原有 2×2 布局上补三种“会说话”的读法，全部只消费调用方已经取好的数据：
 
 - **最新点标注**：每条曲线最后一个点加一个空心圆环，并在点旁标出数值；
-- **图例即值芯片**：每个子图右上角一个紧凑图例，显示“指标 最新值 单位”，
-  颜色与曲线一致，不需要再猜哪条线是哪条；
+- **静态图例**：每个子图右上角一个紧凑图例，只显示“指标 — 单位”，颜色与曲线一致；
+  最新值由点旁标注与页面读数条承担，图例不参与每个频点的重绘；
 - **目标带**：调用方明确给出目标范围时才画一条淡色水平带。没有目标值时不画，
   这里不发明任何业务语义。
 
+性能约束：一张 2×2、带中文标题和刻度的图整图 Agg 绘制要 300–500ms。因此本控件把
+“静态背景”（坐标轴、刻度、网格、固定标题、轴标签、图例、目标带、等待提示）只画
+一次并缓存在 ``_background``，每个数据点只用背景缓存 + ``restore_region`` 重画曲线、
+最新点圆环与数值标注，再一次 ``blit`` 上屏；单点更新从数百毫秒降到十几毫秒。背景只在
+首次显示、尺寸变化、量程扩展或静态内容变化时重建。隐藏页面只记录待办，显示后要么
+立即 blit，要么把重建推迟到切页过渡之后（:data:`_BACKGROUND_SHOW_DEFER_MS`），避免
+把数百毫秒的整图绘制塞进“点标签”的那一刻。
+
 频点胶片条（``show_nav_buttons=True`` 时）把“◀ / ▶”扩展成可点击的频点带；
-重绘按 10 Hz 节流，隐藏时仍沿用 :class:`_DeferredCanvas` 的“不排队绘制”策略。
+数据更新仍按 10 Hz 节流，多次到达的重绘请求合并成一次。
 """
 
 from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict
 
 from PySide6.QtCore import QEvent, Qt, QTimer, Signal
@@ -34,38 +42,113 @@ from PySide6.QtWidgets import (
 
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+from matplotlib.text import Text
 
 from infrastructure.logging.app_logging import get_logger
 
 from .frequency_filmstrip import FrequencyFilmstrip
-from .theme import TOKENS, set_button_variant
+from .theme import MOTION_REVEAL_MS, TOKENS, set_button_variant
 
 logger = get_logger(__name__)
 
 __all__ = ["PlotTargetBand", "RealTimePlotWidget"]
 
+#: 量程滞回：数据仍在视窗内时只 blit；越界才按“span 的 8%”扩界并重建背景。
+_VIEW_PAD_RATIO = 0.08
+#: 常数序列（例如整条增益都等于 11dB）没有 span，至少留这么多上下余量。
+_VIEW_MIN_PAD = 0.5
+#: 背景重建防抖：拖拽窗口时只重建一次，而不是每个 resize 事件都整图绘制。
+_BACKGROUND_DEBOUNCE_MS = 160
+#: 页面显示后延迟重建：等切页过渡播完，再付这一次整图绘制的钱。
+_BACKGROUND_SHOW_DEFER_MS = MOTION_REVEAL_MS + 16
+
 
 class _DeferredCanvas(FigureCanvas):
-    """画布不可见时只记下“需要重画”，等真正显示出来再画。
+    """只决定“什么时候画”：隐藏只记待办，可见交给绘图控件 blit 或延迟重建。
 
-    页面切换会让隐藏的标签页跟着重排，matplotlib 的 ``draw_idle`` 会立刻排队
-    重画；一张四宫格图在这台机器上要三四百毫秒，正好落在“仪器排布”页的入场 /
-    返回动画里，把动画卡停。隐藏期间不排队，标签页第一次显示时再补一张，顺带
-    省掉启动时为看不见的图付出的绘制时间。
+    一张四宫格图的整图 Agg 绘制要 300–500ms。这里不再让 matplotlib 在任何
+    ``draw_idle`` / ``resizeEvent`` 里立刻排队整图绘制：
+
+    - 不可见：只记 ``_draw_pending``，页面第一次显示时再处理；
+    - 可见：把背景标记为脏，并防抖后重建（数据更新走绘图控件的 blit，不经过这里）；
+    - 显示瞬间：消费掉待办后交给所有者决定“立即 blit”还是“等过渡结束再重建”。
+
+    防抖与延迟用的是同一个单次定时器；页面重新隐藏时停止，不在后台重建。
     """
 
+    def __init__(self, figure: Figure) -> None:
+        super().__init__(figure)
+        self._owner: Any | None = None
+        self._rebuild_timer = QTimer(self)
+        self._rebuild_timer.setSingleShot(True)
+        self._rebuild_timer.timeout.connect(self._on_rebuild_timeout)
+
+    # ---- 所有者 -------------------------------------------------------------
+
+    def bind_owner(self, owner: Any) -> None:
+        """绑定持有背景缓存的绘图控件；只存引用，不拥有它。"""
+        self._owner = owner
+
+    # ---- 调度 ---------------------------------------------------------------
+
+    def schedule_rebuild(self, delay_ms: int | None = None) -> None:
+        """安排一次背景重建；``None`` 使用防抖间隔。"""
+        interval = _BACKGROUND_DEBOUNCE_MS if delay_ms is None else int(delay_ms)
+        if interval < 0:
+            raise ValueError("重建延迟不能为负数")
+        if self._owner is None:
+            return
+        self._rebuild_timer.start(interval)
+
+    def cancel_rebuild(self) -> None:
+        """取消尚未执行的重建；重复调用是幂等的。"""
+        self._rebuild_timer.stop()
+
+    def has_pending_rebuild(self) -> bool:
+        """是否有排队的背景重建。"""
+        return self._rebuild_timer.isActive()
+
+    def clear_pending_draw(self) -> None:
+        """消费 matplotlib 的 ``_draw_pending``，防止 paintEvent 里再排一次整图绘制。"""
+        self._draw_pending = False
+
+    # ---- 绘制入口 -----------------------------------------------------------
+
     def draw_idle(self) -> None:
+        """隐藏时不排队；可见时改成“背景置脏 + 防抖重建”。"""
         if not self.isVisible():
             self._draw_pending = True
             return
-        super().draw_idle()
+        owner = self._owner
+        if owner is None:
+            super().draw_idle()
+            return
+        owner.invalidate_background()
 
     def showEvent(self, event: Any) -> None:
         super().showEvent(event)
-        if getattr(self, "_draw_pending", False):
-            # matplotlib 的 draw_idle 看到这个标志会直接返回，先清掉再排队。
-            self._draw_pending = False
-            super().draw_idle()
+        # paintEvent 会调用 matplotlib 的 ``_draw_idle``；先消费待办，改为 blit / 延迟重建。
+        self.clear_pending_draw()
+        owner = self._owner
+        if owner is not None:
+            owner.on_canvas_shown()
+
+    def hideEvent(self, event: Any) -> None:
+        self._rebuild_timer.stop()
+        super().hideEvent(event)
+
+    def resizeEvent(self, event: Any) -> None:
+        # FigureCanvasQT.resizeEvent 会更新 figure 尺寸并调用 self.draw_idle()（已重写）。
+        super().resizeEvent(event)
+        self.clear_pending_draw()
+        owner = self._owner
+        if owner is not None and self.isVisible():
+            owner.invalidate_background()
+
+    def _on_rebuild_timeout(self) -> None:
+        owner = self._owner
+        if owner is not None and self.isVisible():
+            owner.rebuild_background()
 
 
 # 中文字体：matplotlib 默认字体没有中文字形，标题必须显式指定，否则显示为方框。
@@ -131,6 +214,35 @@ _PLOT_PANELS = (
 )
 
 
+@dataclass
+class _PanelArtists:
+    """一个子图的艺术家集合：静态件只建一次，动态件每个频点只改数据。
+
+    动态件（曲线、最新点圆环、数值标注）在重建背景时临时隐藏，所以背景缓存里不会
+    夹带上一个频点的曲线；静态件（坐标轴、刻度、固定标题、图例、目标带、等待提示）
+    留在背景里，blit 更新不重排、也不重新测量文字。
+    """
+
+    axis: Any
+    spec: _PanelSpec
+    line: Any
+    marker: Any
+    legend: Any
+    hint: Any | None
+    annotation: Any | None = None
+    bands: list[Any] = field(default_factory=list)
+    xlim: tuple[float, float] = (0.0, 1.0)
+    ylim: tuple[float, float] = (0.0, 1.0)
+    has_data: bool = False
+
+    def dynamics(self) -> list[Any]:
+        """需要每帧重画的艺术家；没有数据的面板只有隐藏的空曲线。"""
+        artists = [self.line, self.marker]
+        if self.annotation is not None:
+            artists.append(self.annotation)
+        return artists
+
+
 @dataclass(frozen=True)
 class PlotTargetBand:
     """绘图目标带：某个子图里的一条水平参考范围。
@@ -191,6 +303,27 @@ def _pair(
     return (xs[:length], ys[:length]) if length else None
 
 
+def _padded_bounds(
+    values: Sequence[float],
+    *,
+    pad_ratio: float = _VIEW_PAD_RATIO,
+    min_pad: float = _VIEW_MIN_PAD,
+) -> tuple[float, float]:
+    """给数据范围留出余量：下一次数据小幅变化时不用重建背景。
+
+    常数序列没有 span（例如整条增益都是 11dB），按数值大小的 5% 与 ``min_pad``
+    取较大者，避免 matplotlib 收到退化区间；其余情况按 span 的比例加余量。
+    """
+    low = float(min(values))
+    high = float(max(values))
+    span = high - low
+    if span <= 0.0:
+        pad = max(abs(high) * 0.05, min_pad)
+    else:
+        pad = span * pad_ratio
+    return low - pad, high + pad
+
+
 class RealTimePlotWidget(QWidget):
     """Plot the common sweep data shape used by measurement pages."""
 
@@ -206,10 +339,12 @@ class RealTimePlotWidget(QWidget):
         super().__init__()
         self.setObjectName("plotPanel")
         self.show_nav_buttons = show_nav_buttons
-        # constrained layout 让四张图自动均分间距，避免紧贴边界或留出大块空白。
-        self.figure = Figure(figsize=(6.4, 4.8), dpi=100, layout="constrained")
+        # 不用 constrained layout：背景重建只在切页/尺寸变化/量程扩展时发生，固定
+        # 边距能把这一次重建里的布局开销省掉；数据更新走 blit，不经过布局引擎。
+        self.figure = Figure(figsize=(6.4, 4.8), dpi=100)
         self.figure.set_facecolor(TOKENS["surface"])
         self.canvas = _DeferredCanvas(self.figure)
+        self.canvas.bind_owner(self)
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QScrollArea.NoFrame)
@@ -224,7 +359,15 @@ class RealTimePlotWidget(QWidget):
         self.figure.subplots(2, 2)
         axes = self.figure.axes
         self.ax1, self.ax2, self.ax3, self.ax4 = axes
+        self._panels: list[_PanelArtists] = []
         self._target_bands: tuple[PlotTargetBand, ...] = ()
+        self._background: Any | None = None
+        self._background_size: tuple[int, int] = (0, 0)
+        self._overlay_regions: list[Any] = []
+        self._static_dirty = True
+        self._render_pending = False
+        # ax2 的 x 轴当前是否显示“输出功率”；没有输出功率时退回“测量点”。
+        self._output_axis = True
         self._draw_timer = QTimer(self)
         self._draw_timer.setSingleShot(True)
         self._draw_timer.setInterval(self.DRAW_INTERVAL_MS)
@@ -283,19 +426,105 @@ class RealTimePlotWidget(QWidget):
             spine.set_color(_SPINE_COLOR)
             spine.set_linewidth(0.8)
 
+    def _apply_layout(self) -> None:
+        """按画布尺寸设固定边距与间距：小窗口也不让标题、轴标签和标注互相压住。
+
+        右侧额外留出数值标注的位置：标注锚在最后一个数据点上、再向右偏 7px，最右
+        一列的标注会落在坐标区之外；没有这段余量时它会被画布边缘裁掉。行/列间距按
+        “至少 N 像素”反推 hspace/wspace：窗口变小时间距不会跟着缩到文字重叠。
+        """
+        width = max(int(self.canvas.width()), 1)
+        height = max(int(self.canvas.height()), 1)
+        left = max(0.07, 46.0 / width)
+        right = 1.0 - max(0.06, 46.0 / width)
+        top = 1.0 - max(0.07, 34.0 / height)
+        bottom = max(0.10, 40.0 / height)
+        usable_width = max(1.0, (right - left) * width)
+        usable_height = max(1.0, (top - bottom) * height)
+        # 列间距要同时容纳左列的数值标注与右列的 y 轴标签；行间距要容纳上排的
+        # x 轴标签与下排标题。matplotlib 的 *space 是“占平均轴尺寸的比例”。
+        wspace = max(0.24, 2.0 * 88.0 / max(1.0, usable_width - 88.0))
+        hspace = max(0.38, 2.0 * 68.0 / max(1.0, usable_height - 68.0))
+        self.figure.subplots_adjust(
+            left=left,
+            right=right,
+            top=top,
+            bottom=bottom,
+            wspace=wspace,
+            hspace=hspace,
+        )
+
     def setup_empty_plots(self):
-        for index, (axis, panel) in enumerate(zip(self.figure.axes, _PLOT_PANELS)):
-            self._style_axis(axis, panel.title, panel.xlabel, panel.ylabel)
-            self._paint_waiting_hint(axis)
-            self._apply_target_bands(axis, index)
-        # 空白图延后到控件第一次上屏时再渲染：构造窗口不必同步绘制三张空图，
-        # 启动与离屏测试都不再为看不见的画面付出 constrained layout 的绘制开销。
+        """建立四张固定子图：轴、图例和“等待数据”只建一次，之后只改数据。"""
+        self._apply_layout()
+        self._panels = [
+            self._build_panel(index, axis)
+            for index, axis in enumerate(self.figure.axes)
+        ]
+        self._static_dirty = True
+        # 构造时控件还不可见：draw_idle 只记待办，第一次上屏时再 blit / 重建。
         self.canvas.draw_idle()
+
+    def _build_panel(self, index: int, axis) -> _PanelArtists:
+        """一个面板的静态件与空动态件；动态件先隐藏，有数据后再显示。"""
+        panel_spec = _PLOT_PANELS[index]
+        self._style_axis(axis, panel_spec.title, panel_spec.xlabel, panel_spec.ylabel)
+        axis.set_xlim(0.0, 1.0)
+        axis.set_ylim(0.0, 1.0)
+        line = axis.plot(
+            [],
+            [],
+            color=panel_spec.color,
+            marker="o",
+            markersize=3,
+            linewidth=1.6,
+            label=f"{panel_spec.metric} ({panel_spec.unit})",
+            zorder=2,
+        )[0]
+        marker = axis.plot(
+            [],
+            [],
+            linestyle="none",
+            marker="o",
+            markersize=7.5,
+            markerfacecolor=TOKENS["surface"],
+            markeredgecolor=panel_spec.color,
+            markeredgewidth=1.4,
+            zorder=5,
+        )[0]
+        legend = axis.legend(
+            [line],
+            [f"{panel_spec.metric} — {panel_spec.unit}"],
+            loc="upper right",
+            fontsize=7.2,
+            frameon=True,
+            facecolor=TOKENS["surface"],
+            edgecolor=TOKENS["border"],
+            # 不透明：图例盖住曲线时，blit 恢复的图例区域与整图绘制逐像素一致。
+            framealpha=1.0,
+            handlelength=1.1,
+            handletextpad=0.4,
+            borderpad=0.3,
+            labelspacing=0.2,
+        )
+        for text in legend.get_texts():
+            text.set_color(TOKENS["text_secondary"])
+            text.set_fontfamily(_CJK)
+        line.set_visible(False)
+        marker.set_visible(False)
+        return _PanelArtists(
+            axis=axis,
+            spec=panel_spec,
+            line=line,
+            marker=marker,
+            legend=legend,
+            hint=self._add_waiting_hint(axis),
+        )
 
     # -- 目标带 -------------------------------------------------------------
 
     def set_target_bands(self, bands: Sequence[PlotTargetBand]) -> None:
-        """写入目标带；空序列清空。只接受已经验证过的 :class:`PlotTargetBand`。"""
+        """写入目标带；空序列清空。目标带属于静态层，变化时重建背景。"""
         if isinstance(bands, (str, bytes)) or not isinstance(bands, Sequence):
             raise TypeError("目标带必须是 PlotTargetBand 序列")
         validated: list[PlotTargetBand] = []
@@ -303,46 +532,67 @@ class RealTimePlotWidget(QWidget):
             if not isinstance(band, PlotTargetBand):
                 raise TypeError("目标带必须是 PlotTargetBand 序列")
             validated.append(band)
-        self._target_bands = tuple(validated)
+        cleaned = tuple(validated)
+        if cleaned == self._target_bands:
+            return
+        self._target_bands = cleaned
+        for index, panel in enumerate(self._panels):
+            self._remove_bands(panel)
+            self._add_target_bands(panel, index)
+        # 目标带属于静态层：先置脏，等随后的 update_plot 或防抖重建一起画，
+        # 避免“改带一次整图 + 换数据再一次整图”的重复开销。
+        self.invalidate_background()
 
     def target_bands(self) -> tuple[PlotTargetBand, ...]:
         """当前写入的目标带（只读）。"""
         return self._target_bands
 
-    def _apply_target_bands(self, axis, panel_index: int) -> None:
+    @staticmethod
+    def _remove_bands(panel: _PanelArtists) -> None:
+        for artist in panel.bands:
+            artist.remove()
+        panel.bands.clear()
+
+    def _add_target_bands(self, panel: _PanelArtists, panel_index: int) -> None:
         """画淡色水平带；没有目标时什么都不做。"""
+        axis = panel.axis
         for band in self._target_bands:
             if band.panel != panel_index:
                 continue
             color = TOKENS["primary"]
-            axis.axhspan(
-                float(band.low),
-                float(band.high),
-                facecolor=color,
-                alpha=0.08,
-                edgecolor=color,
-                linewidth=0.0,
-                zorder=0,
+            panel.bands.append(
+                axis.axhspan(
+                    float(band.low),
+                    float(band.high),
+                    facecolor=color,
+                    alpha=0.08,
+                    edgecolor=color,
+                    linewidth=0.0,
+                    zorder=0,
+                )
             )
             if band.label:
-                axis.text(
-                    0.99,
-                    float(band.high),
-                    band.label,
-                    transform=axis.get_yaxis_transform(),
-                    ha="right",
-                    va="bottom",
-                    fontsize=7.0,
-                    color=color,
-                    alpha=0.9,
-                    family=_CJK,
+                panel.bands.append(
+                    axis.text(
+                        0.99,
+                        float(band.high),
+                        band.label,
+                        transform=axis.get_yaxis_transform(),
+                        ha="right",
+                        va="bottom",
+                        fontsize=7.0,
+                        color=color,
+                        alpha=0.9,
+                        family=_CJK,
+                    )
                 )
 
     # -- 数据 ---------------------------------------------------------------
 
     @staticmethod
-    def _paint_waiting_hint(axis) -> None:
-        axis.text(
+    def _add_waiting_hint(axis):
+        """空面板的“等待数据”；它属于静态背景，数据到达时移除并重建一次。"""
+        return axis.text(
             0.5,
             0.52,
             "等待数据",
@@ -356,12 +606,9 @@ class RealTimePlotWidget(QWidget):
 
     def update_plot(self, data: Dict[str, Any]):
         try:
-            for axis in self.figure.axes:
-                axis.clear()
             sweep = data.get("sweep_data", {})
             if not isinstance(sweep, Mapping):
                 sweep = {}
-            frequency = data.get("frequency", "Unknown")
             pin = _numeric_list(
                 sweep.get("input_power_dut", sweep.get("input_power_sg"))
             )
@@ -377,98 +624,120 @@ class RealTimePlotWidget(QWidget):
                 _pair(pout, efficiency),
                 _pair(_indices(dc_power), dc_power),
             )
-            titles = (
-                f"输入 vs 输出功率 @ {frequency} GHz",
-                f"增益 @ {frequency} GHz",
-                f"效率 @ {frequency} GHz",
-                f"DC功耗 @ {frequency} GHz",
-            )
-            for index, (axis, panel, title, series) in enumerate(
-                zip(self.figure.axes, _PLOT_PANELS, titles, points)
-            ):
-                self._style_axis(axis, title, panel.xlabel, panel.ylabel)
-                self._apply_target_bands(axis, index)
-                if series is None:
-                    self._paint_waiting_hint(axis)
-                    continue
-                self._draw_series(axis, panel, series)
-            # 输入-输出图的横轴就是输入功率；其余两图横轴随数据而定，保持默认标签。
-            self.ax2.set_xlabel(
-                "输出功率 (dBm)" if pout is not None else "测量点",
-                color=_TICK_COLOR,
-                fontdict={**_CJK_FONT, "size": 8.5},
-            )
+            static_changed = False
+            for index, panel in enumerate(self._panels):
+                static_changed = (
+                    self._apply_series(panel, points[index]) or static_changed
+                )
+            # 输入-输出图的横轴就是输入功率；没有输出功率时退回“测量点”。
+            wants_output_axis = pout is not None
+            if wants_output_axis != self._output_axis:
+                self._output_axis = wants_output_axis
+                self._panels[1].axis.set_xlabel(
+                    "输出功率 (dBm)" if wants_output_axis else "测量点",
+                    color=_TICK_COLOR,
+                    fontdict={**_CJK_FONT, "size": 8.5},
+                )
+                static_changed = True
+            if static_changed:
+                self._static_dirty = True
             self._request_draw()
         except Exception as error:  # noqa: BLE001 - 绘图失败不得中断测量线程
             # 绘图是展示副作用：失败记日志并保持上一帧，不向测量线程抛出。
             logger.warning("绘图更新失败: %s", error)
 
-    def _draw_series(
+    def _apply_series(
         self,
-        axis,
-        panel: _PanelSpec,
-        series: tuple[list[float], list[float]],
-    ) -> None:
-        """画曲线、最新点圆环与“图例即值芯片”。"""
+        panel: _PanelArtists,
+        series: tuple[list[float], list[float]] | None,
+    ) -> bool:
+        """把一条扫频写进已有艺术家；返回“静态背景是否需要重建”。
+
+        有数据时只改曲线、最新点圆环与数值标注的内容和可见性；等待提示的增删、
+        轴标签切换和量程扩展属于静态内容变化，各只发生一次。
+        """
+        if series is None:
+            if not panel.has_data and panel.hint is not None:
+                return False
+            panel.has_data = False
+            panel.line.set_visible(False)
+            panel.marker.set_visible(False)
+            if panel.annotation is not None:
+                panel.annotation.set_visible(False)
+            if panel.hint is None:
+                panel.hint = self._add_waiting_hint(panel.axis)
+            self._reset_view(panel)
+            return True
+
         xs, ys = series
-        line = axis.plot(
-            xs,
-            ys,
-            color=panel.color,
-            marker="o",
-            markersize=3,
-            linewidth=1.6,
-            label=panel.metric,
-            zorder=2,
-        )[0]
-        latest_x, latest_y = xs[-1], ys[-1]
-        axis.plot(
-            [latest_x],
-            [latest_y],
-            linestyle="none",
-            marker="o",
-            markersize=7.5,
-            markerfacecolor=TOKENS["surface"],
-            markeredgecolor=panel.color,
-            markeredgewidth=1.4,
-            zorder=5,
-        )
-        axis.annotate(
-            f"{latest_y:.{panel.digits}f}",
-            xy=(latest_x, latest_y),
+        static_changed = False
+        if panel.hint is not None:
+            panel.hint.remove()
+            panel.hint = None
+            static_changed = True
+        if panel.annotation is None:
+            panel.annotation = self._add_annotation(panel)
+            static_changed = True
+        panel.has_data = True
+        panel.line.set_data(xs, ys)
+        panel.marker.set_data([xs[-1]], [ys[-1]])
+        panel.annotation.xy = (xs[-1], ys[-1])
+        panel.annotation.set_text(f"{ys[-1]:.{panel.spec.digits}f}")
+        for artist in (panel.line, panel.marker, panel.annotation):
+            if not artist.get_visible():
+                artist.set_visible(True)
+        return self._expand_view(panel, xs, ys) or static_changed
+
+    def _add_annotation(self, panel: _PanelArtists):
+        """最新点旁的数值标注；没有数据的面板上不存在这个艺术家。"""
+        return panel.axis.annotate(
+            "",
+            xy=(0.0, 0.0),
             xytext=(7, 6),
             textcoords="offset points",
             fontsize=7.2,
             fontweight="bold",
-            color=panel.color,
+            color=panel.spec.color,
             zorder=6,
             annotation_clip=True,
             family=_CJK,
             bbox={
                 "boxstyle": "round,pad=0.22",
                 "facecolor": TOKENS["surface"],
-                "edgecolor": panel.color,
+                "edgecolor": panel.spec.color,
                 "linewidth": 0.6,
                 "alpha": 0.9,
             },
         )
-        legend = axis.legend(
-            [line],
-            [f"{panel.metric} {latest_y:.{panel.digits}f} {panel.unit}"],
-            loc="upper right",
-            fontsize=7.2,
-            frameon=True,
-            facecolor=TOKENS["surface"],
-            edgecolor=TOKENS["border"],
-            framealpha=0.92,
-            handlelength=1.1,
-            handletextpad=0.4,
-            borderpad=0.3,
-            labelspacing=0.2,
-        )
-        for text in legend.get_texts():
-            text.set_color(TOKENS["text_secondary"])
-            text.set_fontfamily(_CJK)
+
+    def _expand_view(
+        self,
+        panel: _PanelArtists,
+        xs: list[float],
+        ys: list[float],
+    ) -> bool:
+        """数据越出当前视窗才扩界；小幅变化保持视窗，避免每个频点都重建背景。"""
+        x_low, x_high = panel.xlim
+        y_low, y_high = panel.ylim
+        if (
+            x_low <= min(xs)
+            and max(xs) <= x_high
+            and y_low <= min(ys)
+            and max(ys) <= y_high
+        ):
+            return False
+        panel.axis.set_xlim(*_padded_bounds(xs))
+        panel.axis.set_ylim(*_padded_bounds(ys))
+        panel.xlim = tuple(float(value) for value in panel.axis.get_xlim())
+        panel.ylim = tuple(float(value) for value in panel.axis.get_ylim())
+        return True
+
+    @staticmethod
+    def _reset_view(panel: _PanelArtists) -> None:
+        panel.axis.set_xlim(0.0, 1.0)
+        panel.axis.set_ylim(0.0, 1.0)
+        panel.xlim = (0.0, 1.0)
+        panel.ylim = (0.0, 1.0)
 
     # -- 频点浏览 -----------------------------------------------------------
 
@@ -480,13 +749,156 @@ class RealTimePlotWidget(QWidget):
         if filmstrip is not None:
             filmstrip.set_frequencies(frequencies, current_index)
 
+    # -- 背景缓存与 blit -----------------------------------------------------
+
+    def clear_plots(self) -> None:
+        """清空数据、目标带与视窗，回到“等待数据”空态（可视化页统一入口）。"""
+        for panel in self._panels:
+            self._remove_bands(panel)
+            panel.line.set_data([], [])
+            panel.line.set_visible(False)
+            panel.marker.set_data([], [])
+            panel.marker.set_visible(False)
+            if panel.annotation is not None:
+                panel.annotation.remove()
+                panel.annotation = None
+            if panel.hint is None:
+                panel.hint = self._add_waiting_hint(panel.axis)
+            panel.has_data = False
+            self._reset_view(panel)
+        self._target_bands = ()
+        self._output_axis = True
+        self._panels[1].axis.set_xlabel(
+            "输出功率 (dBm)",
+            color=_TICK_COLOR,
+            fontdict={**_CJK_FONT, "size": 8.5},
+        )
+        self._static_dirty = True
+        self._request_draw()
+
+    def invalidate_background(self) -> None:
+        """静态内容变了：可见时防抖重建一次，隐藏时只标记。"""
+        self._static_dirty = True
+        schedule = getattr(self.canvas, "schedule_rebuild", None)
+        if callable(schedule):
+            schedule()
+
+    def on_canvas_shown(self) -> None:
+        """页面切到前台：缓存有效就立即 blit，否则等过渡结束再重建。"""
+        if self._background_valid():
+            self._blit()
+            return
+        self.canvas.schedule_rebuild(_BACKGROUND_SHOW_DEFER_MS)
+
+    def rebuild_background(self) -> None:
+        """整图绘制一次并缓存为背景，随后 blit 动态层。"""
+        if not self.canvas.isVisible():
+            return
+        if self._background_valid():
+            # 防抖定时器可能排在一次立即重建之后：已经有效就只补一次 blit。
+            self._blit()
+            return
+        width = int(self.canvas.width())
+        height = int(self.canvas.height())
+        if width <= 0 or height <= 0:
+            return
+        self._apply_layout()
+        dynamic = [artist for panel in self._panels for artist in panel.dynamics()]
+        previous = [(artist, artist.get_visible()) for artist in dynamic]
+        for artist in dynamic:
+            artist.set_visible(False)
+        try:
+            self.canvas.draw()
+        finally:
+            for artist, visible in previous:
+                artist.set_visible(visible)
+        self.canvas.clear_pending_draw()
+        self._background = self.canvas.copy_from_bbox(self.figure.bbox)
+        self._background_size = (width, height)
+        self._overlay_regions = self._capture_overlays()
+        self._static_dirty = False
+        self._render_pending = False
+        self._blit()
+
+    def _capture_overlays(self) -> list[Any]:
+        """截取静态层里压在数据之上的元素（图例、目标带标签）。
+
+        这些元素留在背景缓存里，但按 zorder 必须盖住曲线；blit 时先画曲线，再把
+        它们各自的区域恢复一次，既不需要每帧重画图例文字，也不会让曲线穿过图例。
+        区域比元素包围盒多留 1px，避免圆角与抗锯齿在边界留下旧像素。
+        """
+        try:
+            renderer = self.canvas.get_renderer()
+        except (AttributeError, RuntimeError):
+            return []
+        boxes: list[Any] = []
+        for panel in self._panels:
+            try:
+                boxes.append(panel.legend.get_window_extent(renderer).padded(1.0))
+            except (AttributeError, RuntimeError, ValueError):
+                pass
+            for artist in panel.bands:
+                if not isinstance(artist, Text) or not artist.get_visible():
+                    continue
+                try:
+                    boxes.append(artist.get_window_extent(renderer).padded(1.0))
+                except (AttributeError, RuntimeError, ValueError):
+                    pass
+        regions: list[Any] = []
+        for box in boxes:
+            try:
+                regions.append(self.canvas.copy_from_bbox(box))
+            except (AttributeError, RuntimeError, ValueError):
+                continue
+        return regions
+
+    def _background_valid(self) -> bool:
+        """背景缓存是否覆盖当前画布尺寸且没有静态改动。"""
+        return (
+            self._background is not None
+            and not self._static_dirty
+            and self._background_size
+            == (int(self.canvas.width()), int(self.canvas.height()))
+        )
+
+    def _blit(self) -> None:
+        """恢复背景后只重画动态层；背景失效时退回一次重建。"""
+        if not self._background_valid():
+            self.rebuild_background()
+            return
+        self.canvas.restore_region(self._background)
+        for panel in self._panels:
+            for artist in (panel.line, panel.marker):
+                if artist.get_visible():
+                    self.figure.draw_artist(artist)
+        # 图例/目标带标签在完整绘制里盖住曲线：先画曲线，再恢复它们的区域，
+        # 避免曲线穿过图例；数值标注的 zorder 更高，最后画在它们之上。
+        for region in self._overlay_regions:
+            self.canvas.restore_region(region)
+        for panel in self._panels:
+            annotation = panel.annotation
+            if annotation is not None and annotation.get_visible():
+                self.figure.draw_artist(annotation)
+        self.canvas.blit(self.figure.bbox)
+
+    def _render(self) -> None:
+        """真正渲染一帧：隐藏只记待办；可见时 blit，背景失效才重建。"""
+        if not self.canvas.isVisible():
+            self._render_pending = True
+            return
+        if self._background_valid():
+            self._render_pending = False
+            self._blit()
+        else:
+            self.rebuild_background()
+
     # -- 重绘节流 -----------------------------------------------------------
 
     def _request_draw(self) -> None:
-        """最多每 :attr:`DRAW_INTERVAL_MS` 真正重绘一次，期间只记住“还要画”。"""
+        """最多每 :attr:`DRAW_INTERVAL_MS` 真正渲染一次，期间只记住“还要画”。"""
         if self._draw_ready:
             self._draw_ready = False
-            self.canvas.draw_idle()
+            self._render()
             self._draw_timer.start()
         else:
             self._draw_pending = True

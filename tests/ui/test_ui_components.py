@@ -19,7 +19,7 @@ class UiComponentTests(unittest.TestCase):
 
 
 class DeferredPlotCanvasTests(unittest.TestCase):
-    """隐藏的图不排队重画：页面切换不能把几百毫秒的空白图绘制塞进动画里。"""
+    """隐藏的图不排队重画；显示瞬间不整图绘制，只 blit 或延迟重建。"""
 
     @classmethod
     def setUpClass(cls):
@@ -30,6 +30,7 @@ class DeferredPlotCanvasTests(unittest.TestCase):
         widget.resize(640, 480)
         self.addCleanup(widget.close)
         self.addCleanup(widget.deleteLater)
+        self.addCleanup(widget.canvas.cancel_rebuild)
         return widget
 
     def _record_idle_calls(self, canvas, draws):
@@ -54,23 +55,36 @@ class DeferredPlotCanvasTests(unittest.TestCase):
         self.assertEqual(draws, [], "不可见时不能排队重画")
         self.assertTrue(canvas._draw_pending)
 
-    def test_plot_widget_draws_after_it_becomes_visible(self):
+    def test_show_schedules_a_rebuild_instead_of_drawing_immediately(self):
         widget = self._widget()
         canvas = widget.canvas
-        draws = []
-        with self._record_idle_calls(canvas, draws):
-            widget.show()
-            self.app.processEvents()
+        widget.show()
+        self.app.processEvents()
 
-            self.assertTrue(draws, "第一次显示时要补画")
-            self.assertFalse(canvas._draw_pending)
+        self.assertFalse(canvas._draw_pending, "显示时先消费 matplotlib 的待办")
+        self.assertTrue(
+            canvas.has_pending_rebuild(), "重建被排到切页过渡之后，而不是显示瞬间"
+        )
+        self.assertFalse(
+            hasattr(canvas, "renderer"),
+            "显示瞬间不能已经付出整图绘制的开销",
+        )
+        canvas.cancel_rebuild()
 
-            scheduled = len(draws)
-            canvas.draw_idle()
-            self.app.processEvents()
-            self.assertGreater(
-                len(draws), scheduled, "可见后恢复正常的延迟重画"
-            )
+    def test_valid_background_is_blitted_without_a_redraw(self):
+        widget = self._widget()
+        widget.show()
+        self.app.processEvents()
+        widget.canvas.cancel_rebuild()
+        widget.rebuild_background()
+
+        self.assertIsNotNone(widget._background)
+        with patch.object(
+            widget, "rebuild_background", wraps=widget.rebuild_background
+        ) as rebuild:
+            widget.on_canvas_shown()
+
+        self.assertFalse(rebuild.called, "背景有效时切回页面只 blit，不重建")
 
 
 if __name__ == "__main__":

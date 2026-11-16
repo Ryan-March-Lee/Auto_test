@@ -319,10 +319,9 @@ class VisualizationPage(QWidget):
 
     def _set_empty_state(self, message: str):
         self.history.clear()
-        for axis in self.data_plot_widget.figure.axes:
-            axis.clear()
-        self.data_plot_widget.set_target_bands(())
-        self.data_plot_widget.canvas.draw_idle()
+        # 绘图控件拥有背景缓存与艺术家，直接清空 axes 会让缓存与数据脱节；
+        # 这里统一走控件入口：清数据、目标带与视窗，回到“等待数据”。
+        self.data_plot_widget.clear_plots()
         self.frequency_filmstrip.clear()
         self.freq_label.setText(message)
         self.freq_prev_btn.setEnabled(False)

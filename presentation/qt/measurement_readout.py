@@ -249,9 +249,9 @@ class MeasurementReadout(QFrame):
         outer.setSpacing(0)
         self._content = QWidget(self)
         outer.addWidget(self._content)
-        self._content_effect = QGraphicsOpacityEffect(self._content)
-        self._content_effect.setOpacity(1.0)
-        self._content.setGraphicsEffect(self._content_effect)
+        # 透明度效果只在淡入期间挂着：常驻的 ``QGraphicsEffect`` 会与切页过渡挂在页面
+        # 上的效果形成嵌套，见 :meth:`_play_fade`。
+        self._content_effect: QGraphicsOpacityEffect | None = None
 
         content_layout = QHBoxLayout(self._content)
         content_layout.setContentsMargins(0, 0, 0, 0)
@@ -313,9 +313,7 @@ class MeasurementReadout(QFrame):
         self._fade.setDuration(MOTION_DATA_MS)
         self._fade.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._fade.valueChanged.connect(self._on_fade_value)
-        self._fade.finished.connect(
-            lambda: self._content_effect.setOpacity(1.0)
-        )
+        self._fade.finished.connect(self._end_fade)
 
     # ---- 读取 ---------------------------------------------------------------
 
@@ -393,8 +391,7 @@ class MeasurementReadout(QFrame):
         self._animations_enabled = enabled
         self.live_badge.set_animations_enabled(enabled)
         if not enabled:
-            self._fade.stop()
-            self._content_effect.setOpacity(1.0)
+            self._end_fade()
 
     def _apply_metrics(self, metrics: tuple[ReadoutMetric, ...]) -> None:
         while len(self._chips) < len(metrics):
@@ -430,13 +427,48 @@ class MeasurementReadout(QFrame):
         super().resizeEvent(event)
         self._reflow_chips()
 
+    def hideEvent(self, event) -> None:  # noqa: N802 - Qt 覆盖方法
+        """隐藏时收掉淡入：不让透明度效果跟着页面回到切页过渡里。"""
+        super().hideEvent(event)
+        if self._content_effect is not None:
+            self._end_fade()
+
     def _play_fade(self) -> None:
-        self._fade.stop()
-        self._content_effect.setOpacity(0.55)
+        """新读数淡入：内容从 0.55 透明度回到 1.0，结束后摘掉效果。
+
+        透明度效果只在淡入期间存在。常驻的 ``QGraphicsEffect`` 会和切页过渡挂在页面
+        上的效果嵌套：内层 ``sourcePixmap`` 按设备坐标取快照，自身在页面里的偏移会再
+        被算一次，读数条内容（深色读数芯片最明显）会画到错误位置闪一下。页面上已经有
+        过渡效果时同样跳过淡入：新读数照常显示，只是不做这次确认动效。
+        """
+        if self._ancestor_has_effect():
+            return
+        self._end_fade()
+        effect = QGraphicsOpacityEffect(self._content)
+        effect.setOpacity(0.55)
+        self._content_effect = effect
+        self._content.setGraphicsEffect(effect)
         self._fade.start()
 
+    def _end_fade(self) -> None:
+        """结束淡入并摘掉效果，控件回到正常绘制路径；重复调用是幂等的。"""
+        self._fade.stop()
+        self._content_effect = None
+        self._content.setGraphicsEffect(None)
+
+    def _ancestor_has_effect(self) -> bool:
+        """祖先上是否已有图形效果（切页过渡）：有就不在读数条里再挂一层。"""
+        parent = self.parentWidget()
+        while parent is not None:
+            if parent.graphicsEffect() is not None:
+                return True
+            parent = parent.parentWidget()
+        return False
+
     def _on_fade_value(self, value) -> None:
-        self._content_effect.setOpacity(float(value))
+        effect = self._content_effect
+        if effect is not None:
+            effect.setOpacity(float(value))
 
     # ---- 绘制 ---------------------------------------------------------------
 

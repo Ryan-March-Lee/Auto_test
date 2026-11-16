@@ -6,10 +6,11 @@ import unittest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QCoreApplication, QEvent
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
 
 from presentation.qt.measurement_readout import MeasurementReadout, ReadoutMetric
-from presentation.qt.theme import build_stylesheet
+from presentation.qt.motion import RevealDirection, reveal
+from presentation.qt.theme import TOKENS, build_stylesheet
 
 
 def _destroy(widget):
@@ -106,11 +107,67 @@ class MeasurementReadoutTests(unittest.TestCase):
         readout.set_animations_enabled(False)
         self.assertFalse(readout.animations_enabled())
         self.assertFalse(readout.live_badge.dot.animations_enabled())
-        self.assertEqual(readout._content_effect.opacity(), 1.0)
+        self.assertIsNone(readout._content.graphicsEffect())
 
         readout.set_active(False)
         self.assertFalse(readout.is_active())
         self.assertTrue(readout.live_badge.isHidden())
+
+    def test_content_carries_no_persistent_opacity_effect(self):
+        """空闲时不常驻 QGraphicsEffect：切页过渡再挂效果会嵌套并把内容画歪。"""
+        readout = self._track(MeasurementReadout())
+        readout.resize(600, 110)
+        readout.set_reading(
+            "2.45", "GHz", (ReadoutMetric("线缆1", "0.44", "dB"),)
+        )
+
+        self.assertIsNone(readout._content.graphicsEffect())
+
+    def test_fade_effect_lives_only_while_the_fade_runs(self):
+        readout = self._track(MeasurementReadout())
+        readout.resize(600, 110)
+        readout.show()
+        self.app.processEvents()
+        readout.set_reading(
+            "2.45", "GHz", (ReadoutMetric("线缆1", "0.44", "dB"),)
+        )
+        self.assertIsNone(readout._content.graphicsEffect())
+
+        readout.set_reading(
+            "2.50", "GHz", (ReadoutMetric("线缆1", "0.46", "dB"),)
+        )
+        effect = readout._content.graphicsEffect()
+        self.assertIsNotNone(effect)
+        self.assertLess(effect.opacity(), 1.0)
+
+        readout._fade.setCurrentTime(readout._fade.duration())
+
+        self.assertIsNone(readout._content.graphicsEffect())
+        self.assertIsNone(readout._content_effect)
+
+    def test_no_nested_effect_while_a_page_reveal_is_playing(self):
+        """切页过渡已经挂在页面上时，读数条不再叠加自己的透明度效果。"""
+        page = self._track(QWidget())
+        layout = QVBoxLayout(page)
+        readout = MeasurementReadout(page)
+        layout.addWidget(readout)
+        page.resize(800, 200)
+        page.show()
+        self.app.processEvents()
+        readout.set_reading(
+            "2.45", "GHz", (ReadoutMetric("线缆1", "0.44", "dB"),)
+        )
+        handle = reveal(
+            page, RevealDirection.FROM_RIGHT, 220, background=TOKENS["canvas"]
+        )
+        self.addCleanup(handle.cancel)
+
+        readout.set_reading(
+            "2.50", "GHz", (ReadoutMetric("线缆1", "0.46", "dB"),)
+        )
+
+        self.assertIsNone(readout._content.graphicsEffect())
+        self.assertEqual(readout._chips[0].value.text(), "0.46")
 
     def test_wide_readout_puts_four_chips_on_one_row(self):
         readout = self._track(MeasurementReadout())

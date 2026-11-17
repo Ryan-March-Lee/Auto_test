@@ -1,8 +1,15 @@
 import unittest
+from pathlib import Path
 
+from application.dto.measurement_results import MeasurementType
+from application.inputs.mock_scenario import load_mock_scenario
 from presentation.qt.measurement_controller import MeasurementController
-from presentation.qt.measurement_controller_contract import MeasurementCommand
+from presentation.qt.measurement_controller_contract import (
+    MeasurementCommand,
+    MeasurementExecutionMode,
+)
 from presentation.qt.measurement_state import MeasurementKind, MeasurementStatus
+from presentation.qt.simulation_session import SimulationSession, SimulationStage
 
 from tests.contract_doubles import contract_run
 
@@ -10,6 +17,34 @@ from tests.contract_doubles import contract_run
 # 测量命令在构造期就要求有效运行契约（D1/D10），因此空替身不再够用：
 # 这里用共享的契约替身，controller 断言只关心命令与 worker 的转发。
 _PREPARED_RUN = contract_run()
+
+_PROJECT_ROOT = Path(__file__).parents[2]
+
+
+def _cable_simulation_session():
+    scenario_path = _PROJECT_ROOT / "mock_data" / "cable_loss" / "scenario.json"
+    scenario = load_mock_scenario(
+        scenario_path, expected_measurement_type=MeasurementType.CABLE_LOSS
+    )
+    stage = SimulationStage(
+        measurement_type=MeasurementType.CABLE_LOSS,
+        scenario=scenario,
+        scenario_path=scenario_path,
+        result_path=(
+            _PROJECT_ROOT / "mock_data" / "cable_loss" / scenario.result_filename
+        ),
+    )
+    return SimulationSession(
+        snapshot_name="Mock", stages={MeasurementType.CABLE_LOSS: stage}
+    )
+
+
+def _simulation_command(session):
+    return MeasurementCommand(
+        "config.json",
+        mode=MeasurementExecutionMode.SIMULATION,
+        simulation_session=session,
+    )
 
 
 class Signal:
@@ -31,7 +66,7 @@ class Signals:
     def __init__(self):
         for name in (
             "progress", "message", "data_update", "result", "finished",
-            "stopped", "error", "step_pause",
+            "stopped", "error", "step_pause", "simulation_completed",
         ):
             setattr(self, name, Signal())
 
@@ -396,6 +431,91 @@ class MeasurementControllerTests(unittest.TestCase):
         worker.signals.finished.emit()
 
         self.assertEqual(events, [None])
+
+    def test_simulation_command_dispatches_to_the_mock_factory_without_a_port(self):
+        session = _cable_simulation_session()
+        command = _simulation_command(session)
+        calls = []
+
+        def simulation_factory(command, *, measurement_port=None):
+            calls.append((command, measurement_port))
+            worker = Worker(MeasurementKind.CABLE_LOSS)
+            self.workers.append(worker)
+            return worker
+
+        class _Port(Port):
+            def __init__(self):
+                super().__init__()
+                self.begin_calls = 0
+
+            def begin_stage(self):
+                self.begin_calls += 1
+
+        port = _Port()
+        controller = MeasurementController(
+            self.factories,
+            lambda: "runtime-config.json",
+            simulation_worker_factories={
+                MeasurementKind.CABLE_LOSS: simulation_factory
+            },
+            measurement_port=port,
+        )
+
+        self.assertTrue(controller.start_cable_loss(command))
+
+        self.assertEqual(port.begin_calls, 0, "模拟回放不得结算正式端口")
+        self.assertEqual(len(calls), 1)
+        forwarded, forwarded_port = calls[0]
+        self.assertIsNone(forwarded_port)
+        self.assertIs(forwarded.mode, MeasurementExecutionMode.SIMULATION)
+        self.assertIs(forwarded.simulation_session, session)
+        self.assertEqual(forwarded.config_path, "runtime-config.json")
+        self.assertEqual(self.factory_calls, [], "模拟命令不得走正式工厂")
+
+    def test_simulation_command_without_a_mock_factory_fails_before_start(self):
+        controller = MeasurementController(
+            self.factories, lambda: "config.json"
+        )
+        errors = []
+        controller.signals.error.connect(errors.append)
+
+        self.assertFalse(
+            controller.start_cable_loss(
+                _simulation_command(_cable_simulation_session())
+            )
+        )
+
+        self.assertEqual(controller.state.status, MeasurementStatus.FAILED)
+        self.assertEqual(
+            errors, ["未装配模拟回放 worker 工厂: cable_loss"]
+        )
+        self.assertEqual(self.factory_calls, [])
+
+    def test_simulation_completion_is_forwarded_through_the_controller(self):
+        completion = object()
+        session = _cable_simulation_session()
+        command = _simulation_command(session)
+
+        def simulation_factory(command, *, measurement_port=None):
+            worker = Worker(MeasurementKind.CABLE_LOSS)
+            self.workers.append(worker)
+            return worker
+
+        controller = MeasurementController(
+            self.factories,
+            lambda: "config.json",
+            simulation_worker_factories={
+                MeasurementKind.CABLE_LOSS: simulation_factory
+            },
+        )
+        completions = []
+        controller.signals.simulation_completed.connect(completions.append)
+
+        self.assertTrue(controller.start_cable_loss(command))
+        worker = self.workers[-1]
+        worker.signals.simulation_completed.emit(completion)
+
+        self.assertEqual(completions, [completion])
 
 
 if __name__ == "__main__":

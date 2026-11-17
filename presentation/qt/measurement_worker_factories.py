@@ -4,9 +4,20 @@ from __future__ import annotations
 
 from typing import Any
 
+from application.dto.measurement_results import MeasurementType
+
 from .measurement_controller_contract import MeasurementCommand, WorkerFactories
 from .measurement_state import MeasurementKind
+from .mock_replay_worker import MockReplayWorker
 from .workers import AmplifierWorker, CableLossWorker, DriverMappingWorker
+
+
+#: 页面测量类型只用于选择 controller 入口；模拟会话按正式 MeasurementType 索引场景。
+_SIMULATION_MEASUREMENT_TYPES = {
+    MeasurementKind.CABLE_LOSS: MeasurementType.CABLE_LOSS,
+    MeasurementKind.DRIVER_MAPPING: MeasurementType.DRIVER_POWER_MAPPING,
+    MeasurementKind.AMPLIFIER: MeasurementType.AMPLIFIER,
+}
 
 
 def build_measurement_worker_factories() -> WorkerFactories:
@@ -19,6 +30,18 @@ def build_measurement_worker_factories() -> WorkerFactories:
         MeasurementKind.CABLE_LOSS: _cable_loss_factory,
         MeasurementKind.DRIVER_MAPPING: _driver_mapping_factory,
         MeasurementKind.AMPLIFIER: _amplifier_factory,
+    }
+
+
+def build_simulation_worker_factories() -> WorkerFactories:
+    """Return the Mock replay worker factories, one per measurement kind.
+
+    模拟回放没有测量端口，也不接收正式运行契约；工厂只把命令里的模拟会话阶段交给
+    ``MockReplayWorker``。缺少对应阶段时在 worker 启动前失败。
+    """
+    return {
+        kind: _simulation_factory(measurement_type)
+        for kind, measurement_type in _SIMULATION_MEASUREMENT_TYPES.items()
     }
 
 
@@ -49,4 +72,20 @@ def _amplifier_factory(command: MeasurementCommand, *, measurement_port: Any = N
     )
 
 
-__all__ = ["build_measurement_worker_factories"]
+def _simulation_factory(measurement_type: MeasurementType):
+    def factory(command: MeasurementCommand, *, measurement_port: Any = None) -> Any:
+        if measurement_port is not None:
+            raise ValueError("模拟回放 worker 不接受测量端口")
+        session = command.simulation_session
+        if session is None:
+            raise ValueError("模拟回放命令缺少模拟会话")
+        stage = session.stage_for(measurement_type)
+        return MockReplayWorker(stage=stage)
+
+    return factory
+
+
+__all__ = [
+    "build_measurement_worker_factories",
+    "build_simulation_worker_factories",
+]

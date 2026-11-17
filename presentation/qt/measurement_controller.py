@@ -12,6 +12,7 @@ from application.lifecycle import MeasurementRuntimeCoordinator, StopIntent
 from .measurement_controller_contract import (
     ControllerState,
     MeasurementCommand,
+    MeasurementExecutionMode,
     WorkerFactories,
 )
 from .measurement_state import (
@@ -31,6 +32,7 @@ class _ControllerSignals(QObject):
     data_update = Signal(object)
     result = Signal(object)
     archival = Signal(object)
+    simulation_completed = Signal(object)
     finished = Signal()
     stopped = Signal(str)
     error = Signal(str)
@@ -52,6 +54,7 @@ class MeasurementController:
         worker_factories: WorkerFactories,
         config_path_provider: Callable[[], str],
         *,
+        simulation_worker_factories: WorkerFactories | None = None,
         measurement_port: Any = None,
         log_sink: Callable[[str], Any] | None = None,
     ) -> None:
@@ -65,8 +68,13 @@ class MeasurementController:
         The command's ``prepared_run`` (the configuration-phase run contract) is
         forwarded unchanged to the worker factory, so measurements started from
         a page reuse the frozen run instead of re-preparing from GUI state.
+
+        ``simulation_worker_factories`` is the separate dispatch table for
+        ``MeasurementExecutionMode.SIMULATION`` commands: 模拟链路没有测量端口，
+        只按模拟会话里的阶段创建回放 worker。正式模式永远不读取这张表。
         """
         self._worker_factories = dict(worker_factories)
+        self._simulation_worker_factories = dict(simulation_worker_factories or {})
         self._config_path_provider = config_path_provider
         self._measurement_port = measurement_port
         self._log_sink = log_sink
@@ -80,6 +88,7 @@ class MeasurementController:
                 "data_update": self.signals.data_update.emit,
                 "result": self._on_result,
                 "archival": self._on_archival,
+                "simulation_completed": self.signals.simulation_completed.emit,
                 "finished": self._on_finished,
                 "stopped": self._on_stopped,
                 "error": self._on_error,
@@ -128,13 +137,23 @@ class MeasurementController:
 
         preparing = MeasurementViewState(kind).prepare()
         self._set_state(kind, preparing)
+        simulation = command.mode is MeasurementExecutionMode.SIMULATION
         try:
             # 复用同一端口时，下一阶段开始前必须先确认上一阶段已安全结算。
-            # 没有阶段入口的端口（测试替身/旧端口）保持原有行为。
-            begin_stage = getattr(self._measurement_port, "begin_stage", None)
-            if callable(begin_stage):
-                begin_stage()
-            factory = self._worker_factories[kind]
+            # 模拟回放没有端口，不参与正式阶段的端口结算。
+            if not simulation:
+                begin_stage = getattr(self._measurement_port, "begin_stage", None)
+                if callable(begin_stage):
+                    begin_stage()
+            factories = (
+                self._simulation_worker_factories
+                if simulation
+                else self._worker_factories
+            )
+            if kind not in factories:
+                label = "模拟回放" if simulation else "正式测量"
+                raise ValueError(f"未装配{label} worker 工厂: {kind.value}")
+            factory = factories[kind]
             config_path = self._config_path_provider()
             if not isinstance(config_path, str) or not config_path.strip():
                 raise ValueError("配置路径提供者返回了空路径")
@@ -146,8 +165,13 @@ class MeasurementController:
                 driver_mapping_path=command.driver_mapping_path,
                 cable_loss_digest=command.cable_loss_digest,
                 driver_mapping_digest=command.driver_mapping_digest,
+                mode=command.mode,
+                simulation_session=command.simulation_session,
             )
-            worker = factory(effective_command, measurement_port=self._measurement_port)
+            worker = factory(
+                effective_command,
+                measurement_port=None if simulation else self._measurement_port,
+            )
             self._worker = worker
             self._worker_lifecycle.bind(worker)
             self._set_state(kind, preparing.run())

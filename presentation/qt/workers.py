@@ -40,6 +40,8 @@ class WorkerSignals(QObject):
     result = Signal(object)
     # 结构化归档结果（application.dto.archival.ArchivalOutcome）；未启用自动归档时不发。
     archival = Signal(object)
+    # 模拟回放完成载荷（presentation.qt.mock_replay.MockReplayCompletion）；正式运行不发。
+    simulation_completed = Signal(object)
     progress = Signal(int)
     message = Signal(str)
     data_update = Signal(dict)

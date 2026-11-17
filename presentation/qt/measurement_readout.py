@@ -430,7 +430,7 @@ class MeasurementReadout(QFrame):
     def hideEvent(self, event) -> None:  # noqa: N802 - Qt 覆盖方法
         """隐藏时收掉淡入：不让透明度效果跟着页面回到切页过渡里。"""
         super().hideEvent(event)
-        if self._content_effect is not None:
+        if getattr(self, "_content_effect", None) is not None:
             self._end_fade()
 
     def _play_fade(self) -> None:

@@ -472,7 +472,8 @@ class MeasurementCommandRunContractTests(unittest.TestCase):
         # 构造即满足契约（D1/D10）：缺少运行对象、或运行对象不带契约，都在构造期失败。
         with self.assertRaises(ValueError):
             MeasurementCommand("config.json", None)
-        with self.assertRaises(TypeError):
+        # 省略 prepared_run 仍是正式模式；它只在模拟模式下允许为空。
+        with self.assertRaises(ValueError):
             MeasurementCommand("config.json")
 
     def test_command_rejects_a_run_object_without_the_contract(self):

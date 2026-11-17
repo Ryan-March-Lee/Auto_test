@@ -59,7 +59,10 @@ from .config_projection import ConfigBackfillError
 from .configuration_editor import apply_config_to_pages
 from .measurement_controller import MeasurementController
 from .measurement_state import MeasurementKind, MeasurementStatus
-from .measurement_worker_factories import build_measurement_worker_factories
+from .measurement_worker_factories import (
+    build_measurement_worker_factories,
+    build_simulation_worker_factories,
+)
 from .realtime_buffer import RealtimeMeasurementBuffer
 from .simulation_session import SimulationSession, build_simulation_session
 from .workers import InstrumentWorker
@@ -301,7 +304,9 @@ class ApplicationCoordinator:
         # 命名配置快照是独立持久化能力；组合根注入，协调器不直接依赖文件系统实现。
         self.configuration_snapshots = configuration_snapshots
         self.controller: MeasurementController = controller or MeasurementController(
-            build_measurement_worker_factories(), self.measurement_config_path
+            build_measurement_worker_factories(),
+            self.measurement_config_path,
+            simulation_worker_factories=build_simulation_worker_factories(),
         )
         # 阶段在 worker 创建前失败时没有线程结束事件；端口所有者必须自己收尾。
         self.controller.signals.stage_start_failed.connect(

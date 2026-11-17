@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QCoreApplication, QEvent
 from PySide6.QtWidgets import QApplication, QDialog, QGroupBox, QWidget
 
 from application.dto import CableLossMeasurementResult, CableLossRow
@@ -35,6 +36,13 @@ RUN_DIRECTORY = f"D:/runs/{RUN_ID}"
 
 # 测量命令在构造期就要求有效运行契约（D1/D10）；本文件只验证归档展示，替身只提供契约。
 _PREPARED_RUN = contract_run(RUN_ID)
+
+
+def _destroy_widget(widget):
+    """销毁离屏顶层控件：close() 只隐藏，C++ 对象仍会留在整轮事件循环里。"""
+    widget.close()
+    widget.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 class Signal:
@@ -229,6 +237,7 @@ class AmplifierPageArchivalLogTests(unittest.TestCase):
             archival_location_provider=_location_provider(self.locations),
             archival_run_id_provider=lambda: self.run.run_id,
         )
+        self.addCleanup(_destroy_widget, self.page)
         self.page.bind_controller(self.controller)
         # 主功放测量要求先显式选择校准输入（本类默认有驱放，因此两类都要）。
         self.page.show_loaded_cable_loss(
@@ -444,6 +453,7 @@ class CableLossPageArchivalLogTests(unittest.TestCase):
             archival_location_provider=_location_provider([]),
             archival_run_id_provider=lambda: RUN_ID,
         )
+        self.addCleanup(_destroy_widget, self.page)
         self.page.bind_controller(self.controller)
 
     def test_stage_archive_is_announced_without_deliverables(self):
@@ -517,6 +527,7 @@ class DriverMappingPageArchivalLogTests(unittest.TestCase):
             archival_location_provider=_location_provider([]),
             archival_run_id_provider=lambda: RUN_ID,
         )
+        self.addCleanup(_destroy_widget, self.page)
         self.page.bind_controller(self.controller)
         self.page.show_loaded_cable_loss(
             path="test_results/cable_loss/20261111T010203Z_a1b2c3d4.json",

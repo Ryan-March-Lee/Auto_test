@@ -16,7 +16,11 @@ from infrastructure.discovery.instrument_discovery import (
     build_scanner,
 )
 from infrastructure.discovery.simulated_network import demo_idn_responses
-from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService
+from infrastructure.filesystem.paths import (
+    DEFAULT_PATHS,
+    MockDataPathService,
+    PathService,
+)
 from infrastructure.gui_data_service import (
     JsonConfigurationAdapter,
     ResultExportAdapter,
@@ -111,6 +115,15 @@ def build_gui_data_service(
             results=query,
         ),
     )
+
+
+def build_mock_data_paths(paths: PathService | None = None) -> MockDataPathService:
+    """装配 Mock 场景与正式结果的只读路径服务。
+
+    表现层只按正式测量类型要路径；``mock_data`` 目录边界、Windows 保留设备名与
+    链接越界校验仍只在基础设施的路径服务里实现。
+    """
+    return MockDataPathService((paths or DEFAULT_PATHS).project_root)
 
 
 def build_device_scanner_factory(

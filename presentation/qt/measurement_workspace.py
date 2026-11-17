@@ -86,6 +86,8 @@ _UNCONNECTED_RUN_TEXT = "未连接"
 _MODE_TEXT_DRIVER = "有驱放测试"
 _MODE_TEXT_NO_DRIVER = "无驱放测试"
 _MODE_TEXT_UNSET = "未选择测试模式"
+#: Mock 模拟会话文案：独立于驱动模式，明确“不会连接真实仪器”。
+_MODE_TEXT_SIMULATION = "Mock 模拟模式"
 
 #: 顶栏：阶段条与状态簇共用一行。左右 16px 与此前页头的外边距保持一致；阶段条
 #: 固定 52px 高，状态簇垂直居中，整条顶栏不会因为按钮更高而变高。
@@ -95,16 +97,20 @@ _TOP_BAR_DIVIDER_HEIGHT = 22
 _CONTENT_MARGINS = (16, 0, 12, 12)
 
 
-def mode_text(driver_enabled: bool | None) -> str:
+def mode_text(driver_enabled: bool | None, *, simulation: bool = False) -> str:
     """把驱动模式折成状态簇与徽标共用的唯一文案。
 
     ``None`` 表示还没有选择测试模式（欢迎页或刚返回欢迎页）；``True`` / ``False``
-    分别表示有驱放测试与无驱放测试。这是纯展示格式，不读取配置，也不决定页面状态。
+    分别表示有驱放测试与无驱放测试。``simulation=True`` 表示当前是 Mock 模拟会话，
+    徽标优先显示“Mock 模拟模式”，避免把模拟状态误读成真实仪器连接。这是纯展示
+    格式，不读取配置，也不决定页面状态。
     """
+    if driver_enabled is not None and not isinstance(driver_enabled, bool):
+        raise TypeError("驱动模式必须是 bool 或 None")
+    if simulation:
+        return _MODE_TEXT_SIMULATION
     if driver_enabled is None:
         return _MODE_TEXT_UNSET
-    if not isinstance(driver_enabled, bool):
-        raise TypeError("驱动模式必须是 bool 或 None")
     return _MODE_TEXT_DRIVER if driver_enabled else _MODE_TEXT_NO_DRIVER
 
 

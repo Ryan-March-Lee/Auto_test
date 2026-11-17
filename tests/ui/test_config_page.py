@@ -73,6 +73,46 @@ class ConfigurationPageTests(unittest.TestCase):
         self.assertTrue(page.driver_parameters_group.isEnabled())
         self.assertTrue(page.save_config_btn.isEnabled())
 
+    def test_mock_simulation_mode_locks_save_but_keeps_the_finalize_entry(self):
+        """Mock 配置只锁参数与保存；“连接仪器”仍是进入模拟会话的唯一确认动作。"""
+        page = self.make_page()
+        saves = []
+        page.save_requested.connect(lambda: saves.append(True))
+
+        page.set_simulation_mode(True, "Mock 模拟配置：参数固定只读")
+
+        self.assertTrue(page.simulation_notice.isVisibleTo(page))
+        self.assertIn("Mock", page.simulation_notice.text())
+        self.assertFalse(page.test_parameters_group.isEnabled())
+        self.assertFalse(page.driver_parameters_group.isEnabled())
+        self.assertFalse(page.save_config_btn.isEnabled())
+        self.assertTrue(page.finalize_run_btn.isEnabled())
+        self.assertTrue(page.previous_step_btn.isEnabled())
+        page.request_save()
+        self.assertEqual(saves, [])
+
+        page.set_simulation_mode(False)
+        self.assertFalse(page.simulation_notice.isVisibleTo(page))
+        self.assertTrue(page.test_parameters_group.isEnabled())
+        self.assertTrue(page.save_config_btn.isEnabled())
+        self.assertTrue(page.finalize_run_btn.isEnabled())
+
+    def test_version_read_only_and_mock_mode_stay_independent(self):
+        page = self.make_page()
+
+        page.set_read_only("1.0 配置只能查看")
+        page.set_simulation_mode(True, "Mock 模拟配置")
+        page.set_simulation_mode(False)
+
+        self.assertFalse(page.test_parameters_group.isEnabled())
+        self.assertFalse(page.save_config_btn.isEnabled())
+        self.assertFalse(page.finalize_run_btn.isEnabled())
+
+        page.set_read_only(None)
+        self.assertTrue(page.test_parameters_group.isEnabled())
+        self.assertTrue(page.save_config_btn.isEnabled())
+        self.assertTrue(page.finalize_run_btn.isEnabled())
+
     def test_driver_mode_emits_change_signal(self):
         page = self.make_page()
         changes = []

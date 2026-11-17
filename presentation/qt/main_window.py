@@ -12,14 +12,8 @@ from typing import Any
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
-    QApplication,
-    QLabel,
-    QMainWindow,
-    QMessageBox,
-    QStackedWidget,
-    QTabWidget,
-    QVBoxLayout,
-    QWidget,
+    QApplication, QLabel, QMainWindow, QMessageBox,
+    QStackedWidget, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from infrastructure.logging.app_logging import setup_logging
@@ -27,6 +21,7 @@ from presentation.qt.application_coordinator import ApplicationCoordinator, RunF
 from presentation.qt.composition import (
     build_configuration_snapshot_repository,
     build_device_scanner_factory,
+    build_mock_data_paths,
     default_paths,
 )
 from presentation.qt.configuration_editor import ConfigurationEditor
@@ -77,8 +72,7 @@ class MainWindow(ConfigurationSnapshotActions, QMainWindow):
         super().__init__()
         self.paths = paths or default_paths()
         self.setWindowTitle("PA自动测试系统 v1.0")
-        # 初始几何按屏幕可用区域计算（居中、避开任务栏），不再写死 100,100,1600,1000
-        # 而落到屏幕右下角、被边缘和任务栏切掉一部分；包体尺寸见 window_geometry。
+        # 初始几何按屏幕可用区域计算（居中、避开任务栏）；包体尺寸见 window_geometry。
         fit_window_to_screen(self)
         self.coordinator = ApplicationCoordinator(
             log=self.add_log_message,
@@ -87,6 +81,7 @@ class MainWindow(ConfigurationSnapshotActions, QMainWindow):
             paths=self.paths,
             config_path=config_path,
             configuration_snapshots=build_configuration_snapshot_repository(self.paths),
+            mock_paths=build_mock_data_paths(self.paths),
         )
         self.measurement_controller.signals.thread_finished.connect(
             self._on_measurement_controller_thread_finished
@@ -529,6 +524,8 @@ class MainWindow(ConfigurationSnapshotActions, QMainWindow):
         )
         if not started:
             self._restore_test_config_page()
+        elif self.coordinator.simulation_session_active():
+            self.on_instrument_connected()
 
     def _restore_test_config_page(self):
         """恢复测试配置页控件并按协调器状态同步最终按钮语义。"""
@@ -562,13 +559,17 @@ class MainWindow(ConfigurationSnapshotActions, QMainWindow):
             self.add_log_message("仪器端口提交失败；最终动作未生效，请重试")
 
     def on_instrument_connected(self):
-        """连接完成：只有协调器已提交运行和端口才进入测量区，不自动开始测量。"""
+        """连接完成：只有协调器已交出正式运行或模拟会话才进入测量区。
+
+        正式连接与模拟会话共用这一条交接路径，但都不自动开始测量；模拟模式只把
+        状态写成“模拟会话已就绪”，不打开任何端口。
+        """
         self.progress_bar.setValue(0)
-        if self.coordinator.state is not RunFlowState.CONNECTED:
+        if not self.coordinator.measurement_session_ready():
             self._restore_test_config_page()
             self.add_log_message("仪器连接结束但最终动作未提交；配置页保留，可重试")
             return
-        self.add_log_message("所有仪器连接成功！")
+        self.add_log_message(self.coordinator.measurement_entry_message())
         self._restore_test_config_page()
         # 提交成功后本次运行才成为当前运行：页头在这一刻显示 run id 与测试模式。
         self.workspace_binding.bind_run_identity(

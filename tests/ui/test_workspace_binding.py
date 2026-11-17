@@ -570,6 +570,39 @@ class WorkspaceBindingTests(unittest.TestCase):
         self.assertEqual(self.mode_badge.text(), "有驱放测试")
         self.assertTrue(self._driver_tab_visible())
 
+    def test_simulation_mode_wins_the_badge_without_changing_session_mode(self):
+        self.binding.start_session(True)
+
+        self.binding.set_simulation_mode(True)
+
+        self.assertEqual(self.mode_badge.text(), "Mock 模拟模式")
+        self.assertIs(self.binding.driver_mode(), True)
+        self.assertTrue(self.binding.simulation_mode())
+
+        self.binding.set_session_mode(False)
+
+        self.assertEqual(self.mode_badge.text(), "Mock 模拟模式")
+        self.assertIs(self.binding.driver_mode(), False)
+
+        self.binding.set_simulation_mode(False)
+
+        self.assertEqual(self.mode_badge.text(), "无驱放测试")
+
+    def test_a_new_session_and_reset_clear_the_simulation_badge(self):
+        self.binding.start_session(True)
+        self.binding.set_simulation_mode(True)
+
+        self.binding.start_session(False)
+
+        self.assertFalse(self.binding.simulation_mode())
+        self.assertEqual(self.mode_badge.text(), "无驱放测试")
+
+        self.binding.set_simulation_mode(True)
+        self.binding.reset_identity()
+
+        self.assertFalse(self.binding.simulation_mode())
+        self.assertEqual(self.mode_badge.text(), "未选择测试模式")
+
     def test_reset_identity_restores_the_unselected_state(self):
         rail = self.workspace.stage_rail()
         self.binding.bind_run_identity("run-1", True)

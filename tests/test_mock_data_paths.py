@@ -470,5 +470,64 @@ class MockDataPathServiceTests(unittest.TestCase):
         )
 
 
+class MockMeasurementTypePathTests(unittest.TestCase):
+    """模拟会话按正式测量类型取路径，不自行拼接阶段目录名。"""
+
+    def setUp(self):
+        self.paths = MockDataPathService(PROJECT_ROOT)
+
+    def test_scenario_and_result_paths_resolve_by_formal_measurement_type(self):
+        for measurement_type, filename in (
+            (MeasurementType.CABLE_LOSS.value, MOCK_RESULT_FILES[MockStage.CABLE_LOSS]),
+            (
+                MeasurementType.DRIVER_POWER_MAPPING.value,
+                MOCK_RESULT_FILES[MockStage.DRIVER_MAPPING],
+            ),
+            (
+                MeasurementType.AMPLIFIER.value,
+                MOCK_RESULT_FILES[MockStage.AMPLIFIER],
+            ),
+        ):
+            with self.subTest(measurement_type=measurement_type):
+                scenario = self.paths.require_scenario_path_for(measurement_type)
+                result = self.paths.require_result_path_for(
+                    measurement_type, filename
+                )
+                self.assertTrue(scenario.is_file())
+                self.assertTrue(result.is_file())
+        self.assertEqual(
+            self.paths.require_scenario_path_for("driver_power_mapping").parent.name,
+            "driver_mapping",
+        )
+
+    def test_unknown_measurement_type_has_a_readable_error(self):
+        with self.assertRaises(MockDataPathError):
+            self.paths.require_scenario_path_for("not_a_measurement")
+
+    def test_calibration_reference_resolves_inside_its_stage(self):
+        reference = (
+            "mock_data/cable_loss/20261117T060245Z_9b2e7d10.json"
+        )
+        resolved = self.paths.require_reference_path(reference)
+        self.assertTrue(resolved.is_file())
+        self.assertEqual(resolved.parent.name, "cable_loss")
+
+    def test_calibration_reference_with_bad_shape_is_rejected(self):
+        for reference in (
+            "cable_loss/20261117T060245Z_9b2e7d10.json",
+            "/mock_data/cable_loss/20261117T060245Z_9b2e7d10.json",
+            "mock_data/cable_loss/../scenario.json",
+            "mock_data/unknown/20261117T060245Z_9b2e7d10.json",
+            " mock_data/cable_loss/20261117T060245Z_9b2e7d10.json",
+        ):
+            with self.subTest(reference=reference):
+                with self.assertRaises(MockDataPathError):
+                    self.paths.require_reference_path(reference)
+
+    def test_calibration_reference_to_a_missing_file_is_rejected(self):
+        with self.assertRaises(MockDataPathError):
+            self.paths.require_reference_path("mock_data/cable_loss/missing.json")
+
+
 if __name__ == "__main__":
     unittest.main()

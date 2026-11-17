@@ -422,6 +422,16 @@ class MockDataPathService:
             description=f"Mock {target_stage.value} 场景文件",
         )
 
+    def require_scenario_path_for(self, measurement_type: str) -> Path:
+        """按正式测量类型返回已存在的场景文件。
+
+        模拟会话只持有测量类型（例如 ``driver_power_mapping``），目录名
+        （``driver_mapping``）与枚举的对应关系仍只在本模块维护；调用方不需要再
+        自己拼接 ``mock_data`` 路径。
+        """
+        stage = mock_stage_for_measurement_type(measurement_type)
+        return self.require_scenario_path(stage)
+
     def require_result_path(
         self, stage: Union[MockStage, str], filename: str
     ) -> Path:
@@ -432,6 +442,36 @@ class MockDataPathService:
             _require_plain_file_name(filename, stage=target_stage),
             description=f"Mock {target_stage.value} 正式结果文件",
         )
+
+    def require_result_path_for(
+        self, measurement_type: str, filename: str
+    ) -> Path:
+        """按正式测量类型返回已存在的正式结果文件；文件名仍按纯文件名校验。"""
+        stage = mock_stage_for_measurement_type(measurement_type)
+        return self.require_result_path(stage, filename)
+
+    def require_reference_path(self, reference: str) -> Path:
+        """解析场景里的 ``mock_data/<stage>/<文件名>`` 校准引用并确认文件存在。
+
+        引用形状已由场景契约校验；这里只接受同样的相对路径，通过阶段目录边界确认
+        后返回解析出的绝对路径，避免把校准输入解析到 ``mock_data`` 之外。
+        """
+        if not isinstance(reference, str):
+            raise MockDataPathError(
+                "Mock 校准结果引用必须是字符串，"
+                f"收到 {type(reference).__name__}"
+            )
+        if reference != reference.strip():
+            raise MockDataPathError(
+                f"Mock 校准结果引用不能包含首尾空白: {reference!r}"
+            )
+        parts = reference.split("/")
+        if len(parts) != 3 or parts[0] != MOCK_DATA_DIRNAME:
+            raise MockDataPathError(
+                "Mock 校准结果引用必须是 mock_data/<阶段>/<文件名> 形式的"
+                f"相对路径，收到 {reference!r}"
+            )
+        return self.require_result_path(coerce_mock_stage(parts[1]), parts[2])
 
     def _require_stage_file(
         self, stage: MockStage, filename: str, *, description: str

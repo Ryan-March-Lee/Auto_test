@@ -127,7 +127,9 @@ class ConfigurationSnapshotActions:
         )
         if snapshot is None:
             return
-        if not self.coordinator.load_named_configuration(snapshot.configuration_path):
+        if not self.coordinator.load_named_configuration(
+            snapshot.configuration_path, display_name=snapshot.display_name
+        ):
             self.add_log_message(f"配置加载失败: {self.coordinator.last_load_error}")
             return
         self._after_configuration_loaded()
@@ -150,6 +152,8 @@ class ConfigurationSnapshotActions:
         """
         driver_enabled = self.coordinator.amplifier_driver_mode()
         self.workspace_binding.start_session(driver_enabled)
+        # Mock 快照在加载后就是模拟模式：徽标立刻显示模拟状态，不等到“连接仪器”。
+        self.workspace_binding.set_simulation_mode(self.coordinator.is_mock_mode())
         self.coordinator.begin_configuration()
         self.configuration_editor.set_read_only(
             self.coordinator.editing_read_only_reason()

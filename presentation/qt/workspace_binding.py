@@ -94,6 +94,7 @@ class WorkspaceBinding:
         # 上一个阶段的完成态必须由这里记住，不能从 controller 的当前快照推断。
         self._run_state = run_state if run_state is not None else WorkspaceRunState()
         self._driver_mode: bool | None = None
+        self._simulation_mode = False
         self._identity_run_id: str | None = None
         self._controller = controller
         # 页面在数据变化时发出摘要变更；绑定层只负责把摘要转发给外壳。保存槽引用，
@@ -237,13 +238,30 @@ class WorkspaceBinding:
         ``None`` 表示尚未选择测试模式：驱动映射页隐藏、02 阶段停用、徽标显示
         “未选择测试模式”。会话一开始就解除旧运行与页头的关联，之后
         :meth:`sync_run_identity` 不会把上一轮运行重新挂回来；阶段状态与页头进度
-        发丝线也一起清空。
+        发丝线也一起清空。模拟模式也在这里复位，下一份普通配置不会继承上一轮 Mock。
         """
         self._identity_run_id = None
+        self._simulation_mode = False
         self._apply_driver_mode(driver_enabled)
         self._workspace.set_run_identity(None, None)
         self._workspace.set_measurement_active(False)
         self._sync_run_state(None)
+
+    def set_simulation_mode(self, active: bool) -> None:
+        """切换 Mock 模拟会话徽标；不改驱动模式、阶段可用性与页头运行身份。
+
+        Mock 快照加载后立刻显示模拟状态，“连接仪器”进入模拟会话时保持同一徽标；
+        返回欢迎页时 :meth:`reset_identity` 会把它清掉，普通配置不会残留。
+        """
+        active = bool(active)
+        if active == self._simulation_mode:
+            return
+        self._simulation_mode = active
+        self._apply_mode_badge()
+
+    def simulation_mode(self) -> bool:
+        """当前是否显示 Mock 模拟模式徽标。"""
+        return self._simulation_mode
 
     def set_session_mode(self, driver_enabled: bool) -> None:
         """只更新本次配置会话的编辑模式，不改运行身份。
@@ -318,8 +336,15 @@ class WorkspaceBinding:
                 self._tabs.setTabVisible(index, enabled is True)
         if self._workspace.has_stage("driver_mapping"):
             self._workspace.set_stage_enabled("driver_mapping", enabled is True)
-        if self._mode_badge is not None:
-            setter = getattr(self._mode_badge, "setText", None)
-            if callable(setter):
-                setter(mode_text(enabled))
         self._driver_mode = enabled
+        self._apply_mode_badge()
+
+    def _apply_mode_badge(self) -> None:
+        """把当前会话模式写入徽标；模拟状态优先于驱动模式文案。"""
+        if self._mode_badge is None:
+            return
+        setter = getattr(self._mode_badge, "setText", None)
+        if callable(setter):
+            setter(
+                mode_text(self._driver_mode, simulation=self._simulation_mode)
+            )

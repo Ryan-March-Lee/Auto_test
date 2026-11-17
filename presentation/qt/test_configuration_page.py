@@ -140,6 +140,9 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         # 1.0 编辑文档（或其他不可写版本）只读：禁用参数与保存/最终入口，保留回退入口。
         self.read_only_reason: str | None = None
         self._read_only_enabled: dict[QWidget, bool] = {}
+        # Mock 模拟配置：参数与保存锁定，但保留最终入口用于“进入模拟会话”。
+        self._simulation_mode = False
+        self._simulation_locked_enabled: dict[QWidget, bool] = {}
         # 最终动作进行中：页面不接受重复提交，参数与回退入口都禁用，直到窗口把结果交回。
         self._finalizing = False
         # 端口丢失时最终按钮改为“重新连接仪器”：不保存配置、不创建新运行。
@@ -234,6 +237,14 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         self.read_only_notice.setWordWrap(True)
         self.read_only_notice.setVisible(False)
         page_column.addWidget(self.read_only_notice, 0, 0, 1, 2)
+        # Mock 模拟配置只在参数区上方说明“参数固定、不会连接真机”，仍允许点击
+        # “连接仪器”进入模拟会话；它与版本只读是两种独立原因。
+        self.simulation_notice = QLabel()
+        self.simulation_notice.setObjectName("configurationSimulationNotice")
+        self.simulation_notice.setProperty("tone", "info")
+        self.simulation_notice.setWordWrap(True)
+        self.simulation_notice.setVisible(False)
+        page_column.addWidget(self.simulation_notice, 1, 0, 1, 2)
 
         # 设备发现与设备勾选都在“仪表配置”页（欢迎页之后的第一步）：本页只配置测试
         # 参数与运行，设备地址与身份来自那一页写入的设备绑定，页面不再提供手工填写地址
@@ -343,15 +354,15 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
             field_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             form.addWidget(field_label, row + first_parameter_row, column * 2)
             form.addWidget(widget, row + first_parameter_row, column * 2 + 1)
-        page_column.addWidget(params, 1, 0, 1, 2)
-        self._build_driver_parameters(page_column, 2, 0)
+        page_column.addWidget(params, 2, 0, 1, 2)
+        self._build_driver_parameters(page_column, 3, 0)
         self._apply_driver_gain_state()
         # 仪器连接与驱放参数同一行：最终动作在底部固定操作栏里，这里只留运行状态。
-        self._build_run_widgets(page_column, 2, 1)
+        self._build_run_widgets(page_column, 3, 1)
         page_column.setColumnStretch(0, 3)
         page_column.setColumnStretch(1, 2)
         # 富余高度留在最后一行：卡片保持自身高度，不会被拉成一张空白的大卡。
-        page_column.setRowStretch(3, 1)
+        page_column.setRowStretch(4, 1)
         root.addWidget(self._build_action_bar())
 
     # -- 驱放参数组 ---------------------------------------------------------
@@ -848,7 +859,7 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
             set_tone(self.freq_summary, preview.summary_tone)
 
     def request_save(self):
-        if self.read_only_reason:
+        if self.read_only_reason or self._simulation_mode:
             return
         if self.validate(): self.save_requested.emit()
 
@@ -862,6 +873,38 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
             return
         if self.validate():
             self.finalize_run_requested.emit()
+
+    def set_simulation_mode(self, active: bool, reason: str | None = None) -> None:
+        """Mock 模拟模式：锁定参数与保存，但保留“连接仪器”进入模拟会话。
+
+        模拟配置不要求用户编辑，也不允许保存或连接真实仪器；最终入口仍是本页唯一
+        的“进入模拟会话”确认动作，因此不能被 ``set_read_only`` 一起禁用。原因文
+        案由协调器给出，页面只负责展示与控件可用性。
+        """
+        active = bool(active)
+        reason = (reason or "").strip() or None
+        widgets = (
+            self.test_parameters_group,
+            self.driver_parameters_group,
+            self.save_config_btn,
+        )
+        was_active = self._simulation_mode
+        self._simulation_mode = active
+        self.simulation_notice.setText(reason or "")
+        self.simulation_notice.setVisible(active)
+        if active and not was_active:
+            self._simulation_locked_enabled = {
+                widget: widget.isEnabled() for widget in widgets
+            }
+            for widget in widgets:
+                widget.setEnabled(False)
+        elif not active and was_active:
+            previous = self._simulation_locked_enabled
+            self._simulation_locked_enabled = {}
+            for widget in widgets:
+                widget.setEnabled(
+                    previous.get(widget, True) and not self.read_only_reason
+                )
 
     def set_read_only(self, reason: str | None) -> None:
         """按统一会话给出的版本结论切换只读态。
@@ -927,14 +970,15 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
             widget.setEnabled(previous.get(widget, True))
         # 只读文档在进入最终动作前就被拒绝；恢复时仍以只读结论为准，不能把保存或
         # 最终入口顺手打开。非只读时保留上面恢复的原状态，不改写其它业务禁用。
-        if self.read_only_reason:
+        if self.read_only_reason or self._simulation_mode:
             for widget in (
                 self.test_parameters_group,
                 self.driver_parameters_group,
                 self.save_config_btn,
-                self.finalize_run_btn,
             ):
                 widget.setEnabled(False)
+        if self.read_only_reason:
+            self.finalize_run_btn.setEnabled(False)
 
     def set_run_status(self, text: str) -> None:
         """显示当前执行状态；由窗口在连接/清理后更新。

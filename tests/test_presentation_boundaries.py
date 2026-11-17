@@ -47,6 +47,7 @@ QT_FREE_PRESENTATION_MODULES = (
     "pages.py",
     "measurement_state.py",
     "measurement_stage.py",
+    "simulation_session.py",
     "stage_summary.py",
     "workspace_state.py",
 )

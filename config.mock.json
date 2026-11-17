@@ -1,0 +1,257 @@
+{
+    "schema_version": "1.2",
+    "test_frequencies": [
+        1.0,
+        1.5,
+        2.0
+    ],
+    "signal_source": {
+        "power_scan_plans": [
+            {
+                "start_power": -10.0,
+                "step": 1.0,
+                "stop_power": 0.0
+            }
+        ],
+        "power_reference": "dut_input"
+    },
+    "compression_point": {
+        "type": "3dB"
+    },
+    "driver_mode": {
+        "enabled": false,
+        "estimated_gain_db": null,
+        "max_input_power": null
+    },
+    "attenuator": {
+        "type": "30dB"
+    },
+    "dut_config": {
+        "max_input_power": 3.0,
+        "drain_channel": {
+            "supply_id": "MOCK-DP832A",
+            "channel": "CH1"
+        }
+    },
+    "instruments": {
+        "signal_generator": {
+            "model": "SMW200A",
+            "enabled": true,
+            "label": "5462",
+            "full_code": "105462",
+            "device_key": "rohde&schwarz:105462",
+            "address": "TCPIP0::192.168.1.201::inst0::INSTR"
+        },
+        "spectrum_analyzer": {
+            "model": "4082F",
+            "enabled": true,
+            "label": "QZNI0866",
+            "full_code": "QZNI000866",
+            "device_key": "ceyear technologies:qzni000866",
+            "address": "TCPIP0::192.168.1.202::inst0::INSTR"
+        },
+        "power_supplies": {
+            "MOCK-DP832A": {
+                "label": "MOCK-DP832A",
+                "model": "DP832A",
+                "full_code": "DP8B214901519",
+                "device_key": "rigol technologies:dp8b214901519",
+                "enabled": true,
+                "channels": {
+                    "CH1": {
+                        "voltage": {
+                            "value": 0.0,
+                            "protection": 0.0,
+                            "protection_enabled": false
+                        },
+                        "current": {
+                            "value": 0.0,
+                            "protection": 0.0,
+                            "protection_enabled": false
+                        },
+                        "power_on_delay_s": 2.0
+                    },
+                    "CH2": {
+                        "voltage": {
+                            "value": 0.0,
+                            "protection": 0.0,
+                            "protection_enabled": false
+                        },
+                        "current": {
+                            "value": 0.0,
+                            "protection": 0.0,
+                            "protection_enabled": false
+                        },
+                        "power_on_delay_s": 2.0
+                    }
+                },
+                "address": "TCPIP0::192.168.1.102::inst0::INSTR"
+            }
+        }
+    },
+    "power_supply_assignment": {
+        "driver_amplifier": {
+            "power_plan": {
+                "power_sequence": [],
+                "inter_channel_delay_s": 0.0
+            }
+        },
+        "dut_amplifier": {
+            "power_plan": {
+                "power_sequence": [
+                    {
+                        "supply_id": "MOCK-DP832A",
+                        "channel": "CH1"
+                    }
+                ],
+                "inter_channel_delay_s": 0.0
+            }
+        }
+    },
+    "device_bindings": {
+        "signal_generator": {
+            "vendor": "Rohde&Schwarz",
+            "model": "SMW200A",
+            "full_code": "105462",
+            "device_key": "rohde&schwarz:105462",
+            "visa_address": "TCPIP0::192.168.1.201::inst0::INSTR",
+            "last_ip": "192.168.1.201",
+            "last_port": 5025,
+            "known": true,
+            "source": "simulated",
+            "label": "5462"
+        },
+        "spectrum_analyzer": {
+            "vendor": "Ceyear Technologies",
+            "model": "4082F",
+            "full_code": "QZNI000866",
+            "device_key": "ceyear technologies:qzni000866",
+            "visa_address": "TCPIP0::192.168.1.202::inst0::INSTR",
+            "last_ip": "192.168.1.202",
+            "last_port": 5025,
+            "known": true,
+            "source": "simulated",
+            "label": "QZNI0866"
+        },
+        "power_supplies": {
+            "MOCK-DP832A": {
+                "vendor": "RIGOL TECHNOLOGIES",
+                "model": "DP832A",
+                "full_code": "DP8B214901519",
+                "device_key": "rigol technologies:dp8b214901519",
+                "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
+                "last_ip": "192.168.1.102",
+                "last_port": 5555,
+                "known": true,
+                "source": "simulated",
+                "label": "MOCK-DP832A"
+            }
+        }
+    },
+    "test_plan": {
+        "schema_version": "1.2",
+        "template": false,
+        "plan_id": "gui-configuration",
+        "frequencies": {
+            "values": [
+                1.0,
+                1.5,
+                2.0
+            ],
+            "unit": "GHz"
+        },
+        "signal_source": {
+            "power_scan_plans": [
+                {
+                    "start_power": -10.0,
+                    "step": 1.0,
+                    "stop_power": 0.0
+                }
+            ],
+            "unit": "dBm",
+            "power_reference": "dut_input"
+        },
+        "compression_point": {
+            "type": "3dB"
+        },
+        "attenuator": {
+            "value": 30.0,
+            "unit": "dB"
+        },
+        "dut": {
+            "max_input_power": 3.0,
+            "drain_channel": {
+                "supply_id": "MOCK-DP832A",
+                "channel": "CH1"
+            },
+            "channel_settings": [
+                {
+                    "supply_id": "MOCK-DP832A",
+                    "channel": "CH1",
+                    "voltage": 0.0,
+                    "current": 0.0,
+                    "voltage_protection": 0.0,
+                    "current_protection": 0.0,
+                    "unit_voltage": "V",
+                    "unit_current": "A"
+                }
+            ]
+        },
+        "driver_mode": {
+            "enabled": false,
+            "estimated_gain_db": null,
+            "max_input_power": null,
+            "channel_settings": []
+        },
+        "other_parameters": {}
+    },
+    "run_mapping": {
+        "schema_version": "1.2",
+        "template": false,
+        "run_id": null,
+        "run_datetime": null,
+        "operator": null,
+        "instruments": {
+            "signal_generator": {
+                "label": "5462",
+                "model": "SMW200A",
+                "full_code": "105462",
+                "device_key": "rohde&schwarz:105462",
+                "visa_address": "TCPIP0::192.168.1.201::inst0::INSTR"
+            },
+            "spectrum_analyzer": {
+                "label": "QZNI0866",
+                "model": "4082F",
+                "full_code": "QZNI000866",
+                "device_key": "ceyear technologies:qzni000866",
+                "visa_address": "TCPIP0::192.168.1.202::inst0::INSTR"
+            },
+            "power_supplies": {
+                "MOCK-DP832A": {
+                    "label": "MOCK-DP832A",
+                    "model": "DP832A",
+                    "full_code": "DP8B214901519",
+                    "device_key": "rigol technologies:dp8b214901519",
+                    "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR"
+                }
+            }
+        },
+        "driver_mode": {
+            "enabled": false,
+            "power_plan": {
+                "power_sequence": [],
+                "inter_channel_delay_s": 0.0
+            }
+        },
+        "dut_power_plan": {
+            "power_sequence": [
+                {
+                    "supply_id": "MOCK-DP832A",
+                    "channel": "CH1"
+                }
+            ],
+            "inter_channel_delay_s": 0.0
+        },
+        "notes": null
+    }
+}

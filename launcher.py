@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Dict
 
 from domain.configuration.types import ConfigValidationResult
+from infrastructure.config.config_templates import selected_config_template
 from infrastructure.config.validation import validate_config_file
 from infrastructure.logging.app_logging import setup_logging
 from infrastructure.runtime import (
@@ -248,12 +249,37 @@ def print_config_validation(result: ConfigValidationResult) -> None:
 
 
 def validate_default_config() -> int:
-    """校验默认生产配置，且不连接真实仪器。"""
+    """校验默认生产配置，且不连接真实仪器。
+
+    当前配置 ``config.json`` 由程序在首次启动时生成、不再入库；新克隆上它会缺失。
+    此时回退校验即将被复制为当前配置的入库模板，并在输出里说明校验对象，而不是把
+    “还没启动过 GUI”误报成配置损坏。
+    """
     try:
         result = validate_config_file()
     except FileNotFoundError:
-        print("配置文件不存在: config.json", file=sys.stderr)
-        return EXIT_CONFIG_FILE_ERROR
+        template = selected_config_template(PROJECT_ROOT)
+        try:
+            result = validate_config_file(template)
+        except FileNotFoundError:
+            print(
+                f"配置文件不存在: config.json；默认模板也不存在: {template.name}",
+                file=sys.stderr,
+            )
+            return EXIT_CONFIG_FILE_ERROR
+        except UnicodeDecodeError:
+            print(
+                f"配置模板不是有效的 UTF-8 文本: {template.name}",
+                file=sys.stderr,
+            )
+            return EXIT_CONFIG_FILE_ERROR
+        except ValueError as error:
+            print(
+                f"配置模板不是有效的 JSON: {template.name}: {error}",
+                file=sys.stderr,
+            )
+            return EXIT_CONFIG_FILE_ERROR
+        print(f"当前配置不存在，已校验入库模板: {template.name}")
     except UnicodeDecodeError:
         print("配置文件不是有效的 UTF-8 文本: config.json", file=sys.stderr)
         return EXIT_CONFIG_FILE_ERROR

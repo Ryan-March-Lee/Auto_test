@@ -124,6 +124,26 @@ class LauncherTests(unittest.TestCase):
             with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                 self.assertEqual(launcher.validate_default_config(), launcher.EXIT_CONFIG_FILE_ERROR)
 
+    def test_validate_config_falls_back_to_the_shipped_template(self):
+        valid_result = launcher.ConfigValidationResult([], [])
+        stdout = io.StringIO()
+        with patch.object(
+            launcher,
+            "validate_config_file",
+            side_effect=[FileNotFoundError, valid_result],
+        ) as validate, patch.object(
+            launcher,
+            "selected_config_template",
+            return_value=Path("config.default.json"),
+        ) as template:
+            with redirect_stdout(stdout):
+                code = launcher.validate_default_config()
+
+        self.assertEqual(code, launcher.EXIT_SUCCESS)
+        self.assertEqual(validate.call_count, 2)
+        template.assert_called_once_with(launcher.PROJECT_ROOT)
+        self.assertIn("config.default.json", stdout.getvalue())
+
     def test_validate_config_accepts_the_official_fixture_config(self):
         with patch("infrastructure.config.json_io.CONFIG_FILE", CONFIG_FIXTURE):
             with redirect_stdout(io.StringIO()):

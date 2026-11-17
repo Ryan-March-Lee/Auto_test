@@ -36,6 +36,10 @@ power_data.mdf
 .env
 .env.*
 !.env.example
+# 每台机器的当前工作配置与设备表：模板见 config.default.json / config.mock.json。
+# 只锚定仓库根目录，避免忽略运行快照 runs/<run_id>/config.json 与测试样例。
+/config.json
+/instruments.json
 hardware/smoke_config.local.json
 hardware/smoke_result*.json
 hardware/smoke_*_result.local.json

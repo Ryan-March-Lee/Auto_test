@@ -5,14 +5,17 @@
 """
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from infrastructure.config.json_config_repository import ConfigurationRepository
 from infrastructure.filesystem.paths import PathService
+from infrastructure.gui_data_service import JsonConfigurationAdapter
+from presentation.qt.composition import build_configuration_template_loader
 from tests.ui.test_gui_config_readers import _coordinator
 
 
@@ -166,6 +169,99 @@ class ConfigurationSaveRoundTripTests(unittest.TestCase):
         self.assertEqual(
             saved["test_plan"]["signal_source"]["power_scan_plans"], plans
         )
+
+
+class StartupConfigurationSeedTests(unittest.TestCase):
+    """当前配置缺失时，启动加载必须从入库模板生成一份可读回的当前配置。"""
+
+    def _coordinator_for(self, root: Path):
+        paths = PathService(root)
+        service = MagicMock()
+        service.configuration = JsonConfigurationAdapter(paths.config_file)
+        coordinator = _coordinator(
+            service=service,
+            configuration_template=build_configuration_template_loader(paths),
+        )
+        return coordinator, paths
+
+    def test_missing_current_configuration_is_created_from_the_default_template(self):
+        template = {
+            "schema_version": "1.2",
+            "test_frequencies": [1.0],
+            "source": "default-template",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "config.default.json").write_text(
+                json.dumps(template), encoding="utf-8"
+            )
+            with patch(
+                "infrastructure.config.config_templates.load_env_value",
+                return_value=None,
+            ):
+                coordinator, paths = self._coordinator_for(root)
+
+                loaded = coordinator.load_configuration()
+
+            self.assertEqual(loaded, template)
+            self.assertEqual(
+                json.loads(paths.config_file.read_text(encoding="utf-8")), template
+            )
+            self.assertTrue(coordinator.seeded_configuration_from_template)
+
+    def test_mock_template_is_used_only_when_explicitly_selected(self):
+        template = {"schema_version": "1.2", "source": "mock-template"}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "config.default.json").write_text(
+                json.dumps({"source": "default-template"}), encoding="utf-8"
+            )
+            (root / "config.mock.json").write_text(
+                json.dumps(template), encoding="utf-8"
+            )
+            coordinator, paths = self._coordinator_for(root)
+
+            with patch.dict(
+                os.environ, {"AUTO_TEST_CONFIG_TEMPLATE": "config.mock.json"}
+            ):
+                loaded = coordinator.load_configuration()
+
+            self.assertEqual(loaded, template)
+            self.assertEqual(
+                json.loads(paths.config_file.read_text(encoding="utf-8")), template
+            )
+
+    def test_the_composed_coordinator_builds_the_seed_loader_itself(self):
+        """真实装配路径不显式传模板读取器：由协调器在组合根上取同一份模板。"""
+
+        from presentation.qt.application_coordinator import ApplicationCoordinator
+
+        template = {"schema_version": "1.2", "source": "composed"}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "config.default.json").write_text(
+                json.dumps(template), encoding="utf-8"
+            )
+            paths = PathService(root)
+            with patch(
+                "infrastructure.config.config_templates.load_env_value",
+                return_value=None,
+            ):
+                coordinator = ApplicationCoordinator(
+                    log=lambda _message: None,
+                    warn=lambda _title, _message: None,
+                    error=lambda _message: None,
+                    paths=paths,
+                    controller=MagicMock(),
+                )
+
+                loaded = coordinator.load_configuration()
+
+            self.assertEqual(loaded, template)
+            self.assertEqual(
+                json.loads(paths.config_file.read_text(encoding="utf-8")), template
+            )
+            self.assertTrue(coordinator.seeded_configuration_from_template)
 
 
 if __name__ == "__main__":

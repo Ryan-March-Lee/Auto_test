@@ -1,11 +1,15 @@
 """Composition root for the Qt presentation process."""
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Mapping
 
 from application.archival_service import ResultArchivalService
 from application.gui_data_service import GuiDataService
 from application.run_history_service import RunHistoryService
+from infrastructure.config.config_templates import (
+    load_config_template,
+    selected_config_template,
+)
 from infrastructure.discovery.instrument_discovery import (
     SCAN_MODE_SIMULATED,
     InstrumentDiscoveryError,
@@ -45,6 +49,24 @@ def build_configuration_snapshot_repository(
 ) -> FileConfigurationSnapshotRepository:
     """装配用户配置快照仓储；配置页面不直接依赖基础设施实现。"""
     return FileConfigurationSnapshotRepository(paths=paths or DEFAULT_PATHS)
+
+
+def build_configuration_template_loader(
+    paths: PathService | None = None,
+) -> Callable[[], Mapping[str, Any]]:
+    """装配“当前配置缺失时”使用的模板读取器。
+
+    模板文件名由 ``AUTO_TEST_CONFIG_TEMPLATE`` 选择（默认 ``config.default.json``，
+    离线演示可显式指向 ``config.mock.json``）；读取只在启动加载与
+    ``launcher --validate-config`` 的回退路径发生，协调器负责经配置端口的唯一保存
+    入口生成当前配置。表现层其它模块因此仍不需要 import 基础设施。
+    """
+    root = (paths or DEFAULT_PATHS).project_root
+
+    def load_template() -> Mapping[str, Any]:
+        return load_config_template(selected_config_template(root))
+
+    return load_template
 
 
 def build_gui_data_service(

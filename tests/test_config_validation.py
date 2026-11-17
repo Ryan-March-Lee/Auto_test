@@ -805,15 +805,21 @@ class PowerScanPlanValidationTests(unittest.TestCase):
 
 
 
-class ShippedConfigValidationTests(unittest.TestCase):
-    """仓库默认生产配置必须通过 ``--validate-config`` 使用的同一套文件级校验。"""
+class ShippedConfigTemplateTests(unittest.TestCase):
+    """入库配置模板必须通过 ``--validate-config`` 使用的同一套文件级校验。
 
-    def test_repository_config_passes_the_launcher_file_check(self):
-        result = validate_config_file(PROJECT_ROOT / "config.json")
-        self.assertTrue(
-            result.valid,
-            [f"{issue.path}: {issue.message}" for issue in result.errors],
-        )
+    当前工作配置 ``config.json`` 不入库：首次启动由程序从模板生成。因此这里校验的是
+    两份入库模板（默认与离线演示），而不是某台机器上的当前配置。
+    """
+
+    def test_repository_templates_pass_the_launcher_file_check(self):
+        for name in ("config.default.json", "config.mock.json"):
+            with self.subTest(template=name):
+                result = validate_config_file(PROJECT_ROOT / name)
+                self.assertTrue(
+                    result.valid,
+                    [f"{issue.path}: {issue.message}" for issue in result.errors],
+                )
 
 
 if __name__ == "__main__":

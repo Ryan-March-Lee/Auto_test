@@ -110,7 +110,7 @@ class TestConfigurationPageStub:
         return bool(getattr(self.widgets, 'test_mode_enabled', False))
 
 
-def _coordinator(*, config=None, service=None, widgets=None, log=None, warn=None, error=None):
+def _coordinator(*, config=None, service=None, widgets=None, log=None, warn=None, error=None, configuration_template=None):
     page = TestConfigurationPageStub(widgets, config) if widgets is not None else None
     coordinator = ApplicationCoordinator(
         log=log or (lambda _message: None),
@@ -119,6 +119,7 @@ def _coordinator(*, config=None, service=None, widgets=None, log=None, warn=None
         gui_data_service=service or MagicMock(),
         controller=MagicMock(),
         config_path=Path("config.json"),
+        configuration_template=configuration_template,
     )
     if config is not None:
         coordinator.config = config

@@ -43,7 +43,11 @@ from application.run_service import (
 )
 from domain.run.models import normalize_artifact_path
 
-from .composition import build_gui_data_service, default_paths
+from .composition import (
+    build_configuration_template_loader,
+    build_gui_data_service,
+    default_paths,
+)
 from .config_projection import ConfigBackfillError
 from .configuration_editor import apply_config_to_pages
 from .measurement_controller import MeasurementController
@@ -257,6 +261,7 @@ class ApplicationCoordinator:
         configuration_snapshots: ConfigurationSnapshotRepository | None = None,
         controller: MeasurementController | None = None,
         instrument_worker_factory: Callable[[Any], Any] = InstrumentWorker,
+        configuration_template: Callable[[], Mapping[str, Any]] | None = None,
     ) -> None:
         for name, callback in (("log", log), ("warn", warn), ("error", error)):
             if not callable(callback):
@@ -280,6 +285,16 @@ class ApplicationCoordinator:
         self._warn = warn
         self._error = error
         self._instrument_worker_factory = instrument_worker_factory
+        # 首次启动的模板读取器由组合根注入：协调器不 import 基础设施，也不自己
+        # 打开 JSON 文件。装配根没有注入数据服务时（正常 GUI 进程），模板读取器
+        # 与数据服务一起由同一个 composition 入口创建。
+        self._configuration_template = configuration_template
+        if self._configuration_template is None and gui_data_service is None:
+            self._configuration_template = build_configuration_template_loader(
+                self.paths
+            )
+        # 本次加载是否从模板生成了当前配置；窗口在界面装配完成后据此提示用户。
+        self.seeded_configuration_from_template = False
         self.test_config_page: TestConfigurationPagePort | None = None
         self.power_page: PowerConfigurationPagePort | None = None
         self.config: dict[str, Any] = {}
@@ -377,14 +392,50 @@ class ApplicationCoordinator:
     # ---- 配置状态 ----
 
     def load_configuration(self) -> dict[str, Any]:
-        """通过 GUI 数据服务读取正式配置；读取失败时给出提示并保持空配置。"""
+        """通过 GUI 数据服务读取正式配置；当前配置缺失时用入库模板生成。
+
+        首次启动/新克隆没有 ``config.json`` 时，用组合根注入的模板读取器取一份完整
+        默认配置，并经配置端口的唯一保存入口写成当前配置。模板不是“每层默认值”：
+        一旦生成，后续只读写当前配置，模板保持只读。
+
+        其它读取失败（损坏、无权限）仍按原行为告警并保持空配置，不拿模板掩盖真实
+        错误。
+        """
         try:
             self.config = dict(self.gui_data_service.configuration.load())
+        except FileNotFoundError:
+            self.config = self._seed_configuration_from_template()
         except Exception as failure:  # noqa: BLE001 - 读取失败必须让用户看到，而不是带着旧配置运行
             self._warn("配置加载", f"无法加载配置文件: {failure}")
             self.config = {}
+            self.seeded_configuration_from_template = False
+        else:
+            self.seeded_configuration_from_template = False
         self._sync_page_read_only()
         return self.config
+
+    def _seed_configuration_from_template(self) -> dict[str, Any]:
+        """当前配置不存在时，从入库模板生成一份本机当前配置。
+
+        生成仍走 ``gui_data_service.configuration.save``（配置仓储的唯一写入口）；
+        模板只读，后续保存只改写当前配置。失败不在启动阶段抛异常：界面按“没有配置”
+        启动，并把原始原因提示给用户。
+        """
+        self.seeded_configuration_from_template = False
+        loader = self._configuration_template
+        if loader is None:
+            self._warn("配置加载", "当前配置不存在，且未装配默认配置模板")
+            return {}
+        try:
+            template = dict(loader())
+            if not template:
+                raise ValueError("默认配置模板为空")
+            self.gui_data_service.configuration.save(template)
+        except (OSError, ValueError, TypeError) as failure:
+            self._warn("配置加载", f"当前配置不存在，且未能从默认模板生成: {failure}")
+            return {}
+        self.seeded_configuration_from_template = True
+        return template
 
     def editing_read_only_reason(self) -> str | None:
         """当前编辑文档为何只读；可编辑时返回 ``None``。

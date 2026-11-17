@@ -1429,7 +1429,64 @@ class ConfigurationLoadTests(unittest.TestCase):
         # 协调器持有自己的顶层副本：后续组装/保存不得改写服务返回的对象。
         self.assertIsNot(loaded, document)
         self.assertEqual(coordinator.warnings, [])
+        self.assertFalse(coordinator.seeded_configuration_from_template)
         service.configuration.load.assert_called_once_with()
+
+    def test_missing_configuration_is_seeded_from_the_injected_template(self):
+        service = MagicMock()
+        service.configuration.load.side_effect = FileNotFoundError("config.json")
+        template = {"schema_version": "1.2", "test_frequencies": [1.0]}
+        coordinator = _coordinator(
+            service=service,
+            configuration_template=lambda: template,
+        )
+
+        loaded = coordinator.load_configuration()
+
+        self.assertEqual(loaded, template)
+        self.assertIs(loaded, coordinator.config)
+        self.assertIsNot(loaded, template)
+        self.assertTrue(coordinator.seeded_configuration_from_template)
+        self.assertEqual(coordinator.warnings, [])
+        # 生成当前配置仍走配置端口的唯一保存入口；协调器不自己写文件。
+        service.configuration.save.assert_called_once_with(template)
+
+    def test_template_failure_warns_and_starts_without_configuration(self):
+        service = MagicMock()
+        service.configuration.load.side_effect = FileNotFoundError("config.json")
+
+        def broken_template():
+            raise ValueError("模板损坏")
+
+        coordinator = _coordinator(
+            service=service,
+            configuration_template=broken_template,
+        )
+
+        loaded = coordinator.load_configuration()
+
+        self.assertEqual(loaded, {})
+        self.assertFalse(coordinator.seeded_configuration_from_template)
+        service.configuration.save.assert_not_called()
+        self.assertEqual(
+            coordinator.warnings,
+            [("配置加载", "当前配置不存在，且未能从默认模板生成: 模板损坏")],
+        )
+
+    def test_missing_configuration_without_a_template_warns(self):
+        service = MagicMock()
+        service.configuration.load.side_effect = FileNotFoundError("config.json")
+        coordinator = _coordinator(service=service)
+
+        loaded = coordinator.load_configuration()
+
+        self.assertEqual(loaded, {})
+        self.assertFalse(coordinator.seeded_configuration_from_template)
+        service.configuration.save.assert_not_called()
+        self.assertEqual(
+            coordinator.warnings,
+            [("配置加载", "当前配置不存在，且未装配默认配置模板")],
+        )
 
     def test_load_failure_warns_and_clears_the_previous_configuration(self):
         service = MagicMock()

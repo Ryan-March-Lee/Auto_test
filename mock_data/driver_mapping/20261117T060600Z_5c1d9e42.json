@@ -1,0 +1,3587 @@
+{
+    "raw_points": {
+        "1.0": [
+            {
+                "source_power_dbm": -70.0,
+                "driver_output_power_dbm": -29.881,
+                "gain_db": 40.119
+            },
+            {
+                "source_power_dbm": -69.753,
+                "driver_output_power_dbm": -29.637,
+                "gain_db": 40.116
+            },
+            {
+                "source_power_dbm": -60.0,
+                "driver_output_power_dbm": -20.0,
+                "gain_db": 40.0
+            },
+            {
+                "source_power_dbm": -58.988,
+                "driver_output_power_dbm": -19.0,
+                "gain_db": 39.988
+            },
+            {
+                "source_power_dbm": -57.976,
+                "driver_output_power_dbm": -18.0,
+                "gain_db": 39.976
+            },
+            {
+                "source_power_dbm": -56.964,
+                "driver_output_power_dbm": -17.0,
+                "gain_db": 39.964
+            },
+            {
+                "source_power_dbm": -55.952,
+                "driver_output_power_dbm": -16.0,
+                "gain_db": 39.952
+            },
+            {
+                "source_power_dbm": -54.94,
+                "driver_output_power_dbm": -15.0,
+                "gain_db": 39.94
+            },
+            {
+                "source_power_dbm": -53.928,
+                "driver_output_power_dbm": -14.0,
+                "gain_db": 39.928
+            },
+            {
+                "source_power_dbm": -52.916,
+                "driver_output_power_dbm": -13.0,
+                "gain_db": 39.916
+            },
+            {
+                "source_power_dbm": -51.904,
+                "driver_output_power_dbm": -12.0,
+                "gain_db": 39.904
+            },
+            {
+                "source_power_dbm": -50.892,
+                "driver_output_power_dbm": -11.0,
+                "gain_db": 39.892
+            },
+            {
+                "source_power_dbm": -49.88,
+                "driver_output_power_dbm": -10.0,
+                "gain_db": 39.88
+            },
+            {
+                "source_power_dbm": -48.868,
+                "driver_output_power_dbm": -9.0,
+                "gain_db": 39.868
+            },
+            {
+                "source_power_dbm": -47.856,
+                "driver_output_power_dbm": -8.0,
+                "gain_db": 39.856
+            },
+            {
+                "source_power_dbm": -46.844,
+                "driver_output_power_dbm": -7.0,
+                "gain_db": 39.844
+            },
+            {
+                "source_power_dbm": -45.832,
+                "driver_output_power_dbm": -6.0,
+                "gain_db": 39.832
+            },
+            {
+                "source_power_dbm": -44.82,
+                "driver_output_power_dbm": -5.0,
+                "gain_db": 39.82
+            },
+            {
+                "source_power_dbm": -43.808,
+                "driver_output_power_dbm": -4.0,
+                "gain_db": 39.808
+            },
+            {
+                "source_power_dbm": -42.796,
+                "driver_output_power_dbm": -3.0,
+                "gain_db": 39.796
+            },
+            {
+                "source_power_dbm": -41.784,
+                "driver_output_power_dbm": -2.0,
+                "gain_db": 39.784
+            },
+            {
+                "source_power_dbm": -40.772,
+                "driver_output_power_dbm": -1.0,
+                "gain_db": 39.772
+            },
+            {
+                "source_power_dbm": -39.76,
+                "driver_output_power_dbm": 0.0,
+                "gain_db": 39.76
+            },
+            {
+                "source_power_dbm": -39.254,
+                "driver_output_power_dbm": 0.5,
+                "gain_db": 39.754
+            },
+            {
+                "source_power_dbm": -38.748,
+                "driver_output_power_dbm": 1.0,
+                "gain_db": 39.748
+            },
+            {
+                "source_power_dbm": -38.242,
+                "driver_output_power_dbm": 1.5,
+                "gain_db": 39.742
+            },
+            {
+                "source_power_dbm": -37.736,
+                "driver_output_power_dbm": 2.0,
+                "gain_db": 39.736
+            },
+            {
+                "source_power_dbm": -37.23,
+                "driver_output_power_dbm": 2.5,
+                "gain_db": 39.73
+            },
+            {
+                "source_power_dbm": -36.724,
+                "driver_output_power_dbm": 3.0,
+                "gain_db": 39.724
+            },
+            {
+                "source_power_dbm": -36.218,
+                "driver_output_power_dbm": 3.5,
+                "gain_db": 39.718
+            },
+            {
+                "source_power_dbm": -35.712,
+                "driver_output_power_dbm": 4.0,
+                "gain_db": 39.712
+            },
+            {
+                "source_power_dbm": -35.206,
+                "driver_output_power_dbm": 4.5,
+                "gain_db": 39.706
+            },
+            {
+                "source_power_dbm": -34.7,
+                "driver_output_power_dbm": 5.0,
+                "gain_db": 39.7
+            }
+        ],
+        "1.1": [
+            {
+                "source_power_dbm": -70.0,
+                "driver_output_power_dbm": -29.914,
+                "gain_db": 40.086
+            },
+            {
+                "source_power_dbm": -69.752,
+                "driver_output_power_dbm": -29.67,
+                "gain_db": 40.082
+            },
+            {
+                "source_power_dbm": -59.955,
+                "driver_output_power_dbm": -20.0,
+                "gain_db": 39.955
+            },
+            {
+                "source_power_dbm": -58.942,
+                "driver_output_power_dbm": -19.0,
+                "gain_db": 39.942
+            },
+            {
+                "source_power_dbm": -57.929,
+                "driver_output_power_dbm": -18.0,
+                "gain_db": 39.929
+            },
+            {
+                "source_power_dbm": -56.915,
+                "driver_output_power_dbm": -17.0,
+                "gain_db": 39.915
+            },
+            {
+                "source_power_dbm": -55.902,
+                "driver_output_power_dbm": -16.0,
+                "gain_db": 39.902
+            },
+            {
+                "source_power_dbm": -54.889,
+                "driver_output_power_dbm": -15.0,
+                "gain_db": 39.889
+            },
+            {
+                "source_power_dbm": -53.876,
+                "driver_output_power_dbm": -14.0,
+                "gain_db": 39.876
+            },
+            {
+                "source_power_dbm": -52.863,
+                "driver_output_power_dbm": -13.0,
+                "gain_db": 39.863
+            },
+            {
+                "source_power_dbm": -51.849,
+                "driver_output_power_dbm": -12.0,
+                "gain_db": 39.849
+            },
+            {
+                "source_power_dbm": -50.836,
+                "driver_output_power_dbm": -11.0,
+                "gain_db": 39.836
+            },
+            {
+                "source_power_dbm": -49.823,
+                "driver_output_power_dbm": -10.0,
+                "gain_db": 39.823
+            },
+            {
+                "source_power_dbm": -48.81,
+                "driver_output_power_dbm": -9.0,
+                "gain_db": 39.81
+            },
+            {
+                "source_power_dbm": -47.797,
+                "driver_output_power_dbm": -8.0,
+                "gain_db": 39.797
+            },
+            {
+                "source_power_dbm": -46.783,
+                "driver_output_power_dbm": -7.0,
+                "gain_db": 39.783
+            },
+            {
+                "source_power_dbm": -45.77,
+                "driver_output_power_dbm": -6.0,
+                "gain_db": 39.77
+            },
+            {
+                "source_power_dbm": -44.757,
+                "driver_output_power_dbm": -5.0,
+                "gain_db": 39.757
+            },
+            {
+                "source_power_dbm": -43.744,
+                "driver_output_power_dbm": -4.0,
+                "gain_db": 39.744
+            },
+            {
+                "source_power_dbm": -42.731,
+                "driver_output_power_dbm": -3.0,
+                "gain_db": 39.731
+            },
+            {
+                "source_power_dbm": -41.717,
+                "driver_output_power_dbm": -2.0,
+                "gain_db": 39.717
+            },
+            {
+                "source_power_dbm": -40.704,
+                "driver_output_power_dbm": -1.0,
+                "gain_db": 39.704
+            },
+            {
+                "source_power_dbm": -39.691,
+                "driver_output_power_dbm": -0.0,
+                "gain_db": 39.691
+            },
+            {
+                "source_power_dbm": -39.184,
+                "driver_output_power_dbm": 0.5,
+                "gain_db": 39.684
+            },
+            {
+                "source_power_dbm": -38.678,
+                "driver_output_power_dbm": 1.0,
+                "gain_db": 39.678
+            },
+            {
+                "source_power_dbm": -38.171,
+                "driver_output_power_dbm": 1.5,
+                "gain_db": 39.671
+            },
+            {
+                "source_power_dbm": -37.665,
+                "driver_output_power_dbm": 2.0,
+                "gain_db": 39.665
+            },
+            {
+                "source_power_dbm": -37.158,
+                "driver_output_power_dbm": 2.5,
+                "gain_db": 39.658
+            },
+            {
+                "source_power_dbm": -36.651,
+                "driver_output_power_dbm": 3.0,
+                "gain_db": 39.651
+            },
+            {
+                "source_power_dbm": -36.145,
+                "driver_output_power_dbm": 3.5,
+                "gain_db": 39.645
+            },
+            {
+                "source_power_dbm": -35.638,
+                "driver_output_power_dbm": 4.0,
+                "gain_db": 39.638
+            },
+            {
+                "source_power_dbm": -35.132,
+                "driver_output_power_dbm": 4.5,
+                "gain_db": 39.632
+            },
+            {
+                "source_power_dbm": -34.625,
+                "driver_output_power_dbm": 5.0,
+                "gain_db": 39.625
+            }
+        ],
+        "1.2": [
+            {
+                "source_power_dbm": -70.0,
+                "driver_output_power_dbm": -29.947,
+                "gain_db": 40.053
+            },
+            {
+                "source_power_dbm": -69.751,
+                "driver_output_power_dbm": -29.702,
+                "gain_db": 40.049
+            },
+            {
+                "source_power_dbm": -59.91,
+                "driver_output_power_dbm": -20.0,
+                "gain_db": 39.91
+            },
+            {
+                "source_power_dbm": -58.896,
+                "driver_output_power_dbm": -19.0,
+                "gain_db": 39.896
+            },
+            {
+                "source_power_dbm": -57.881,
+                "driver_output_power_dbm": -18.0,
+                "gain_db": 39.881
+            },
+            {
+                "source_power_dbm": -56.867,
+                "driver_output_power_dbm": -17.0,
+                "gain_db": 39.867
+            },
+            {
+                "source_power_dbm": -55.852,
+                "driver_output_power_dbm": -16.0,
+                "gain_db": 39.852
+            },
+            {
+                "source_power_dbm": -54.838,
+                "driver_output_power_dbm": -15.0,
+                "gain_db": 39.838
+            },
+            {
+                "source_power_dbm": -53.824,
+                "driver_output_power_dbm": -14.0,
+                "gain_db": 39.824
+            },
+            {
+                "source_power_dbm": -52.809,
+                "driver_output_power_dbm": -13.0,
+                "gain_db": 39.809
+            },
+            {
+                "source_power_dbm": -51.795,
+                "driver_output_power_dbm": -12.0,
+                "gain_db": 39.795
+            },
+            {
+                "source_power_dbm": -50.78,
+                "driver_output_power_dbm": -11.0,
+                "gain_db": 39.78
+            },
+            {
+                "source_power_dbm": -49.766,
+                "driver_output_power_dbm": -10.0,
+                "gain_db": 39.766
+            },
+            {
+                "source_power_dbm": -48.752,
+                "driver_output_power_dbm": -9.0,
+                "gain_db": 39.752
+            },
+            {
+                "source_power_dbm": -47.737,
+                "driver_output_power_dbm": -8.0,
+                "gain_db": 39.737
+            },
+            {
+                "source_power_dbm": -46.723,
+                "driver_output_power_dbm": -7.0,
+                "gain_db": 39.723
+            },
+            {
+                "source_power_dbm": -45.708,
+                "driver_output_power_dbm": -6.0,
+                "gain_db": 39.708
+            },
+            {
+                "source_power_dbm": -44.694,
+                "driver_output_power_dbm": -5.0,
+                "gain_db": 39.694
+            },
+            {
+                "source_power_dbm": -43.68,
+                "driver_output_power_dbm": -4.0,
+                "gain_db": 39.68
+            },
+            {
+                "source_power_dbm": -42.665,
+                "driver_output_power_dbm": -3.0,
+                "gain_db": 39.665
+            },
+            {
+                "source_power_dbm": -41.651,
+                "driver_output_power_dbm": -2.0,
+                "gain_db": 39.651
+            },
+            {
+                "source_power_dbm": -40.636,
+                "driver_output_power_dbm": -1.0,
+                "gain_db": 39.636
+            },
+            {
+                "source_power_dbm": -39.622,
+                "driver_output_power_dbm": 0.0,
+                "gain_db": 39.622
+            },
+            {
+                "source_power_dbm": -39.115,
+                "driver_output_power_dbm": 0.5,
+                "gain_db": 39.615
+            },
+            {
+                "source_power_dbm": -38.608,
+                "driver_output_power_dbm": 1.0,
+                "gain_db": 39.608
+            },
+            {
+                "source_power_dbm": -38.1,
+                "driver_output_power_dbm": 1.5,
+                "gain_db": 39.6
+            },
+            {
+                "source_power_dbm": -37.593,
+                "driver_output_power_dbm": 2.0,
+                "gain_db": 39.593
+            },
+            {
+                "source_power_dbm": -37.086,
+                "driver_output_power_dbm": 2.5,
+                "gain_db": 39.586
+            },
+            {
+                "source_power_dbm": -36.579,
+                "driver_output_power_dbm": 3.0,
+                "gain_db": 39.579
+            },
+            {
+                "source_power_dbm": -36.072,
+                "driver_output_power_dbm": 3.5,
+                "gain_db": 39.572
+            },
+            {
+                "source_power_dbm": -35.564,
+                "driver_output_power_dbm": 4.0,
+                "gain_db": 39.564
+            },
+            {
+                "source_power_dbm": -35.057,
+                "driver_output_power_dbm": 4.5,
+                "gain_db": 39.557
+            },
+            {
+                "source_power_dbm": -34.55,
+                "driver_output_power_dbm": 5.0,
+                "gain_db": 39.55
+            }
+        ],
+        "1.3": [
+            {
+                "source_power_dbm": -70.0,
+                "driver_output_power_dbm": -29.979,
+                "gain_db": 40.021
+            },
+            {
+                "source_power_dbm": -69.751,
+                "driver_output_power_dbm": -29.734,
+                "gain_db": 40.017
+            },
+            {
+                "source_power_dbm": -59.865,
+                "driver_output_power_dbm": -20.0,
+                "gain_db": 39.865
+            },
+            {
+                "source_power_dbm": -58.849,
+                "driver_output_power_dbm": -19.0,
+                "gain_db": 39.849
+            },
+            {
+                "source_power_dbm": -57.834,
+                "driver_output_power_dbm": -18.0,
+                "gain_db": 39.834
+            },
+            {
+                "source_power_dbm": -56.818,
+                "driver_output_power_dbm": -17.0,
+                "gain_db": 39.818
+            },
+            {
+                "source_power_dbm": -55.803,
+                "driver_output_power_dbm": -16.0,
+                "gain_db": 39.803
+            },
+            {
+                "source_power_dbm": -54.787,
+                "driver_output_power_dbm": -15.0,
+                "gain_db": 39.787
+            },
+            {
+                "source_power_dbm": -53.771,
+                "driver_output_power_dbm": -14.0,
+                "gain_db": 39.771
+            },
+            {
+                "source_power_dbm": -52.756,
+                "driver_output_power_dbm": -13.0,
+                "gain_db": 39.756
+            },
+            {
+                "source_power_dbm": -51.74,
+                "driver_output_power_dbm": -12.0,
+                "gain_db": 39.74
+            },
+            {
+                "source_power_dbm": -50.725,
+                "driver_output_power_dbm": -11.0,
+                "gain_db": 39.725
+            },
+            {
+                "source_power_dbm": -49.709,
+                "driver_output_power_dbm": -10.0,
+                "gain_db": 39.709
+            },
+            {
+                "source_power_dbm": -48.693,
+                "driver_output_power_dbm": -9.0,
+                "gain_db": 39.693
+            },
+            {
+                "source_power_dbm": -47.678,
+                "driver_output_power_dbm": -8.0,
+                "gain_db": 39.678
+            },
+            {
+                "source_power_dbm": -46.662,
+                "driver_output_power_dbm": -7.0,
+                "gain_db": 39.662
+            },
+            {
+                "source_power_dbm": -45.647,
+                "driver_output_power_dbm": -6.0,
+                "gain_db": 39.647
+            },
+            {
+                "source_power_dbm": -44.631,
+                "driver_output_power_dbm": -5.0,
+                "gain_db": 39.631
+            },
+            {
+                "source_power_dbm": -43.615,
+                "driver_output_power_dbm": -4.0,
+                "gain_db": 39.615
+            },
+            {
+                "source_power_dbm": -42.6,
+                "driver_output_power_dbm": -3.0,
+                "gain_db": 39.6
+            },
+            {
+                "source_power_dbm": -41.584,
+                "driver_output_power_dbm": -2.0,
+                "gain_db": 39.584
+            },
+            {
+                "source_power_dbm": -40.569,
+                "driver_output_power_dbm": -1.0,
+                "gain_db": 39.569
+            },
+            {
+                "source_power_dbm": -39.553,
+                "driver_output_power_dbm": 0.0,
+                "gain_db": 39.553
+            },
+            {
+                "source_power_dbm": -39.045,
+                "driver_output_power_dbm": 0.5,
+                "gain_db": 39.545
+            },
+            {
+                "source_power_dbm": -38.537,
+                "driver_output_power_dbm": 1.0,
+                "gain_db": 39.537
+            },
+            {
+                "source_power_dbm": -38.03,
+                "driver_output_power_dbm": 1.5,
+                "gain_db": 39.53
+            },
+            {
+                "source_power_dbm": -37.522,
+                "driver_output_power_dbm": 2.0,
+                "gain_db": 39.522
+            },
+            {
+                "source_power_dbm": -37.014,
+                "driver_output_power_dbm": 2.5,
+                "gain_db": 39.514
+            },
+            {
+                "source_power_dbm": -36.506,
+                "driver_output_power_dbm": 3.0,
+                "gain_db": 39.506
+            },
+            {
+                "source_power_dbm": -35.998,
+                "driver_output_power_dbm": 3.5,
+                "gain_db": 39.498
+            },
+            {
+                "source_power_dbm": -35.491,
+                "driver_output_power_dbm": 4.0,
+                "gain_db": 39.491
+            },
+            {
+                "source_power_dbm": -34.983,
+                "driver_output_power_dbm": 4.5,
+                "gain_db": 39.483
+            },
+            {
+                "source_power_dbm": -34.475,
+                "driver_output_power_dbm": 5.0,
+                "gain_db": 39.475
+            }
+        ],
+        "1.4": [
+            {
+                "source_power_dbm": -70.0,
+                "driver_output_power_dbm": -30.012,
+                "gain_db": 39.988
+            },
+            {
+                "source_power_dbm": -69.75,
+                "driver_output_power_dbm": -29.766,
+                "gain_db": 39.984
+            },
+            {
+                "source_power_dbm": -59.82,
+                "driver_output_power_dbm": -20.0,
+                "gain_db": 39.82
+            },
+            {
+                "source_power_dbm": -58.803,
+                "driver_output_power_dbm": -19.0,
+                "gain_db": 39.803
+            },
+            {
+                "source_power_dbm": -57.786,
+                "driver_output_power_dbm": -18.0,
+                "gain_db": 39.786
+            },
+            {
+                "source_power_dbm": -56.77,
+                "driver_output_power_dbm": -17.0,
+                "gain_db": 39.77
+            },
+            {
+                "source_power_dbm": -55.753,
+                "driver_output_power_dbm": -16.0,
+                "gain_db": 39.753
+            },
+            {
+                "source_power_dbm": -54.736,
+                "driver_output_power_dbm": -15.0,
+                "gain_db": 39.736
+            },
+            {
+                "source_power_dbm": -53.719,
+                "driver_output_power_dbm": -14.0,
+                "gain_db": 39.719
+            },
+            {
+                "source_power_dbm": -52.702,
+                "driver_output_power_dbm": -13.0,
+                "gain_db": 39.702
+            },
+            {
+                "source_power_dbm": -51.686,
+                "driver_output_power_dbm": -12.0,
+                "gain_db": 39.686
+            },
+            {
+                "source_power_dbm": -50.669,
+                "driver_output_power_dbm": -11.0,
+                "gain_db": 39.669
+            },
+            {
+                "source_power_dbm": -49.652,
+                "driver_output_power_dbm": -10.0,
+                "gain_db": 39.652
+            },
+            {
+                "source_power_dbm": -48.635,
+                "driver_output_power_dbm": -9.0,
+                "gain_db": 39.635
+            },
+            {
+                "source_power_dbm": -47.618,
+                "driver_output_power_dbm": -8.0,
+                "gain_db": 39.618
+            },
+            {
+                "source_power_dbm": -46.602,
+                "driver_output_power_dbm": -7.0,
+                "gain_db": 39.602
+            },
+            {
+                "source_power_dbm": -45.585,
+                "driver_output_power_dbm": -6.0,
+                "gain_db": 39.585
+            },
+            {
+                "source_power_dbm": -44.568,
+                "driver_output_power_dbm": -5.0,
+                "gain_db": 39.568
+            },
+            {
+                "source_power_dbm": -43.551,
+                "driver_output_power_dbm": -4.0,
+                "gain_db": 39.551
+            },
+            {
+                "source_power_dbm": -42.534,
+                "driver_output_power_dbm": -3.0,
+                "gain_db": 39.534
+            },
+            {
+                "source_power_dbm": -41.518,
+                "driver_output_power_dbm": -2.0,
+                "gain_db": 39.518
+            },
+            {
+                "source_power_dbm": -40.501,
+                "driver_output_power_dbm": -1.0,
+                "gain_db": 39.501
+            },
+            {
+                "source_power_dbm": -39.484,
+                "driver_output_power_dbm": 0.0,
+                "gain_db": 39.484
+            },
+            {
+                "source_power_dbm": -38.976,
+                "driver_output_power_dbm": 0.5,
+                "gain_db": 39.476
+            },
+            {
+                "source_power_dbm": -38.467,
+                "driver_output_power_dbm": 1.0,
+                "gain_db": 39.467
+            },
+            {
+                "source_power_dbm": -37.959,
+                "driver_output_power_dbm": 1.5,
+                "gain_db": 39.459
+            },
+            {
+                "source_power_dbm": -37.45,
+                "driver_output_power_dbm": 2.0,
+                "gain_db": 39.45
+            },
+            {
+                "source_power_dbm": -36.942,
+                "driver_output_power_dbm": 2.5,
+                "gain_db": 39.442
+            },
+            {
+                "source_power_dbm": -36.434,
+                "driver_output_power_dbm": 3.0,
+                "gain_db": 39.434
+            },
+            {
+                "source_power_dbm": -35.925,
+                "driver_output_power_dbm": 3.5,
+                "gain_db": 39.425
+            },
+            {
+                "source_power_dbm": -35.417,
+                "driver_output_power_dbm": 4.0,
+                "gain_db": 39.417
+            },
+            {
+                "source_power_dbm": -34.908,
+                "driver_output_power_dbm": 4.5,
+                "gain_db": 39.408
+            },
+            {
+                "source_power_dbm": -34.4,
+                "driver_output_power_dbm": 5.0,
+                "gain_db": 39.4
+            }
+        ],
+        "1.5": [
+            {
+                "source_power_dbm": -70.0,
+                "driver_output_power_dbm": -30.044,
+                "gain_db": 39.956
+            },
+            {
+                "source_power_dbm": -69.749,
+                "driver_output_power_dbm": -29.798,
+                "gain_db": 39.951
+            },
+            {
+                "source_power_dbm": -59.775,
+                "driver_output_power_dbm": -20.0,
+                "gain_db": 39.775
+            },
+            {
+                "source_power_dbm": -58.757,
+                "driver_output_power_dbm": -19.0,
+                "gain_db": 39.757
+            },
+            {
+                "source_power_dbm": -57.739,
+                "driver_output_power_dbm": -18.0,
+                "gain_db": 39.739
+            },
+            {
+                "source_power_dbm": -56.721,
+                "driver_output_power_dbm": -17.0,
+                "gain_db": 39.721
+            },
+            {
+                "source_power_dbm": -55.703,
+                "driver_output_power_dbm": -16.0,
+                "gain_db": 39.703
+            },
+            {
+                "source_power_dbm": -54.685,
+                "driver_output_power_dbm": -15.0,
+                "gain_db": 39.685
+            },
+            {
+                "source_power_dbm": -53.667,
+                "driver_output_power_dbm": -14.0,
+                "gain_db": 39.667
+            },
+            {
+                "source_power_dbm": -52.649,
+                "driver_output_power_dbm": -13.0,
+                "gain_db": 39.649
+            },
+            {
+                "source_power_dbm": -51.631,
+                "driver_output_power_dbm": -12.0,
+                "gain_db": 39.631
+            },
+            {
+                "source_power_dbm": -50.613,
+                "driver_output_power_dbm": -11.0,
+                "gain_db": 39.613
+            },
+            {
+                "source_power_dbm": -49.595,
+                "driver_output_power_dbm": -10.0,
+                "gain_db": 39.595
+            },
+            {
+                "source_power_dbm": -48.577,
+                "driver_output_power_dbm": -9.0,
+                "gain_db": 39.577
+            },
+            {
+                "source_power_dbm": -47.559,
+                "driver_output_power_dbm": -8.0,
+                "gain_db": 39.559
+            },
+            {
+                "source_power_dbm": -46.541,
+                "driver_output_power_dbm": -7.0,
+                "gain_db": 39.541
+            },
+            {
+                "source_power_dbm": -45.523,
+                "driver_output_power_dbm": -6.0,
+                "gain_db": 39.523
+            },
+            {
+                "source_power_dbm": -44.505,
+                "driver_output_power_dbm": -5.0,
+                "gain_db": 39.505
+            },
+            {
+                "source_power_dbm": -43.487,
+                "driver_output_power_dbm": -4.0,
+                "gain_db": 39.487
+            },
+            {
+                "source_power_dbm": -42.469,
+                "driver_output_power_dbm": -3.0,
+                "gain_db": 39.469
+            },
+            {
+                "source_power_dbm": -41.451,
+                "driver_output_power_dbm": -2.0,
+                "gain_db": 39.451
+            },
+            {
+                "source_power_dbm": -40.433,
+                "driver_output_power_dbm": -1.0,
+                "gain_db": 39.433
+            },
+            {
+                "source_power_dbm": -39.415,
+                "driver_output_power_dbm": 0.0,
+                "gain_db": 39.415
+            },
+            {
+                "source_power_dbm": -38.906,
+                "driver_output_power_dbm": 0.5,
+                "gain_db": 39.406
+            },
+            {
+                "source_power_dbm": -38.397,
+                "driver_output_power_dbm": 1.0,
+                "gain_db": 39.397
+            },
+            {
+                "source_power_dbm": -37.888,
+                "driver_output_power_dbm": 1.5,
+                "gain_db": 39.388
+            },
+            {
+                "source_power_dbm": -37.379,
+                "driver_output_power_dbm": 2.0,
+                "gain_db": 39.379
+            },
+            {
+                "source_power_dbm": -36.87,
+                "driver_output_power_dbm": 2.5,
+                "gain_db": 39.37
+            },
+            {
+                "source_power_dbm": -36.361,
+                "driver_output_power_dbm": 3.0,
+                "gain_db": 39.361
+            },
+            {
+                "source_power_dbm": -35.852,
+                "driver_output_power_dbm": 3.5,
+                "gain_db": 39.352
+            },
+            {
+                "source_power_dbm": -35.343,
+                "driver_output_power_dbm": 4.0,
+                "gain_db": 39.343
+            },
+            {
+                "source_power_dbm": -34.834,
+                "driver_output_power_dbm": 4.5,
+                "gain_db": 39.334
+            },
+            {
+                "source_power_dbm": -34.325,
+                "driver_output_power_dbm": 5.0,
+                "gain_db": 39.325
+            }
+        ],
+        "1.6": [
+            {
+                "source_power_dbm": -70.0,
+                "driver_output_power_dbm": -30.077,
+                "gain_db": 39.923
+            },
+            {
+                "source_power_dbm": -69.748,
+                "driver_output_power_dbm": -29.829,
+                "gain_db": 39.919
+            },
+            {
+                "source_power_dbm": -59.748,
+                "driver_output_power_dbm": -20.018,
+                "gain_db": 39.73
+            },
+            {
+                "source_power_dbm": -58.711,
+                "driver_output_power_dbm": -19.0,
+                "gain_db": 39.711
+            },
+            {
+                "source_power_dbm": -57.692,
+                "driver_output_power_dbm": -18.0,
+                "gain_db": 39.692
+            },
+            {
+                "source_power_dbm": -56.672,
+                "driver_output_power_dbm": -17.0,
+                "gain_db": 39.672
+            },
+            {
+                "source_power_dbm": -55.653,
+                "driver_output_power_dbm": -16.0,
+                "gain_db": 39.653
+            },
+            {
+                "source_power_dbm": -54.634,
+                "driver_output_power_dbm": -15.0,
+                "gain_db": 39.634
+            },
+            {
+                "source_power_dbm": -53.615,
+                "driver_output_power_dbm": -14.0,
+                "gain_db": 39.615
+            },
+            {
+                "source_power_dbm": -52.596,
+                "driver_output_power_dbm": -13.0,
+                "gain_db": 39.596
+            },
+            {
+                "source_power_dbm": -51.576,
+                "driver_output_power_dbm": -12.0,
+                "gain_db": 39.576
+            },
+            {
+                "source_power_dbm": -50.557,
+                "driver_output_power_dbm": -11.0,
+                "gain_db": 39.557
+            },
+            {
+                "source_power_dbm": -49.538,
+                "driver_output_power_dbm": -10.0,
+                "gain_db": 39.538
+            },
+            {
+                "source_power_dbm": -48.519,
+                "driver_output_power_dbm": -9.0,
+                "gain_db": 39.519
+            },
+            {
+                "source_power_dbm": -47.5,
+                "driver_output_power_dbm": -8.0,
+                "gain_db": 39.5
+            },
+            {
+                "source_power_dbm": -46.48,
+                "driver_output_power_dbm": -7.0,
+                "gain_db": 39.48
+            },
+            {
+                "source_power_dbm": -45.461,
+                "driver_output_power_dbm": -6.0,
+                "gain_db": 39.461
+            },
+            {
+                "source_power_dbm": -44.442,
+                "driver_output_power_dbm": -5.0,
+                "gain_db": 39.442
+            },
+            {
+                "source_power_dbm": -43.423,
+                "driver_output_power_dbm": -4.0,
+                "gain_db": 39.423
+            },
+            {
+                "source_power_dbm": -42.404,
+                "driver_output_power_dbm": -3.0,
+                "gain_db": 39.404
+            },
+            {
+                "source_power_dbm": -41.384,
+                "driver_output_power_dbm": -2.0,
+                "gain_db": 39.384
+            },
+            {
+                "source_power_dbm": -40.365,
+                "driver_output_power_dbm": -1.0,
+                "gain_db": 39.365
+            },
+            {
+                "source_power_dbm": -39.346,
+                "driver_output_power_dbm": 0.0,
+                "gain_db": 39.346
+            },
+            {
+                "source_power_dbm": -38.836,
+                "driver_output_power_dbm": 0.5,
+                "gain_db": 39.336
+            },
+            {
+                "source_power_dbm": -38.327,
+                "driver_output_power_dbm": 1.0,
+                "gain_db": 39.327
+            },
+            {
+                "source_power_dbm": -37.817,
+                "driver_output_power_dbm": 1.5,
+                "gain_db": 39.317
+            },
+            {
+                "source_power_dbm": -37.308,
+                "driver_output_power_dbm": 2.0,
+                "gain_db": 39.308
+            },
+            {
+                "source_power_dbm": -36.798,
+                "driver_output_power_dbm": 2.5,
+                "gain_db": 39.298
+            },
+            {
+                "source_power_dbm": -36.288,
+                "driver_output_power_dbm": 3.0,
+                "gain_db": 39.288
+            },
+            {
+                "source_power_dbm": -35.779,
+                "driver_output_power_dbm": 3.5,
+                "gain_db": 39.279
+            },
+            {
+                "source_power_dbm": -35.269,
+                "driver_output_power_dbm": 4.0,
+                "gain_db": 39.269
+            },
+            {
+                "source_power_dbm": -34.76,
+                "driver_output_power_dbm": 4.5,
+                "gain_db": 39.26
+            },
+            {
+                "source_power_dbm": -34.25,
+                "driver_output_power_dbm": 5.0,
+                "gain_db": 39.25
+            }
+        ],
+        "1.7": [
+            {
+                "source_power_dbm": -70.0,
+                "driver_output_power_dbm": -30.109,
+                "gain_db": 39.891
+            },
+            {
+                "source_power_dbm": -69.747,
+                "driver_output_power_dbm": -29.861,
+                "gain_db": 39.886
+            },
+            {
+                "source_power_dbm": -59.747,
+                "driver_output_power_dbm": -20.061,
+                "gain_db": 39.686
+            },
+            {
+                "source_power_dbm": -58.665,
+                "driver_output_power_dbm": -19.0,
+                "gain_db": 39.665
+            },
+            {
+                "source_power_dbm": -57.644,
+                "driver_output_power_dbm": -18.0,
+                "gain_db": 39.644
+            },
+            {
+                "source_power_dbm": -56.624,
+                "driver_output_power_dbm": -17.0,
+                "gain_db": 39.624
+            },
+            {
+                "source_power_dbm": -55.603,
+                "driver_output_power_dbm": -16.0,
+                "gain_db": 39.603
+            },
+            {
+                "source_power_dbm": -54.583,
+                "driver_output_power_dbm": -15.0,
+                "gain_db": 39.583
+            },
+            {
+                "source_power_dbm": -53.563,
+                "driver_output_power_dbm": -14.0,
+                "gain_db": 39.563
+            },
+            {
+                "source_power_dbm": -52.542,
+                "driver_output_power_dbm": -13.0,
+                "gain_db": 39.542
+            },
+            {
+                "source_power_dbm": -51.522,
+                "driver_output_power_dbm": -12.0,
+                "gain_db": 39.522
+            },
+            {
+                "source_power_dbm": -50.501,
+                "driver_output_power_dbm": -11.0,
+                "gain_db": 39.501
+            },
+            {
+                "source_power_dbm": -49.481,
+                "driver_output_power_dbm": -10.0,
+                "gain_db": 39.481
+            },
+            {
+                "source_power_dbm": -48.461,
+                "driver_output_power_dbm": -9.0,
+                "gain_db": 39.461
+            },
+            {
+                "source_power_dbm": -47.44,
+                "driver_output_power_dbm": -8.0,
+                "gain_db": 39.44
+            },
+            {
+                "source_power_dbm": -46.42,
+                "driver_output_power_dbm": -7.0,
+                "gain_db": 39.42
+            },
+            {
+                "source_power_dbm": -45.399,
+                "driver_output_power_dbm": -6.0,
+                "gain_db": 39.399
+            },
+            {
+                "source_power_dbm": -44.379,
+                "driver_output_power_dbm": -5.0,
+                "gain_db": 39.379
+            },
+            {
+                "source_power_dbm": -43.359,
+                "driver_output_power_dbm": -4.0,
+                "gain_db": 39.359
+            },
+            {
+                "source_power_dbm": -42.338,
+                "driver_output_power_dbm": -3.0,
+                "gain_db": 39.338
+            },
+            {
+                "source_power_dbm": -41.318,
+                "driver_output_power_dbm": -2.0,
+                "gain_db": 39.318
+            },
+            {
+                "source_power_dbm": -40.297,
+                "driver_output_power_dbm": -1.0,
+                "gain_db": 39.297
+            },
+            {
+                "source_power_dbm": -39.277,
+                "driver_output_power_dbm": 0.0,
+                "gain_db": 39.277
+            },
+            {
+                "source_power_dbm": -38.767,
+                "driver_output_power_dbm": 0.5,
+                "gain_db": 39.267
+            },
+            {
+                "source_power_dbm": -38.257,
+                "driver_output_power_dbm": 1.0,
+                "gain_db": 39.257
+            },
+            {
+                "source_power_dbm": -37.746,
+                "driver_output_power_dbm": 1.5,
+                "gain_db": 39.246
+            },
+            {
+                "source_power_dbm": -37.236,
+                "driver_output_power_dbm": 2.0,
+                "gain_db": 39.236
+            },
+            {
+                "source_power_dbm": -36.726,
+                "driver_output_power_dbm": 2.5,
+                "gain_db": 39.226
+            },
+            {
+                "source_power_dbm": -36.216,
+                "driver_output_power_dbm": 3.0,
+                "gain_db": 39.216
+            },
+            {
+                "source_power_dbm": -35.706,
+                "driver_output_power_dbm": 3.5,
+                "gain_db": 39.206
+            },
+            {
+                "source_power_dbm": -35.195,
+                "driver_output_power_dbm": 4.0,
+                "gain_db": 39.195
+            },
+            {
+                "source_power_dbm": -34.685,
+                "driver_output_power_dbm": 4.5,
+                "gain_db": 39.185
+            },
+            {
+                "source_power_dbm": -34.175,
+                "driver_output_power_dbm": 5.0,
+                "gain_db": 39.175
+            }
+        ],
+        "1.8": [
+            {
+                "source_power_dbm": -70.0,
+                "driver_output_power_dbm": -30.141,
+                "gain_db": 39.859
+            },
+            {
+                "source_power_dbm": -69.746,
+                "driver_output_power_dbm": -29.893,
+                "gain_db": 39.853
+            },
+            {
+                "source_power_dbm": -59.746,
+                "driver_output_power_dbm": -20.104,
+                "gain_db": 39.642
+            },
+            {
+                "source_power_dbm": -58.618,
+                "driver_output_power_dbm": -19.0,
+                "gain_db": 39.618
+            },
+            {
+                "source_power_dbm": -57.597,
+                "driver_output_power_dbm": -18.0,
+                "gain_db": 39.597
+            },
+            {
+                "source_power_dbm": -56.575,
+                "driver_output_power_dbm": -17.0,
+                "gain_db": 39.575
+            },
+            {
+                "source_power_dbm": -55.554,
+                "driver_output_power_dbm": -16.0,
+                "gain_db": 39.554
+            },
+            {
+                "source_power_dbm": -54.532,
+                "driver_output_power_dbm": -15.0,
+                "gain_db": 39.532
+            },
+            {
+                "source_power_dbm": -53.51,
+                "driver_output_power_dbm": -14.0,
+                "gain_db": 39.51
+            },
+            {
+                "source_power_dbm": -52.489,
+                "driver_output_power_dbm": -13.0,
+                "gain_db": 39.489
+            },
+            {
+                "source_power_dbm": -51.467,
+                "driver_output_power_dbm": -12.0,
+                "gain_db": 39.467
+            },
+            {
+                "source_power_dbm": -50.446,
+                "driver_output_power_dbm": -11.0,
+                "gain_db": 39.446
+            },
+            {
+                "source_power_dbm": -49.424,
+                "driver_output_power_dbm": -10.0,
+                "gain_db": 39.424
+            },
+            {
+                "source_power_dbm": -48.402,
+                "driver_output_power_dbm": -9.0,
+                "gain_db": 39.402
+            },
+            {
+                "source_power_dbm": -47.381,
+                "driver_output_power_dbm": -8.0,
+                "gain_db": 39.381
+            },
+            {
+                "source_power_dbm": -46.359,
+                "driver_output_power_dbm": -7.0,
+                "gain_db": 39.359
+            },
+            {
+                "source_power_dbm": -45.338,
+                "driver_output_power_dbm": -6.0,
+                "gain_db": 39.338
+            },
+            {
+                "source_power_dbm": -44.316,
+                "driver_output_power_dbm": -5.0,
+                "gain_db": 39.316
+            },
+            {
+                "source_power_dbm": -43.294,
+                "driver_output_power_dbm": -4.0,
+                "gain_db": 39.294
+            },
+            {
+                "source_power_dbm": -42.273,
+                "driver_output_power_dbm": -3.0,
+                "gain_db": 39.273
+            },
+            {
+                "source_power_dbm": -41.251,
+                "driver_output_power_dbm": -2.0,
+                "gain_db": 39.251
+            },
+            {
+                "source_power_dbm": -40.23,
+                "driver_output_power_dbm": -1.0,
+                "gain_db": 39.23
+            },
+            {
+                "source_power_dbm": -39.208,
+                "driver_output_power_dbm": 0.0,
+                "gain_db": 39.208
+            },
+            {
+                "source_power_dbm": -38.697,
+                "driver_output_power_dbm": 0.5,
+                "gain_db": 39.197
+            },
+            {
+                "source_power_dbm": -38.186,
+                "driver_output_power_dbm": 1.0,
+                "gain_db": 39.186
+            },
+            {
+                "source_power_dbm": -37.676,
+                "driver_output_power_dbm": 1.5,
+                "gain_db": 39.176
+            },
+            {
+                "source_power_dbm": -37.165,
+                "driver_output_power_dbm": 2.0,
+                "gain_db": 39.165
+            },
+            {
+                "source_power_dbm": -36.654,
+                "driver_output_power_dbm": 2.5,
+                "gain_db": 39.154
+            },
+            {
+                "source_power_dbm": -36.143,
+                "driver_output_power_dbm": 3.0,
+                "gain_db": 39.143
+            },
+            {
+                "source_power_dbm": -35.632,
+                "driver_output_power_dbm": 3.5,
+                "gain_db": 39.132
+            },
+            {
+                "source_power_dbm": -35.122,
+                "driver_output_power_dbm": 4.0,
+                "gain_db": 39.122
+            },
+            {
+                "source_power_dbm": -34.611,
+                "driver_output_power_dbm": 4.5,
+                "gain_db": 39.111
+            },
+            {
+                "source_power_dbm": -34.1,
+                "driver_output_power_dbm": 5.0,
+                "gain_db": 39.1
+            }
+        ],
+        "1.9": [
+            {
+                "source_power_dbm": -70.0,
+                "driver_output_power_dbm": -30.173,
+                "gain_db": 39.827
+            },
+            {
+                "source_power_dbm": -69.746,
+                "driver_output_power_dbm": -29.924,
+                "gain_db": 39.822
+            },
+            {
+                "source_power_dbm": -59.746,
+                "driver_output_power_dbm": -20.147,
+                "gain_db": 39.599
+            },
+            {
+                "source_power_dbm": -58.572,
+                "driver_output_power_dbm": -19.0,
+                "gain_db": 39.572
+            },
+            {
+                "source_power_dbm": -57.549,
+                "driver_output_power_dbm": -18.0,
+                "gain_db": 39.549
+            },
+            {
+                "source_power_dbm": -56.527,
+                "driver_output_power_dbm": -17.0,
+                "gain_db": 39.527
+            },
+            {
+                "source_power_dbm": -55.504,
+                "driver_output_power_dbm": -16.0,
+                "gain_db": 39.504
+            },
+            {
+                "source_power_dbm": -54.481,
+                "driver_output_power_dbm": -15.0,
+                "gain_db": 39.481
+            },
+            {
+                "source_power_dbm": -53.458,
+                "driver_output_power_dbm": -14.0,
+                "gain_db": 39.458
+            },
+            {
+                "source_power_dbm": -52.435,
+                "driver_output_power_dbm": -13.0,
+                "gain_db": 39.435
+            },
+            {
+                "source_power_dbm": -51.413,
+                "driver_output_power_dbm": -12.0,
+                "gain_db": 39.413
+            },
+            {
+                "source_power_dbm": -50.39,
+                "driver_output_power_dbm": -11.0,
+                "gain_db": 39.39
+            },
+            {
+                "source_power_dbm": -49.367,
+                "driver_output_power_dbm": -10.0,
+                "gain_db": 39.367
+            },
+            {
+                "source_power_dbm": -48.344,
+                "driver_output_power_dbm": -9.0,
+                "gain_db": 39.344
+            },
+            {
+                "source_power_dbm": -47.321,
+                "driver_output_power_dbm": -8.0,
+                "gain_db": 39.321
+            },
+            {
+                "source_power_dbm": -46.299,
+                "driver_output_power_dbm": -7.0,
+                "gain_db": 39.299
+            },
+            {
+                "source_power_dbm": -45.276,
+                "driver_output_power_dbm": -6.0,
+                "gain_db": 39.276
+            },
+            {
+                "source_power_dbm": -44.253,
+                "driver_output_power_dbm": -5.0,
+                "gain_db": 39.253
+            },
+            {
+                "source_power_dbm": -43.23,
+                "driver_output_power_dbm": -4.0,
+                "gain_db": 39.23
+            },
+            {
+                "source_power_dbm": -42.207,
+                "driver_output_power_dbm": -3.0,
+                "gain_db": 39.207
+            },
+            {
+                "source_power_dbm": -41.185,
+                "driver_output_power_dbm": -2.0,
+                "gain_db": 39.185
+            },
+            {
+                "source_power_dbm": -40.162,
+                "driver_output_power_dbm": -1.0,
+                "gain_db": 39.162
+            },
+            {
+                "source_power_dbm": -39.139,
+                "driver_output_power_dbm": -0.0,
+                "gain_db": 39.139
+            },
+            {
+                "source_power_dbm": -38.628,
+                "driver_output_power_dbm": 0.5,
+                "gain_db": 39.128
+            },
+            {
+                "source_power_dbm": -38.116,
+                "driver_output_power_dbm": 1.0,
+                "gain_db": 39.116
+            },
+            {
+                "source_power_dbm": -37.605,
+                "driver_output_power_dbm": 1.5,
+                "gain_db": 39.105
+            },
+            {
+                "source_power_dbm": -37.093,
+                "driver_output_power_dbm": 2.0,
+                "gain_db": 39.093
+            },
+            {
+                "source_power_dbm": -36.582,
+                "driver_output_power_dbm": 2.5,
+                "gain_db": 39.082
+            },
+            {
+                "source_power_dbm": -36.071,
+                "driver_output_power_dbm": 3.0,
+                "gain_db": 39.071
+            },
+            {
+                "source_power_dbm": -35.559,
+                "driver_output_power_dbm": 3.5,
+                "gain_db": 39.059
+            },
+            {
+                "source_power_dbm": -35.048,
+                "driver_output_power_dbm": 4.0,
+                "gain_db": 39.048
+            },
+            {
+                "source_power_dbm": -34.536,
+                "driver_output_power_dbm": 4.5,
+                "gain_db": 39.036
+            },
+            {
+                "source_power_dbm": -34.025,
+                "driver_output_power_dbm": 5.0,
+                "gain_db": 39.025
+            }
+        ],
+        "2.0": [
+            {
+                "source_power_dbm": -70.0,
+                "driver_output_power_dbm": -30.205,
+                "gain_db": 39.795
+            },
+            {
+                "source_power_dbm": -69.745,
+                "driver_output_power_dbm": -29.956,
+                "gain_db": 39.789
+            },
+            {
+                "source_power_dbm": -59.745,
+                "driver_output_power_dbm": -20.19,
+                "gain_db": 39.555
+            },
+            {
+                "source_power_dbm": -58.526,
+                "driver_output_power_dbm": -19.0,
+                "gain_db": 39.526
+            },
+            {
+                "source_power_dbm": -57.502,
+                "driver_output_power_dbm": -18.0,
+                "gain_db": 39.502
+            },
+            {
+                "source_power_dbm": -56.478,
+                "driver_output_power_dbm": -17.0,
+                "gain_db": 39.478
+            },
+            {
+                "source_power_dbm": -55.454,
+                "driver_output_power_dbm": -16.0,
+                "gain_db": 39.454
+            },
+            {
+                "source_power_dbm": -54.43,
+                "driver_output_power_dbm": -15.0,
+                "gain_db": 39.43
+            },
+            {
+                "source_power_dbm": -53.406,
+                "driver_output_power_dbm": -14.0,
+                "gain_db": 39.406
+            },
+            {
+                "source_power_dbm": -52.382,
+                "driver_output_power_dbm": -13.0,
+                "gain_db": 39.382
+            },
+            {
+                "source_power_dbm": -51.358,
+                "driver_output_power_dbm": -12.0,
+                "gain_db": 39.358
+            },
+            {
+                "source_power_dbm": -50.334,
+                "driver_output_power_dbm": -11.0,
+                "gain_db": 39.334
+            },
+            {
+                "source_power_dbm": -49.31,
+                "driver_output_power_dbm": -10.0,
+                "gain_db": 39.31
+            },
+            {
+                "source_power_dbm": -48.286,
+                "driver_output_power_dbm": -9.0,
+                "gain_db": 39.286
+            },
+            {
+                "source_power_dbm": -47.262,
+                "driver_output_power_dbm": -8.0,
+                "gain_db": 39.262
+            },
+            {
+                "source_power_dbm": -46.238,
+                "driver_output_power_dbm": -7.0,
+                "gain_db": 39.238
+            },
+            {
+                "source_power_dbm": -45.214,
+                "driver_output_power_dbm": -6.0,
+                "gain_db": 39.214
+            },
+            {
+                "source_power_dbm": -44.19,
+                "driver_output_power_dbm": -5.0,
+                "gain_db": 39.19
+            },
+            {
+                "source_power_dbm": -43.166,
+                "driver_output_power_dbm": -4.0,
+                "gain_db": 39.166
+            },
+            {
+                "source_power_dbm": -42.142,
+                "driver_output_power_dbm": -3.0,
+                "gain_db": 39.142
+            },
+            {
+                "source_power_dbm": -41.118,
+                "driver_output_power_dbm": -2.0,
+                "gain_db": 39.118
+            },
+            {
+                "source_power_dbm": -40.094,
+                "driver_output_power_dbm": -1.0,
+                "gain_db": 39.094
+            },
+            {
+                "source_power_dbm": -39.07,
+                "driver_output_power_dbm": 0.0,
+                "gain_db": 39.07
+            },
+            {
+                "source_power_dbm": -38.558,
+                "driver_output_power_dbm": 0.5,
+                "gain_db": 39.058
+            },
+            {
+                "source_power_dbm": -38.046,
+                "driver_output_power_dbm": 1.0,
+                "gain_db": 39.046
+            },
+            {
+                "source_power_dbm": -37.534,
+                "driver_output_power_dbm": 1.5,
+                "gain_db": 39.034
+            },
+            {
+                "source_power_dbm": -37.022,
+                "driver_output_power_dbm": 2.0,
+                "gain_db": 39.022
+            },
+            {
+                "source_power_dbm": -36.51,
+                "driver_output_power_dbm": 2.5,
+                "gain_db": 39.01
+            },
+            {
+                "source_power_dbm": -35.998,
+                "driver_output_power_dbm": 3.0,
+                "gain_db": 38.998
+            },
+            {
+                "source_power_dbm": -35.486,
+                "driver_output_power_dbm": 3.5,
+                "gain_db": 38.986
+            },
+            {
+                "source_power_dbm": -34.974,
+                "driver_output_power_dbm": 4.0,
+                "gain_db": 38.974
+            },
+            {
+                "source_power_dbm": -34.462,
+                "driver_output_power_dbm": 4.5,
+                "gain_db": 38.962
+            },
+            {
+                "source_power_dbm": -33.95,
+                "driver_output_power_dbm": 5.0,
+                "gain_db": 38.95
+            }
+        ]
+    },
+    "target_mapping": {
+        "1.0": [
+            {
+                "target_input_power_dbm": -20.0,
+                "source_power_dbm": -60.0,
+                "driver_output_power_dbm": -20.0
+            },
+            {
+                "target_input_power_dbm": -19.0,
+                "source_power_dbm": -58.988,
+                "driver_output_power_dbm": -19.0
+            },
+            {
+                "target_input_power_dbm": -18.0,
+                "source_power_dbm": -57.976,
+                "driver_output_power_dbm": -18.0
+            },
+            {
+                "target_input_power_dbm": -17.0,
+                "source_power_dbm": -56.964,
+                "driver_output_power_dbm": -17.0
+            },
+            {
+                "target_input_power_dbm": -16.0,
+                "source_power_dbm": -55.952,
+                "driver_output_power_dbm": -16.0
+            },
+            {
+                "target_input_power_dbm": -15.0,
+                "source_power_dbm": -54.94,
+                "driver_output_power_dbm": -15.0
+            },
+            {
+                "target_input_power_dbm": -14.0,
+                "source_power_dbm": -53.928,
+                "driver_output_power_dbm": -14.0
+            },
+            {
+                "target_input_power_dbm": -13.0,
+                "source_power_dbm": -52.916,
+                "driver_output_power_dbm": -13.0
+            },
+            {
+                "target_input_power_dbm": -12.0,
+                "source_power_dbm": -51.904,
+                "driver_output_power_dbm": -12.0
+            },
+            {
+                "target_input_power_dbm": -11.0,
+                "source_power_dbm": -50.892,
+                "driver_output_power_dbm": -11.0
+            },
+            {
+                "target_input_power_dbm": -10.0,
+                "source_power_dbm": -49.88,
+                "driver_output_power_dbm": -10.0
+            },
+            {
+                "target_input_power_dbm": -9.0,
+                "source_power_dbm": -48.868,
+                "driver_output_power_dbm": -9.0
+            },
+            {
+                "target_input_power_dbm": -8.0,
+                "source_power_dbm": -47.856,
+                "driver_output_power_dbm": -8.0
+            },
+            {
+                "target_input_power_dbm": -7.0,
+                "source_power_dbm": -46.844,
+                "driver_output_power_dbm": -7.0
+            },
+            {
+                "target_input_power_dbm": -6.0,
+                "source_power_dbm": -45.832,
+                "driver_output_power_dbm": -6.0
+            },
+            {
+                "target_input_power_dbm": -5.0,
+                "source_power_dbm": -44.82,
+                "driver_output_power_dbm": -5.0
+            },
+            {
+                "target_input_power_dbm": -4.0,
+                "source_power_dbm": -43.808,
+                "driver_output_power_dbm": -4.0
+            },
+            {
+                "target_input_power_dbm": -3.0,
+                "source_power_dbm": -42.796,
+                "driver_output_power_dbm": -3.0
+            },
+            {
+                "target_input_power_dbm": -2.0,
+                "source_power_dbm": -41.784,
+                "driver_output_power_dbm": -2.0
+            },
+            {
+                "target_input_power_dbm": -1.0,
+                "source_power_dbm": -40.772,
+                "driver_output_power_dbm": -1.0
+            },
+            {
+                "target_input_power_dbm": 0.0,
+                "source_power_dbm": -39.76,
+                "driver_output_power_dbm": 0.0
+            },
+            {
+                "target_input_power_dbm": 0.5,
+                "source_power_dbm": -39.254,
+                "driver_output_power_dbm": 0.5
+            },
+            {
+                "target_input_power_dbm": 1.0,
+                "source_power_dbm": -38.748,
+                "driver_output_power_dbm": 1.0
+            },
+            {
+                "target_input_power_dbm": 1.5,
+                "source_power_dbm": -38.242,
+                "driver_output_power_dbm": 1.5
+            },
+            {
+                "target_input_power_dbm": 2.0,
+                "source_power_dbm": -37.736,
+                "driver_output_power_dbm": 2.0
+            },
+            {
+                "target_input_power_dbm": 2.5,
+                "source_power_dbm": -37.23,
+                "driver_output_power_dbm": 2.5
+            },
+            {
+                "target_input_power_dbm": 3.0,
+                "source_power_dbm": -36.724,
+                "driver_output_power_dbm": 3.0
+            },
+            {
+                "target_input_power_dbm": 3.5,
+                "source_power_dbm": -36.218,
+                "driver_output_power_dbm": 3.5
+            },
+            {
+                "target_input_power_dbm": 4.0,
+                "source_power_dbm": -35.712,
+                "driver_output_power_dbm": 4.0
+            },
+            {
+                "target_input_power_dbm": 4.5,
+                "source_power_dbm": -35.206,
+                "driver_output_power_dbm": 4.5
+            },
+            {
+                "target_input_power_dbm": 5.0,
+                "source_power_dbm": -34.7,
+                "driver_output_power_dbm": 5.0
+            }
+        ],
+        "1.1": [
+            {
+                "target_input_power_dbm": -20.0,
+                "source_power_dbm": -59.955,
+                "driver_output_power_dbm": -20.0
+            },
+            {
+                "target_input_power_dbm": -19.0,
+                "source_power_dbm": -58.942,
+                "driver_output_power_dbm": -19.0
+            },
+            {
+                "target_input_power_dbm": -18.0,
+                "source_power_dbm": -57.929,
+                "driver_output_power_dbm": -18.0
+            },
+            {
+                "target_input_power_dbm": -17.0,
+                "source_power_dbm": -56.915,
+                "driver_output_power_dbm": -17.0
+            },
+            {
+                "target_input_power_dbm": -16.0,
+                "source_power_dbm": -55.902,
+                "driver_output_power_dbm": -16.0
+            },
+            {
+                "target_input_power_dbm": -15.0,
+                "source_power_dbm": -54.889,
+                "driver_output_power_dbm": -15.0
+            },
+            {
+                "target_input_power_dbm": -14.0,
+                "source_power_dbm": -53.876,
+                "driver_output_power_dbm": -14.0
+            },
+            {
+                "target_input_power_dbm": -13.0,
+                "source_power_dbm": -52.863,
+                "driver_output_power_dbm": -13.0
+            },
+            {
+                "target_input_power_dbm": -12.0,
+                "source_power_dbm": -51.849,
+                "driver_output_power_dbm": -12.0
+            },
+            {
+                "target_input_power_dbm": -11.0,
+                "source_power_dbm": -50.836,
+                "driver_output_power_dbm": -11.0
+            },
+            {
+                "target_input_power_dbm": -10.0,
+                "source_power_dbm": -49.823,
+                "driver_output_power_dbm": -10.0
+            },
+            {
+                "target_input_power_dbm": -9.0,
+                "source_power_dbm": -48.81,
+                "driver_output_power_dbm": -9.0
+            },
+            {
+                "target_input_power_dbm": -8.0,
+                "source_power_dbm": -47.797,
+                "driver_output_power_dbm": -8.0
+            },
+            {
+                "target_input_power_dbm": -7.0,
+                "source_power_dbm": -46.783,
+                "driver_output_power_dbm": -7.0
+            },
+            {
+                "target_input_power_dbm": -6.0,
+                "source_power_dbm": -45.77,
+                "driver_output_power_dbm": -6.0
+            },
+            {
+                "target_input_power_dbm": -5.0,
+                "source_power_dbm": -44.757,
+                "driver_output_power_dbm": -5.0
+            },
+            {
+                "target_input_power_dbm": -4.0,
+                "source_power_dbm": -43.744,
+                "driver_output_power_dbm": -4.0
+            },
+            {
+                "target_input_power_dbm": -3.0,
+                "source_power_dbm": -42.731,
+                "driver_output_power_dbm": -3.0
+            },
+            {
+                "target_input_power_dbm": -2.0,
+                "source_power_dbm": -41.717,
+                "driver_output_power_dbm": -2.0
+            },
+            {
+                "target_input_power_dbm": -1.0,
+                "source_power_dbm": -40.704,
+                "driver_output_power_dbm": -1.0
+            },
+            {
+                "target_input_power_dbm": 0.0,
+                "source_power_dbm": -39.691,
+                "driver_output_power_dbm": -0.0
+            },
+            {
+                "target_input_power_dbm": 0.5,
+                "source_power_dbm": -39.184,
+                "driver_output_power_dbm": 0.5
+            },
+            {
+                "target_input_power_dbm": 1.0,
+                "source_power_dbm": -38.678,
+                "driver_output_power_dbm": 1.0
+            },
+            {
+                "target_input_power_dbm": 1.5,
+                "source_power_dbm": -38.171,
+                "driver_output_power_dbm": 1.5
+            },
+            {
+                "target_input_power_dbm": 2.0,
+                "source_power_dbm": -37.665,
+                "driver_output_power_dbm": 2.0
+            },
+            {
+                "target_input_power_dbm": 2.5,
+                "source_power_dbm": -37.158,
+                "driver_output_power_dbm": 2.5
+            },
+            {
+                "target_input_power_dbm": 3.0,
+                "source_power_dbm": -36.651,
+                "driver_output_power_dbm": 3.0
+            },
+            {
+                "target_input_power_dbm": 3.5,
+                "source_power_dbm": -36.145,
+                "driver_output_power_dbm": 3.5
+            },
+            {
+                "target_input_power_dbm": 4.0,
+                "source_power_dbm": -35.638,
+                "driver_output_power_dbm": 4.0
+            },
+            {
+                "target_input_power_dbm": 4.5,
+                "source_power_dbm": -35.132,
+                "driver_output_power_dbm": 4.5
+            },
+            {
+                "target_input_power_dbm": 5.0,
+                "source_power_dbm": -34.625,
+                "driver_output_power_dbm": 5.0
+            }
+        ],
+        "1.2": [
+            {
+                "target_input_power_dbm": -20.0,
+                "source_power_dbm": -59.91,
+                "driver_output_power_dbm": -20.0
+            },
+            {
+                "target_input_power_dbm": -19.0,
+                "source_power_dbm": -58.896,
+                "driver_output_power_dbm": -19.0
+            },
+            {
+                "target_input_power_dbm": -18.0,
+                "source_power_dbm": -57.881,
+                "driver_output_power_dbm": -18.0
+            },
+            {
+                "target_input_power_dbm": -17.0,
+                "source_power_dbm": -56.867,
+                "driver_output_power_dbm": -17.0
+            },
+            {
+                "target_input_power_dbm": -16.0,
+                "source_power_dbm": -55.852,
+                "driver_output_power_dbm": -16.0
+            },
+            {
+                "target_input_power_dbm": -15.0,
+                "source_power_dbm": -54.838,
+                "driver_output_power_dbm": -15.0
+            },
+            {
+                "target_input_power_dbm": -14.0,
+                "source_power_dbm": -53.824,
+                "driver_output_power_dbm": -14.0
+            },
+            {
+                "target_input_power_dbm": -13.0,
+                "source_power_dbm": -52.809,
+                "driver_output_power_dbm": -13.0
+            },
+            {
+                "target_input_power_dbm": -12.0,
+                "source_power_dbm": -51.795,
+                "driver_output_power_dbm": -12.0
+            },
+            {
+                "target_input_power_dbm": -11.0,
+                "source_power_dbm": -50.78,
+                "driver_output_power_dbm": -11.0
+            },
+            {
+                "target_input_power_dbm": -10.0,
+                "source_power_dbm": -49.766,
+                "driver_output_power_dbm": -10.0
+            },
+            {
+                "target_input_power_dbm": -9.0,
+                "source_power_dbm": -48.752,
+                "driver_output_power_dbm": -9.0
+            },
+            {
+                "target_input_power_dbm": -8.0,
+                "source_power_dbm": -47.737,
+                "driver_output_power_dbm": -8.0
+            },
+            {
+                "target_input_power_dbm": -7.0,
+                "source_power_dbm": -46.723,
+                "driver_output_power_dbm": -7.0
+            },
+            {
+                "target_input_power_dbm": -6.0,
+                "source_power_dbm": -45.708,
+                "driver_output_power_dbm": -6.0
+            },
+            {
+                "target_input_power_dbm": -5.0,
+                "source_power_dbm": -44.694,
+                "driver_output_power_dbm": -5.0
+            },
+            {
+                "target_input_power_dbm": -4.0,
+                "source_power_dbm": -43.68,
+                "driver_output_power_dbm": -4.0
+            },
+            {
+                "target_input_power_dbm": -3.0,
+                "source_power_dbm": -42.665,
+                "driver_output_power_dbm": -3.0
+            },
+            {
+                "target_input_power_dbm": -2.0,
+                "source_power_dbm": -41.651,
+                "driver_output_power_dbm": -2.0
+            },
+            {
+                "target_input_power_dbm": -1.0,
+                "source_power_dbm": -40.636,
+                "driver_output_power_dbm": -1.0
+            },
+            {
+                "target_input_power_dbm": 0.0,
+                "source_power_dbm": -39.622,
+                "driver_output_power_dbm": 0.0
+            },
+            {
+                "target_input_power_dbm": 0.5,
+                "source_power_dbm": -39.115,
+                "driver_output_power_dbm": 0.5
+            },
+            {
+                "target_input_power_dbm": 1.0,
+                "source_power_dbm": -38.608,
+                "driver_output_power_dbm": 1.0
+            },
+            {
+                "target_input_power_dbm": 1.5,
+                "source_power_dbm": -38.1,
+                "driver_output_power_dbm": 1.5
+            },
+            {
+                "target_input_power_dbm": 2.0,
+                "source_power_dbm": -37.593,
+                "driver_output_power_dbm": 2.0
+            },
+            {
+                "target_input_power_dbm": 2.5,
+                "source_power_dbm": -37.086,
+                "driver_output_power_dbm": 2.5
+            },
+            {
+                "target_input_power_dbm": 3.0,
+                "source_power_dbm": -36.579,
+                "driver_output_power_dbm": 3.0
+            },
+            {
+                "target_input_power_dbm": 3.5,
+                "source_power_dbm": -36.072,
+                "driver_output_power_dbm": 3.5
+            },
+            {
+                "target_input_power_dbm": 4.0,
+                "source_power_dbm": -35.564,
+                "driver_output_power_dbm": 4.0
+            },
+            {
+                "target_input_power_dbm": 4.5,
+                "source_power_dbm": -35.057,
+                "driver_output_power_dbm": 4.5
+            },
+            {
+                "target_input_power_dbm": 5.0,
+                "source_power_dbm": -34.55,
+                "driver_output_power_dbm": 5.0
+            }
+        ],
+        "1.3": [
+            {
+                "target_input_power_dbm": -20.0,
+                "source_power_dbm": -59.865,
+                "driver_output_power_dbm": -20.0
+            },
+            {
+                "target_input_power_dbm": -19.0,
+                "source_power_dbm": -58.849,
+                "driver_output_power_dbm": -19.0
+            },
+            {
+                "target_input_power_dbm": -18.0,
+                "source_power_dbm": -57.834,
+                "driver_output_power_dbm": -18.0
+            },
+            {
+                "target_input_power_dbm": -17.0,
+                "source_power_dbm": -56.818,
+                "driver_output_power_dbm": -17.0
+            },
+            {
+                "target_input_power_dbm": -16.0,
+                "source_power_dbm": -55.803,
+                "driver_output_power_dbm": -16.0
+            },
+            {
+                "target_input_power_dbm": -15.0,
+                "source_power_dbm": -54.787,
+                "driver_output_power_dbm": -15.0
+            },
+            {
+                "target_input_power_dbm": -14.0,
+                "source_power_dbm": -53.771,
+                "driver_output_power_dbm": -14.0
+            },
+            {
+                "target_input_power_dbm": -13.0,
+                "source_power_dbm": -52.756,
+                "driver_output_power_dbm": -13.0
+            },
+            {
+                "target_input_power_dbm": -12.0,
+                "source_power_dbm": -51.74,
+                "driver_output_power_dbm": -12.0
+            },
+            {
+                "target_input_power_dbm": -11.0,
+                "source_power_dbm": -50.725,
+                "driver_output_power_dbm": -11.0
+            },
+            {
+                "target_input_power_dbm": -10.0,
+                "source_power_dbm": -49.709,
+                "driver_output_power_dbm": -10.0
+            },
+            {
+                "target_input_power_dbm": -9.0,
+                "source_power_dbm": -48.693,
+                "driver_output_power_dbm": -9.0
+            },
+            {
+                "target_input_power_dbm": -8.0,
+                "source_power_dbm": -47.678,
+                "driver_output_power_dbm": -8.0
+            },
+            {
+                "target_input_power_dbm": -7.0,
+                "source_power_dbm": -46.662,
+                "driver_output_power_dbm": -7.0
+            },
+            {
+                "target_input_power_dbm": -6.0,
+                "source_power_dbm": -45.647,
+                "driver_output_power_dbm": -6.0
+            },
+            {
+                "target_input_power_dbm": -5.0,
+                "source_power_dbm": -44.631,
+                "driver_output_power_dbm": -5.0
+            },
+            {
+                "target_input_power_dbm": -4.0,
+                "source_power_dbm": -43.615,
+                "driver_output_power_dbm": -4.0
+            },
+            {
+                "target_input_power_dbm": -3.0,
+                "source_power_dbm": -42.6,
+                "driver_output_power_dbm": -3.0
+            },
+            {
+                "target_input_power_dbm": -2.0,
+                "source_power_dbm": -41.584,
+                "driver_output_power_dbm": -2.0
+            },
+            {
+                "target_input_power_dbm": -1.0,
+                "source_power_dbm": -40.569,
+                "driver_output_power_dbm": -1.0
+            },
+            {
+                "target_input_power_dbm": 0.0,
+                "source_power_dbm": -39.553,
+                "driver_output_power_dbm": 0.0
+            },
+            {
+                "target_input_power_dbm": 0.5,
+                "source_power_dbm": -39.045,
+                "driver_output_power_dbm": 0.5
+            },
+            {
+                "target_input_power_dbm": 1.0,
+                "source_power_dbm": -38.537,
+                "driver_output_power_dbm": 1.0
+            },
+            {
+                "target_input_power_dbm": 1.5,
+                "source_power_dbm": -38.03,
+                "driver_output_power_dbm": 1.5
+            },
+            {
+                "target_input_power_dbm": 2.0,
+                "source_power_dbm": -37.522,
+                "driver_output_power_dbm": 2.0
+            },
+            {
+                "target_input_power_dbm": 2.5,
+                "source_power_dbm": -37.014,
+                "driver_output_power_dbm": 2.5
+            },
+            {
+                "target_input_power_dbm": 3.0,
+                "source_power_dbm": -36.506,
+                "driver_output_power_dbm": 3.0
+            },
+            {
+                "target_input_power_dbm": 3.5,
+                "source_power_dbm": -35.998,
+                "driver_output_power_dbm": 3.5
+            },
+            {
+                "target_input_power_dbm": 4.0,
+                "source_power_dbm": -35.491,
+                "driver_output_power_dbm": 4.0
+            },
+            {
+                "target_input_power_dbm": 4.5,
+                "source_power_dbm": -34.983,
+                "driver_output_power_dbm": 4.5
+            },
+            {
+                "target_input_power_dbm": 5.0,
+                "source_power_dbm": -34.475,
+                "driver_output_power_dbm": 5.0
+            }
+        ],
+        "1.4": [
+            {
+                "target_input_power_dbm": -20.0,
+                "source_power_dbm": -59.82,
+                "driver_output_power_dbm": -20.0
+            },
+            {
+                "target_input_power_dbm": -19.0,
+                "source_power_dbm": -58.803,
+                "driver_output_power_dbm": -19.0
+            },
+            {
+                "target_input_power_dbm": -18.0,
+                "source_power_dbm": -57.786,
+                "driver_output_power_dbm": -18.0
+            },
+            {
+                "target_input_power_dbm": -17.0,
+                "source_power_dbm": -56.77,
+                "driver_output_power_dbm": -17.0
+            },
+            {
+                "target_input_power_dbm": -16.0,
+                "source_power_dbm": -55.753,
+                "driver_output_power_dbm": -16.0
+            },
+            {
+                "target_input_power_dbm": -15.0,
+                "source_power_dbm": -54.736,
+                "driver_output_power_dbm": -15.0
+            },
+            {
+                "target_input_power_dbm": -14.0,
+                "source_power_dbm": -53.719,
+                "driver_output_power_dbm": -14.0
+            },
+            {
+                "target_input_power_dbm": -13.0,
+                "source_power_dbm": -52.702,
+                "driver_output_power_dbm": -13.0
+            },
+            {
+                "target_input_power_dbm": -12.0,
+                "source_power_dbm": -51.686,
+                "driver_output_power_dbm": -12.0
+            },
+            {
+                "target_input_power_dbm": -11.0,
+                "source_power_dbm": -50.669,
+                "driver_output_power_dbm": -11.0
+            },
+            {
+                "target_input_power_dbm": -10.0,
+                "source_power_dbm": -49.652,
+                "driver_output_power_dbm": -10.0
+            },
+            {
+                "target_input_power_dbm": -9.0,
+                "source_power_dbm": -48.635,
+                "driver_output_power_dbm": -9.0
+            },
+            {
+                "target_input_power_dbm": -8.0,
+                "source_power_dbm": -47.618,
+                "driver_output_power_dbm": -8.0
+            },
+            {
+                "target_input_power_dbm": -7.0,
+                "source_power_dbm": -46.602,
+                "driver_output_power_dbm": -7.0
+            },
+            {
+                "target_input_power_dbm": -6.0,
+                "source_power_dbm": -45.585,
+                "driver_output_power_dbm": -6.0
+            },
+            {
+                "target_input_power_dbm": -5.0,
+                "source_power_dbm": -44.568,
+                "driver_output_power_dbm": -5.0
+            },
+            {
+                "target_input_power_dbm": -4.0,
+                "source_power_dbm": -43.551,
+                "driver_output_power_dbm": -4.0
+            },
+            {
+                "target_input_power_dbm": -3.0,
+                "source_power_dbm": -42.534,
+                "driver_output_power_dbm": -3.0
+            },
+            {
+                "target_input_power_dbm": -2.0,
+                "source_power_dbm": -41.518,
+                "driver_output_power_dbm": -2.0
+            },
+            {
+                "target_input_power_dbm": -1.0,
+                "source_power_dbm": -40.501,
+                "driver_output_power_dbm": -1.0
+            },
+            {
+                "target_input_power_dbm": 0.0,
+                "source_power_dbm": -39.484,
+                "driver_output_power_dbm": 0.0
+            },
+            {
+                "target_input_power_dbm": 0.5,
+                "source_power_dbm": -38.976,
+                "driver_output_power_dbm": 0.5
+            },
+            {
+                "target_input_power_dbm": 1.0,
+                "source_power_dbm": -38.467,
+                "driver_output_power_dbm": 1.0
+            },
+            {
+                "target_input_power_dbm": 1.5,
+                "source_power_dbm": -37.959,
+                "driver_output_power_dbm": 1.5
+            },
+            {
+                "target_input_power_dbm": 2.0,
+                "source_power_dbm": -37.45,
+                "driver_output_power_dbm": 2.0
+            },
+            {
+                "target_input_power_dbm": 2.5,
+                "source_power_dbm": -36.942,
+                "driver_output_power_dbm": 2.5
+            },
+            {
+                "target_input_power_dbm": 3.0,
+                "source_power_dbm": -36.434,
+                "driver_output_power_dbm": 3.0
+            },
+            {
+                "target_input_power_dbm": 3.5,
+                "source_power_dbm": -35.925,
+                "driver_output_power_dbm": 3.5
+            },
+            {
+                "target_input_power_dbm": 4.0,
+                "source_power_dbm": -35.417,
+                "driver_output_power_dbm": 4.0
+            },
+            {
+                "target_input_power_dbm": 4.5,
+                "source_power_dbm": -34.908,
+                "driver_output_power_dbm": 4.5
+            },
+            {
+                "target_input_power_dbm": 5.0,
+                "source_power_dbm": -34.4,
+                "driver_output_power_dbm": 5.0
+            }
+        ],
+        "1.5": [
+            {
+                "target_input_power_dbm": -20.0,
+                "source_power_dbm": -59.775,
+                "driver_output_power_dbm": -20.0
+            },
+            {
+                "target_input_power_dbm": -19.0,
+                "source_power_dbm": -58.757,
+                "driver_output_power_dbm": -19.0
+            },
+            {
+                "target_input_power_dbm": -18.0,
+                "source_power_dbm": -57.739,
+                "driver_output_power_dbm": -18.0
+            },
+            {
+                "target_input_power_dbm": -17.0,
+                "source_power_dbm": -56.721,
+                "driver_output_power_dbm": -17.0
+            },
+            {
+                "target_input_power_dbm": -16.0,
+                "source_power_dbm": -55.703,
+                "driver_output_power_dbm": -16.0
+            },
+            {
+                "target_input_power_dbm": -15.0,
+                "source_power_dbm": -54.685,
+                "driver_output_power_dbm": -15.0
+            },
+            {
+                "target_input_power_dbm": -14.0,
+                "source_power_dbm": -53.667,
+                "driver_output_power_dbm": -14.0
+            },
+            {
+                "target_input_power_dbm": -13.0,
+                "source_power_dbm": -52.649,
+                "driver_output_power_dbm": -13.0
+            },
+            {
+                "target_input_power_dbm": -12.0,
+                "source_power_dbm": -51.631,
+                "driver_output_power_dbm": -12.0
+            },
+            {
+                "target_input_power_dbm": -11.0,
+                "source_power_dbm": -50.613,
+                "driver_output_power_dbm": -11.0
+            },
+            {
+                "target_input_power_dbm": -10.0,
+                "source_power_dbm": -49.595,
+                "driver_output_power_dbm": -10.0
+            },
+            {
+                "target_input_power_dbm": -9.0,
+                "source_power_dbm": -48.577,
+                "driver_output_power_dbm": -9.0
+            },
+            {
+                "target_input_power_dbm": -8.0,
+                "source_power_dbm": -47.559,
+                "driver_output_power_dbm": -8.0
+            },
+            {
+                "target_input_power_dbm": -7.0,
+                "source_power_dbm": -46.541,
+                "driver_output_power_dbm": -7.0
+            },
+            {
+                "target_input_power_dbm": -6.0,
+                "source_power_dbm": -45.523,
+                "driver_output_power_dbm": -6.0
+            },
+            {
+                "target_input_power_dbm": -5.0,
+                "source_power_dbm": -44.505,
+                "driver_output_power_dbm": -5.0
+            },
+            {
+                "target_input_power_dbm": -4.0,
+                "source_power_dbm": -43.487,
+                "driver_output_power_dbm": -4.0
+            },
+            {
+                "target_input_power_dbm": -3.0,
+                "source_power_dbm": -42.469,
+                "driver_output_power_dbm": -3.0
+            },
+            {
+                "target_input_power_dbm": -2.0,
+                "source_power_dbm": -41.451,
+                "driver_output_power_dbm": -2.0
+            },
+            {
+                "target_input_power_dbm": -1.0,
+                "source_power_dbm": -40.433,
+                "driver_output_power_dbm": -1.0
+            },
+            {
+                "target_input_power_dbm": 0.0,
+                "source_power_dbm": -39.415,
+                "driver_output_power_dbm": 0.0
+            },
+            {
+                "target_input_power_dbm": 0.5,
+                "source_power_dbm": -38.906,
+                "driver_output_power_dbm": 0.5
+            },
+            {
+                "target_input_power_dbm": 1.0,
+                "source_power_dbm": -38.397,
+                "driver_output_power_dbm": 1.0
+            },
+            {
+                "target_input_power_dbm": 1.5,
+                "source_power_dbm": -37.888,
+                "driver_output_power_dbm": 1.5
+            },
+            {
+                "target_input_power_dbm": 2.0,
+                "source_power_dbm": -37.379,
+                "driver_output_power_dbm": 2.0
+            },
+            {
+                "target_input_power_dbm": 2.5,
+                "source_power_dbm": -36.87,
+                "driver_output_power_dbm": 2.5
+            },
+            {
+                "target_input_power_dbm": 3.0,
+                "source_power_dbm": -36.361,
+                "driver_output_power_dbm": 3.0
+            },
+            {
+                "target_input_power_dbm": 3.5,
+                "source_power_dbm": -35.852,
+                "driver_output_power_dbm": 3.5
+            },
+            {
+                "target_input_power_dbm": 4.0,
+                "source_power_dbm": -35.343,
+                "driver_output_power_dbm": 4.0
+            },
+            {
+                "target_input_power_dbm": 4.5,
+                "source_power_dbm": -34.834,
+                "driver_output_power_dbm": 4.5
+            },
+            {
+                "target_input_power_dbm": 5.0,
+                "source_power_dbm": -34.325,
+                "driver_output_power_dbm": 5.0
+            }
+        ],
+        "1.6": [
+            {
+                "target_input_power_dbm": -20.0,
+                "source_power_dbm": -59.748,
+                "driver_output_power_dbm": -20.018
+            },
+            {
+                "target_input_power_dbm": -19.0,
+                "source_power_dbm": -58.711,
+                "driver_output_power_dbm": -19.0
+            },
+            {
+                "target_input_power_dbm": -18.0,
+                "source_power_dbm": -57.692,
+                "driver_output_power_dbm": -18.0
+            },
+            {
+                "target_input_power_dbm": -17.0,
+                "source_power_dbm": -56.672,
+                "driver_output_power_dbm": -17.0
+            },
+            {
+                "target_input_power_dbm": -16.0,
+                "source_power_dbm": -55.653,
+                "driver_output_power_dbm": -16.0
+            },
+            {
+                "target_input_power_dbm": -15.0,
+                "source_power_dbm": -54.634,
+                "driver_output_power_dbm": -15.0
+            },
+            {
+                "target_input_power_dbm": -14.0,
+                "source_power_dbm": -53.615,
+                "driver_output_power_dbm": -14.0
+            },
+            {
+                "target_input_power_dbm": -13.0,
+                "source_power_dbm": -52.596,
+                "driver_output_power_dbm": -13.0
+            },
+            {
+                "target_input_power_dbm": -12.0,
+                "source_power_dbm": -51.576,
+                "driver_output_power_dbm": -12.0
+            },
+            {
+                "target_input_power_dbm": -11.0,
+                "source_power_dbm": -50.557,
+                "driver_output_power_dbm": -11.0
+            },
+            {
+                "target_input_power_dbm": -10.0,
+                "source_power_dbm": -49.538,
+                "driver_output_power_dbm": -10.0
+            },
+            {
+                "target_input_power_dbm": -9.0,
+                "source_power_dbm": -48.519,
+                "driver_output_power_dbm": -9.0
+            },
+            {
+                "target_input_power_dbm": -8.0,
+                "source_power_dbm": -47.5,
+                "driver_output_power_dbm": -8.0
+            },
+            {
+                "target_input_power_dbm": -7.0,
+                "source_power_dbm": -46.48,
+                "driver_output_power_dbm": -7.0
+            },
+            {
+                "target_input_power_dbm": -6.0,
+                "source_power_dbm": -45.461,
+                "driver_output_power_dbm": -6.0
+            },
+            {
+                "target_input_power_dbm": -5.0,
+                "source_power_dbm": -44.442,
+                "driver_output_power_dbm": -5.0
+            },
+            {
+                "target_input_power_dbm": -4.0,
+                "source_power_dbm": -43.423,
+                "driver_output_power_dbm": -4.0
+            },
+            {
+                "target_input_power_dbm": -3.0,
+                "source_power_dbm": -42.404,
+                "driver_output_power_dbm": -3.0
+            },
+            {
+                "target_input_power_dbm": -2.0,
+                "source_power_dbm": -41.384,
+                "driver_output_power_dbm": -2.0
+            },
+            {
+                "target_input_power_dbm": -1.0,
+                "source_power_dbm": -40.365,
+                "driver_output_power_dbm": -1.0
+            },
+            {
+                "target_input_power_dbm": 0.0,
+                "source_power_dbm": -39.346,
+                "driver_output_power_dbm": 0.0
+            },
+            {
+                "target_input_power_dbm": 0.5,
+                "source_power_dbm": -38.836,
+                "driver_output_power_dbm": 0.5
+            },
+            {
+                "target_input_power_dbm": 1.0,
+                "source_power_dbm": -38.327,
+                "driver_output_power_dbm": 1.0
+            },
+            {
+                "target_input_power_dbm": 1.5,
+                "source_power_dbm": -37.817,
+                "driver_output_power_dbm": 1.5
+            },
+            {
+                "target_input_power_dbm": 2.0,
+                "source_power_dbm": -37.308,
+                "driver_output_power_dbm": 2.0
+            },
+            {
+                "target_input_power_dbm": 2.5,
+                "source_power_dbm": -36.798,
+                "driver_output_power_dbm": 2.5
+            },
+            {
+                "target_input_power_dbm": 3.0,
+                "source_power_dbm": -36.288,
+                "driver_output_power_dbm": 3.0
+            },
+            {
+                "target_input_power_dbm": 3.5,
+                "source_power_dbm": -35.779,
+                "driver_output_power_dbm": 3.5
+            },
+            {
+                "target_input_power_dbm": 4.0,
+                "source_power_dbm": -35.269,
+                "driver_output_power_dbm": 4.0
+            },
+            {
+                "target_input_power_dbm": 4.5,
+                "source_power_dbm": -34.76,
+                "driver_output_power_dbm": 4.5
+            },
+            {
+                "target_input_power_dbm": 5.0,
+                "source_power_dbm": -34.25,
+                "driver_output_power_dbm": 5.0
+            }
+        ],
+        "1.7": [
+            {
+                "target_input_power_dbm": -20.0,
+                "source_power_dbm": -59.747,
+                "driver_output_power_dbm": -20.061
+            },
+            {
+                "target_input_power_dbm": -19.0,
+                "source_power_dbm": -58.665,
+                "driver_output_power_dbm": -19.0
+            },
+            {
+                "target_input_power_dbm": -18.0,
+                "source_power_dbm": -57.644,
+                "driver_output_power_dbm": -18.0
+            },
+            {
+                "target_input_power_dbm": -17.0,
+                "source_power_dbm": -56.624,
+                "driver_output_power_dbm": -17.0
+            },
+            {
+                "target_input_power_dbm": -16.0,
+                "source_power_dbm": -55.603,
+                "driver_output_power_dbm": -16.0
+            },
+            {
+                "target_input_power_dbm": -15.0,
+                "source_power_dbm": -54.583,
+                "driver_output_power_dbm": -15.0
+            },
+            {
+                "target_input_power_dbm": -14.0,
+                "source_power_dbm": -53.563,
+                "driver_output_power_dbm": -14.0
+            },
+            {
+                "target_input_power_dbm": -13.0,
+                "source_power_dbm": -52.542,
+                "driver_output_power_dbm": -13.0
+            },
+            {
+                "target_input_power_dbm": -12.0,
+                "source_power_dbm": -51.522,
+                "driver_output_power_dbm": -12.0
+            },
+            {
+                "target_input_power_dbm": -11.0,
+                "source_power_dbm": -50.501,
+                "driver_output_power_dbm": -11.0
+            },
+            {
+                "target_input_power_dbm": -10.0,
+                "source_power_dbm": -49.481,
+                "driver_output_power_dbm": -10.0
+            },
+            {
+                "target_input_power_dbm": -9.0,
+                "source_power_dbm": -48.461,
+                "driver_output_power_dbm": -9.0
+            },
+            {
+                "target_input_power_dbm": -8.0,
+                "source_power_dbm": -47.44,
+                "driver_output_power_dbm": -8.0
+            },
+            {
+                "target_input_power_dbm": -7.0,
+                "source_power_dbm": -46.42,
+                "driver_output_power_dbm": -7.0
+            },
+            {
+                "target_input_power_dbm": -6.0,
+                "source_power_dbm": -45.399,
+                "driver_output_power_dbm": -6.0
+            },
+            {
+                "target_input_power_dbm": -5.0,
+                "source_power_dbm": -44.379,
+                "driver_output_power_dbm": -5.0
+            },
+            {
+                "target_input_power_dbm": -4.0,
+                "source_power_dbm": -43.359,
+                "driver_output_power_dbm": -4.0
+            },
+            {
+                "target_input_power_dbm": -3.0,
+                "source_power_dbm": -42.338,
+                "driver_output_power_dbm": -3.0
+            },
+            {
+                "target_input_power_dbm": -2.0,
+                "source_power_dbm": -41.318,
+                "driver_output_power_dbm": -2.0
+            },
+            {
+                "target_input_power_dbm": -1.0,
+                "source_power_dbm": -40.297,
+                "driver_output_power_dbm": -1.0
+            },
+            {
+                "target_input_power_dbm": 0.0,
+                "source_power_dbm": -39.277,
+                "driver_output_power_dbm": 0.0
+            },
+            {
+                "target_input_power_dbm": 0.5,
+                "source_power_dbm": -38.767,
+                "driver_output_power_dbm": 0.5
+            },
+            {
+                "target_input_power_dbm": 1.0,
+                "source_power_dbm": -38.257,
+                "driver_output_power_dbm": 1.0
+            },
+            {
+                "target_input_power_dbm": 1.5,
+                "source_power_dbm": -37.746,
+                "driver_output_power_dbm": 1.5
+            },
+            {
+                "target_input_power_dbm": 2.0,
+                "source_power_dbm": -37.236,
+                "driver_output_power_dbm": 2.0
+            },
+            {
+                "target_input_power_dbm": 2.5,
+                "source_power_dbm": -36.726,
+                "driver_output_power_dbm": 2.5
+            },
+            {
+                "target_input_power_dbm": 3.0,
+                "source_power_dbm": -36.216,
+                "driver_output_power_dbm": 3.0
+            },
+            {
+                "target_input_power_dbm": 3.5,
+                "source_power_dbm": -35.706,
+                "driver_output_power_dbm": 3.5
+            },
+            {
+                "target_input_power_dbm": 4.0,
+                "source_power_dbm": -35.195,
+                "driver_output_power_dbm": 4.0
+            },
+            {
+                "target_input_power_dbm": 4.5,
+                "source_power_dbm": -34.685,
+                "driver_output_power_dbm": 4.5
+            },
+            {
+                "target_input_power_dbm": 5.0,
+                "source_power_dbm": -34.175,
+                "driver_output_power_dbm": 5.0
+            }
+        ],
+        "1.8": [
+            {
+                "target_input_power_dbm": -20.0,
+                "source_power_dbm": -59.746,
+                "driver_output_power_dbm": -20.104
+            },
+            {
+                "target_input_power_dbm": -19.0,
+                "source_power_dbm": -58.618,
+                "driver_output_power_dbm": -19.0
+            },
+            {
+                "target_input_power_dbm": -18.0,
+                "source_power_dbm": -57.597,
+                "driver_output_power_dbm": -18.0
+            },
+            {
+                "target_input_power_dbm": -17.0,
+                "source_power_dbm": -56.575,
+                "driver_output_power_dbm": -17.0
+            },
+            {
+                "target_input_power_dbm": -16.0,
+                "source_power_dbm": -55.554,
+                "driver_output_power_dbm": -16.0
+            },
+            {
+                "target_input_power_dbm": -15.0,
+                "source_power_dbm": -54.532,
+                "driver_output_power_dbm": -15.0
+            },
+            {
+                "target_input_power_dbm": -14.0,
+                "source_power_dbm": -53.51,
+                "driver_output_power_dbm": -14.0
+            },
+            {
+                "target_input_power_dbm": -13.0,
+                "source_power_dbm": -52.489,
+                "driver_output_power_dbm": -13.0
+            },
+            {
+                "target_input_power_dbm": -12.0,
+                "source_power_dbm": -51.467,
+                "driver_output_power_dbm": -12.0
+            },
+            {
+                "target_input_power_dbm": -11.0,
+                "source_power_dbm": -50.446,
+                "driver_output_power_dbm": -11.0
+            },
+            {
+                "target_input_power_dbm": -10.0,
+                "source_power_dbm": -49.424,
+                "driver_output_power_dbm": -10.0
+            },
+            {
+                "target_input_power_dbm": -9.0,
+                "source_power_dbm": -48.402,
+                "driver_output_power_dbm": -9.0
+            },
+            {
+                "target_input_power_dbm": -8.0,
+                "source_power_dbm": -47.381,
+                "driver_output_power_dbm": -8.0
+            },
+            {
+                "target_input_power_dbm": -7.0,
+                "source_power_dbm": -46.359,
+                "driver_output_power_dbm": -7.0
+            },
+            {
+                "target_input_power_dbm": -6.0,
+                "source_power_dbm": -45.338,
+                "driver_output_power_dbm": -6.0
+            },
+            {
+                "target_input_power_dbm": -5.0,
+                "source_power_dbm": -44.316,
+                "driver_output_power_dbm": -5.0
+            },
+            {
+                "target_input_power_dbm": -4.0,
+                "source_power_dbm": -43.294,
+                "driver_output_power_dbm": -4.0
+            },
+            {
+                "target_input_power_dbm": -3.0,
+                "source_power_dbm": -42.273,
+                "driver_output_power_dbm": -3.0
+            },
+            {
+                "target_input_power_dbm": -2.0,
+                "source_power_dbm": -41.251,
+                "driver_output_power_dbm": -2.0
+            },
+            {
+                "target_input_power_dbm": -1.0,
+                "source_power_dbm": -40.23,
+                "driver_output_power_dbm": -1.0
+            },
+            {
+                "target_input_power_dbm": 0.0,
+                "source_power_dbm": -39.208,
+                "driver_output_power_dbm": 0.0
+            },
+            {
+                "target_input_power_dbm": 0.5,
+                "source_power_dbm": -38.697,
+                "driver_output_power_dbm": 0.5
+            },
+            {
+                "target_input_power_dbm": 1.0,
+                "source_power_dbm": -38.186,
+                "driver_output_power_dbm": 1.0
+            },
+            {
+                "target_input_power_dbm": 1.5,
+                "source_power_dbm": -37.676,
+                "driver_output_power_dbm": 1.5
+            },
+            {
+                "target_input_power_dbm": 2.0,
+                "source_power_dbm": -37.165,
+                "driver_output_power_dbm": 2.0
+            },
+            {
+                "target_input_power_dbm": 2.5,
+                "source_power_dbm": -36.654,
+                "driver_output_power_dbm": 2.5
+            },
+            {
+                "target_input_power_dbm": 3.0,
+                "source_power_dbm": -36.143,
+                "driver_output_power_dbm": 3.0
+            },
+            {
+                "target_input_power_dbm": 3.5,
+                "source_power_dbm": -35.632,
+                "driver_output_power_dbm": 3.5
+            },
+            {
+                "target_input_power_dbm": 4.0,
+                "source_power_dbm": -35.122,
+                "driver_output_power_dbm": 4.0
+            },
+            {
+                "target_input_power_dbm": 4.5,
+                "source_power_dbm": -34.611,
+                "driver_output_power_dbm": 4.5
+            },
+            {
+                "target_input_power_dbm": 5.0,
+                "source_power_dbm": -34.1,
+                "driver_output_power_dbm": 5.0
+            }
+        ],
+        "1.9": [
+            {
+                "target_input_power_dbm": -20.0,
+                "source_power_dbm": -59.746,
+                "driver_output_power_dbm": -20.147
+            },
+            {
+                "target_input_power_dbm": -19.0,
+                "source_power_dbm": -58.572,
+                "driver_output_power_dbm": -19.0
+            },
+            {
+                "target_input_power_dbm": -18.0,
+                "source_power_dbm": -57.549,
+                "driver_output_power_dbm": -18.0
+            },
+            {
+                "target_input_power_dbm": -17.0,
+                "source_power_dbm": -56.527,
+                "driver_output_power_dbm": -17.0
+            },
+            {
+                "target_input_power_dbm": -16.0,
+                "source_power_dbm": -55.504,
+                "driver_output_power_dbm": -16.0
+            },
+            {
+                "target_input_power_dbm": -15.0,
+                "source_power_dbm": -54.481,
+                "driver_output_power_dbm": -15.0
+            },
+            {
+                "target_input_power_dbm": -14.0,
+                "source_power_dbm": -53.458,
+                "driver_output_power_dbm": -14.0
+            },
+            {
+                "target_input_power_dbm": -13.0,
+                "source_power_dbm": -52.435,
+                "driver_output_power_dbm": -13.0
+            },
+            {
+                "target_input_power_dbm": -12.0,
+                "source_power_dbm": -51.413,
+                "driver_output_power_dbm": -12.0
+            },
+            {
+                "target_input_power_dbm": -11.0,
+                "source_power_dbm": -50.39,
+                "driver_output_power_dbm": -11.0
+            },
+            {
+                "target_input_power_dbm": -10.0,
+                "source_power_dbm": -49.367,
+                "driver_output_power_dbm": -10.0
+            },
+            {
+                "target_input_power_dbm": -9.0,
+                "source_power_dbm": -48.344,
+                "driver_output_power_dbm": -9.0
+            },
+            {
+                "target_input_power_dbm": -8.0,
+                "source_power_dbm": -47.321,
+                "driver_output_power_dbm": -8.0
+            },
+            {
+                "target_input_power_dbm": -7.0,
+                "source_power_dbm": -46.299,
+                "driver_output_power_dbm": -7.0
+            },
+            {
+                "target_input_power_dbm": -6.0,
+                "source_power_dbm": -45.276,
+                "driver_output_power_dbm": -6.0
+            },
+            {
+                "target_input_power_dbm": -5.0,
+                "source_power_dbm": -44.253,
+                "driver_output_power_dbm": -5.0
+            },
+            {
+                "target_input_power_dbm": -4.0,
+                "source_power_dbm": -43.23,
+                "driver_output_power_dbm": -4.0
+            },
+            {
+                "target_input_power_dbm": -3.0,
+                "source_power_dbm": -42.207,
+                "driver_output_power_dbm": -3.0
+            },
+            {
+                "target_input_power_dbm": -2.0,
+                "source_power_dbm": -41.185,
+                "driver_output_power_dbm": -2.0
+            },
+            {
+                "target_input_power_dbm": -1.0,
+                "source_power_dbm": -40.162,
+                "driver_output_power_dbm": -1.0
+            },
+            {
+                "target_input_power_dbm": 0.0,
+                "source_power_dbm": -39.139,
+                "driver_output_power_dbm": -0.0
+            },
+            {
+                "target_input_power_dbm": 0.5,
+                "source_power_dbm": -38.628,
+                "driver_output_power_dbm": 0.5
+            },
+            {
+                "target_input_power_dbm": 1.0,
+                "source_power_dbm": -38.116,
+                "driver_output_power_dbm": 1.0
+            },
+            {
+                "target_input_power_dbm": 1.5,
+                "source_power_dbm": -37.605,
+                "driver_output_power_dbm": 1.5
+            },
+            {
+                "target_input_power_dbm": 2.0,
+                "source_power_dbm": -37.093,
+                "driver_output_power_dbm": 2.0
+            },
+            {
+                "target_input_power_dbm": 2.5,
+                "source_power_dbm": -36.582,
+                "driver_output_power_dbm": 2.5
+            },
+            {
+                "target_input_power_dbm": 3.0,
+                "source_power_dbm": -36.071,
+                "driver_output_power_dbm": 3.0
+            },
+            {
+                "target_input_power_dbm": 3.5,
+                "source_power_dbm": -35.559,
+                "driver_output_power_dbm": 3.5
+            },
+            {
+                "target_input_power_dbm": 4.0,
+                "source_power_dbm": -35.048,
+                "driver_output_power_dbm": 4.0
+            },
+            {
+                "target_input_power_dbm": 4.5,
+                "source_power_dbm": -34.536,
+                "driver_output_power_dbm": 4.5
+            },
+            {
+                "target_input_power_dbm": 5.0,
+                "source_power_dbm": -34.025,
+                "driver_output_power_dbm": 5.0
+            }
+        ],
+        "2.0": [
+            {
+                "target_input_power_dbm": -20.0,
+                "source_power_dbm": -59.745,
+                "driver_output_power_dbm": -20.19
+            },
+            {
+                "target_input_power_dbm": -19.0,
+                "source_power_dbm": -58.526,
+                "driver_output_power_dbm": -19.0
+            },
+            {
+                "target_input_power_dbm": -18.0,
+                "source_power_dbm": -57.502,
+                "driver_output_power_dbm": -18.0
+            },
+            {
+                "target_input_power_dbm": -17.0,
+                "source_power_dbm": -56.478,
+                "driver_output_power_dbm": -17.0
+            },
+            {
+                "target_input_power_dbm": -16.0,
+                "source_power_dbm": -55.454,
+                "driver_output_power_dbm": -16.0
+            },
+            {
+                "target_input_power_dbm": -15.0,
+                "source_power_dbm": -54.43,
+                "driver_output_power_dbm": -15.0
+            },
+            {
+                "target_input_power_dbm": -14.0,
+                "source_power_dbm": -53.406,
+                "driver_output_power_dbm": -14.0
+            },
+            {
+                "target_input_power_dbm": -13.0,
+                "source_power_dbm": -52.382,
+                "driver_output_power_dbm": -13.0
+            },
+            {
+                "target_input_power_dbm": -12.0,
+                "source_power_dbm": -51.358,
+                "driver_output_power_dbm": -12.0
+            },
+            {
+                "target_input_power_dbm": -11.0,
+                "source_power_dbm": -50.334,
+                "driver_output_power_dbm": -11.0
+            },
+            {
+                "target_input_power_dbm": -10.0,
+                "source_power_dbm": -49.31,
+                "driver_output_power_dbm": -10.0
+            },
+            {
+                "target_input_power_dbm": -9.0,
+                "source_power_dbm": -48.286,
+                "driver_output_power_dbm": -9.0
+            },
+            {
+                "target_input_power_dbm": -8.0,
+                "source_power_dbm": -47.262,
+                "driver_output_power_dbm": -8.0
+            },
+            {
+                "target_input_power_dbm": -7.0,
+                "source_power_dbm": -46.238,
+                "driver_output_power_dbm": -7.0
+            },
+            {
+                "target_input_power_dbm": -6.0,
+                "source_power_dbm": -45.214,
+                "driver_output_power_dbm": -6.0
+            },
+            {
+                "target_input_power_dbm": -5.0,
+                "source_power_dbm": -44.19,
+                "driver_output_power_dbm": -5.0
+            },
+            {
+                "target_input_power_dbm": -4.0,
+                "source_power_dbm": -43.166,
+                "driver_output_power_dbm": -4.0
+            },
+            {
+                "target_input_power_dbm": -3.0,
+                "source_power_dbm": -42.142,
+                "driver_output_power_dbm": -3.0
+            },
+            {
+                "target_input_power_dbm": -2.0,
+                "source_power_dbm": -41.118,
+                "driver_output_power_dbm": -2.0
+            },
+            {
+                "target_input_power_dbm": -1.0,
+                "source_power_dbm": -40.094,
+                "driver_output_power_dbm": -1.0
+            },
+            {
+                "target_input_power_dbm": 0.0,
+                "source_power_dbm": -39.07,
+                "driver_output_power_dbm": 0.0
+            },
+            {
+                "target_input_power_dbm": 0.5,
+                "source_power_dbm": -38.558,
+                "driver_output_power_dbm": 0.5
+            },
+            {
+                "target_input_power_dbm": 1.0,
+                "source_power_dbm": -38.046,
+                "driver_output_power_dbm": 1.0
+            },
+            {
+                "target_input_power_dbm": 1.5,
+                "source_power_dbm": -37.534,
+                "driver_output_power_dbm": 1.5
+            },
+            {
+                "target_input_power_dbm": 2.0,
+                "source_power_dbm": -37.022,
+                "driver_output_power_dbm": 2.0
+            },
+            {
+                "target_input_power_dbm": 2.5,
+                "source_power_dbm": -36.51,
+                "driver_output_power_dbm": 2.5
+            },
+            {
+                "target_input_power_dbm": 3.0,
+                "source_power_dbm": -35.998,
+                "driver_output_power_dbm": 3.0
+            },
+            {
+                "target_input_power_dbm": 3.5,
+                "source_power_dbm": -35.486,
+                "driver_output_power_dbm": 3.5
+            },
+            {
+                "target_input_power_dbm": 4.0,
+                "source_power_dbm": -34.974,
+                "driver_output_power_dbm": 4.0
+            },
+            {
+                "target_input_power_dbm": 4.5,
+                "source_power_dbm": -34.462,
+                "driver_output_power_dbm": 4.5
+            },
+            {
+                "target_input_power_dbm": 5.0,
+                "source_power_dbm": -33.95,
+                "driver_output_power_dbm": 5.0
+            }
+        ]
+    },
+    "measurement_type": "driver_power_mapping",
+    "status": "completed",
+    "run_id": "20261117T060200Z_c3d9a1f4",
+    "measurement_id": "20261117T060600Z_5c1d9e42",
+    "error": null,
+    "termination": null,
+    "configuration_snapshot": {},
+    "device_summary": {},
+    "raw_data_reference": {},
+    "calculation_summary": {},
+    "created_at": "2026-11-17T06:06:00.214000+00:00",
+    "errors": [],
+    "cleanup_records": [],
+    "result_reference": {},
+    "measurement_time": null,
+    "source_filename": null,
+    "schema_version": "2.0"
+}

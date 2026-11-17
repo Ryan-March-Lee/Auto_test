@@ -2,35 +2,48 @@
     "schema_version": "1.2",
     "test_frequencies": [
         1.0,
+        1.1,
+        1.2,
+        1.3,
+        1.4,
         1.5,
+        1.6,
+        1.7,
+        1.8,
+        1.9,
         2.0
     ],
     "signal_source": {
         "power_scan_plans": [
             {
-                "start_power": -10.0,
+                "start_power": -20.0,
                 "step": 1.0,
                 "stop_power": 0.0
+            },
+            {
+                "start_power": 0.0,
+                "step": 0.5,
+                "stop_power": 5.0
             }
         ],
         "power_reference": "dut_input"
     },
     "compression_point": {
-        "type": "3dB"
+        "type": "5dB"
     },
     "driver_mode": {
-        "enabled": false,
-        "estimated_gain_db": null,
-        "max_input_power": null
+        "enabled": true,
+        "estimated_gain_db": 40.0,
+        "max_input_power": 0.0
     },
     "attenuator": {
-        "type": "30dB"
+        "type": "40dB"
     },
     "dut_config": {
-        "max_input_power": 3.0,
+        "max_input_power": 6.0,
         "drain_channel": {
-            "supply_id": "MOCK-DP832A",
-            "channel": "CH1"
+            "supply_id": "DP8B1519",
+            "channel": "CH2"
         }
     },
     "instruments": {
@@ -51,8 +64,8 @@
             "address": "TCPIP0::192.168.1.202::inst0::INSTR"
         },
         "power_supplies": {
-            "MOCK-DP832A": {
-                "label": "MOCK-DP832A",
+            "DP8B1519": {
+                "label": "DP8B1519",
                 "model": "DP832A",
                 "full_code": "DP8B214901519",
                 "device_key": "rigol technologies:dp8b214901519",
@@ -60,8 +73,44 @@
                 "channels": {
                     "CH1": {
                         "voltage": {
-                            "value": 0.0,
-                            "protection": 0.0,
+                            "value": 4.0,
+                            "protection": 4.4,
+                            "protection_enabled": true
+                        },
+                        "current": {
+                            "value": 4.0,
+                            "protection": 4.4,
+                            "protection_enabled": true
+                        },
+                        "power_on_delay_s": 2.0
+                    },
+                    "CH2": {
+                        "voltage": {
+                            "value": 5.0,
+                            "protection": 5.5,
+                            "protection_enabled": false
+                        },
+                        "current": {
+                            "value": 5.0,
+                            "protection": 5.5,
+                            "protection_enabled": false
+                        },
+                        "power_on_delay_s": 2.0
+                    }
+                },
+                "address": "TCPIP0::192.168.1.102::inst0::INSTR"
+            },
+            "DP8B0950": {
+                "enabled": true,
+                "model": "DP832A",
+                "full_code": "DP8B174700950",
+                "device_key": "rigol technologies:dp8b174700950",
+                "label": "DP8B0950",
+                "channels": {
+                    "CH1": {
+                        "voltage": {
+                            "value": 3.0,
+                            "protection": 3.3,
                             "protection_enabled": false
                         },
                         "current": {
@@ -73,26 +122,71 @@
                     },
                     "CH2": {
                         "voltage": {
-                            "value": 0.0,
-                            "protection": 0.0,
-                            "protection_enabled": false
+                            "value": 3.0,
+                            "protection": 3.3,
+                            "protection_enabled": true
                         },
                         "current": {
                             "value": 0.0,
                             "protection": 0.0,
+                            "protection_enabled": true
+                        },
+                        "power_on_delay_s": 2.0
+                    }
+                },
+                "address": "TCPIP0::192.168.1.106::inst0::INSTR"
+            },
+            "DP8B0885": {
+                "enabled": true,
+                "model": "DP832A",
+                "full_code": "DP8B174400885",
+                "device_key": "rigol technologies:dp8b174400885",
+                "label": "DP8B0885",
+                "channels": {
+                    "CH1": {
+                        "voltage": {
+                            "value": 1.0,
+                            "protection": 1.1,
+                            "protection_enabled": true
+                        },
+                        "current": {
+                            "value": 1.0,
+                            "protection": 1.1,
+                            "protection_enabled": true
+                        },
+                        "power_on_delay_s": 2.0
+                    },
+                    "CH2": {
+                        "voltage": {
+                            "value": 2.0,
+                            "protection": 2.2,
+                            "protection_enabled": false
+                        },
+                        "current": {
+                            "value": 2.0,
+                            "protection": 2.2,
                             "protection_enabled": false
                         },
                         "power_on_delay_s": 2.0
                     }
                 },
-                "address": "TCPIP0::192.168.1.102::inst0::INSTR"
+                "address": "TCPIP0::192.168.1.108::inst0::INSTR"
             }
         }
     },
     "power_supply_assignment": {
         "driver_amplifier": {
             "power_plan": {
-                "power_sequence": [],
+                "power_sequence": [
+                    {
+                        "supply_id": "DP8B0950",
+                        "channel": "CH1"
+                    },
+                    {
+                        "supply_id": "DP8B0950",
+                        "channel": "CH2"
+                    }
+                ],
                 "inter_channel_delay_s": 0.0
             }
         },
@@ -100,8 +194,20 @@
             "power_plan": {
                 "power_sequence": [
                     {
-                        "supply_id": "MOCK-DP832A",
+                        "supply_id": "DP8B0885",
                         "channel": "CH1"
+                    },
+                    {
+                        "supply_id": "DP8B0885",
+                        "channel": "CH2"
+                    },
+                    {
+                        "supply_id": "DP8B1519",
+                        "channel": "CH1"
+                    },
+                    {
+                        "supply_id": "DP8B1519",
+                        "channel": "CH2"
                     }
                 ],
                 "inter_channel_delay_s": 0.0
@@ -134,7 +240,7 @@
             "label": "QZNI0866"
         },
         "power_supplies": {
-            "MOCK-DP832A": {
+            "DP8B1519": {
                 "vendor": "RIGOL TECHNOLOGIES",
                 "model": "DP832A",
                 "full_code": "DP8B214901519",
@@ -143,8 +249,29 @@
                 "last_ip": "192.168.1.102",
                 "last_port": 5555,
                 "known": true,
-                "source": "simulated",
-                "label": "MOCK-DP832A"
+                "source": "simulated"
+            },
+            "DP8B0950": {
+                "vendor": "RIGOL TECHNOLOGIES",
+                "model": "DP832A",
+                "full_code": "DP8B174700950",
+                "device_key": "rigol technologies:dp8b174700950",
+                "visa_address": "TCPIP0::192.168.1.106::inst0::INSTR",
+                "last_ip": "192.168.1.106",
+                "last_port": 5555,
+                "known": true,
+                "source": "simulated"
+            },
+            "DP8B0885": {
+                "vendor": "RIGOL TECHNOLOGIES",
+                "model": "DP832A",
+                "full_code": "DP8B174400885",
+                "device_key": "rigol technologies:dp8b174400885",
+                "visa_address": "TCPIP0::192.168.1.108::inst0::INSTR",
+                "last_ip": "192.168.1.108",
+                "last_port": 5555,
+                "known": true,
+                "source": "simulated"
             }
         }
     },
@@ -155,7 +282,15 @@
         "frequencies": {
             "values": [
                 1.0,
+                1.1,
+                1.2,
+                1.3,
+                1.4,
                 1.5,
+                1.6,
+                1.7,
+                1.8,
+                1.9,
                 2.0
             ],
             "unit": "GHz"
@@ -163,45 +298,101 @@
         "signal_source": {
             "power_scan_plans": [
                 {
-                    "start_power": -10.0,
+                    "start_power": -20.0,
                     "step": 1.0,
                     "stop_power": 0.0
+                },
+                {
+                    "start_power": 0.0,
+                    "step": 0.5,
+                    "stop_power": 5.0
                 }
             ],
             "unit": "dBm",
             "power_reference": "dut_input"
         },
         "compression_point": {
-            "type": "3dB"
+            "type": "5dB"
         },
         "attenuator": {
-            "value": 30.0,
+            "value": 40.0,
             "unit": "dB"
         },
         "dut": {
-            "max_input_power": 3.0,
+            "max_input_power": 6.0,
             "drain_channel": {
-                "supply_id": "MOCK-DP832A",
-                "channel": "CH1"
+                "supply_id": "DP8B1519",
+                "channel": "CH2"
             },
             "channel_settings": [
                 {
-                    "supply_id": "MOCK-DP832A",
+                    "supply_id": "DP8B0885",
                     "channel": "CH1",
-                    "voltage": 0.0,
-                    "current": 0.0,
-                    "voltage_protection": 0.0,
-                    "current_protection": 0.0,
+                    "voltage": 1.0,
+                    "current": 1.0,
+                    "voltage_protection": 1.1,
+                    "current_protection": 1.1,
+                    "unit_voltage": "V",
+                    "unit_current": "A"
+                },
+                {
+                    "supply_id": "DP8B0885",
+                    "channel": "CH2",
+                    "voltage": 2.0,
+                    "current": 2.0,
+                    "voltage_protection": 2.2,
+                    "current_protection": 2.2,
+                    "unit_voltage": "V",
+                    "unit_current": "A"
+                },
+                {
+                    "supply_id": "DP8B1519",
+                    "channel": "CH1",
+                    "voltage": 4.0,
+                    "current": 4.0,
+                    "voltage_protection": 4.4,
+                    "current_protection": 4.4,
+                    "unit_voltage": "V",
+                    "unit_current": "A"
+                },
+                {
+                    "supply_id": "DP8B1519",
+                    "channel": "CH2",
+                    "voltage": 5.0,
+                    "current": 5.0,
+                    "voltage_protection": 5.5,
+                    "current_protection": 5.5,
                     "unit_voltage": "V",
                     "unit_current": "A"
                 }
             ]
         },
         "driver_mode": {
-            "enabled": false,
-            "estimated_gain_db": null,
-            "max_input_power": null,
-            "channel_settings": []
+            "enabled": true,
+            "estimated_gain_db": 40.0,
+            "max_input_power": 0.0,
+            "channel_settings": [
+                {
+                    "supply_id": "DP8B0950",
+                    "channel": "CH1",
+                    "voltage": 3.0,
+                    "current": 0.0,
+                    "voltage_protection": 3.3,
+                    "current_protection": 0.0,
+                    "unit_voltage": "V",
+                    "unit_current": "A"
+                },
+                {
+                    "supply_id": "DP8B0950",
+                    "channel": "CH2",
+                    "voltage": 3.0,
+                    "current": 0.0,
+                    "voltage_protection": 3.3,
+                    "current_protection": 0.0,
+                    "unit_voltage": "V",
+                    "unit_current": "A"
+                }
+            ]
         },
         "other_parameters": {}
     },
@@ -227,27 +418,62 @@
                 "visa_address": "TCPIP0::192.168.1.202::inst0::INSTR"
             },
             "power_supplies": {
-                "MOCK-DP832A": {
-                    "label": "MOCK-DP832A",
+                "DP8B0885": {
+                    "label": "DP8B0885",
+                    "model": "DP832A",
+                    "full_code": "DP8B174400885",
+                    "device_key": "rigol technologies:dp8b174400885",
+                    "visa_address": "TCPIP0::192.168.1.108::inst0::INSTR"
+                },
+                "DP8B1519": {
+                    "label": "DP8B1519",
                     "model": "DP832A",
                     "full_code": "DP8B214901519",
                     "device_key": "rigol technologies:dp8b214901519",
                     "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR"
+                },
+                "DP8B0950": {
+                    "label": "DP8B0950",
+                    "model": "DP832A",
+                    "full_code": "DP8B174700950",
+                    "device_key": "rigol technologies:dp8b174700950",
+                    "visa_address": "TCPIP0::192.168.1.106::inst0::INSTR"
                 }
             }
         },
         "driver_mode": {
-            "enabled": false,
+            "enabled": true,
             "power_plan": {
-                "power_sequence": [],
+                "power_sequence": [
+                    {
+                        "supply_id": "DP8B0950",
+                        "channel": "CH1"
+                    },
+                    {
+                        "supply_id": "DP8B0950",
+                        "channel": "CH2"
+                    }
+                ],
                 "inter_channel_delay_s": 0.0
             }
         },
         "dut_power_plan": {
             "power_sequence": [
                 {
-                    "supply_id": "MOCK-DP832A",
+                    "supply_id": "DP8B0885",
                     "channel": "CH1"
+                },
+                {
+                    "supply_id": "DP8B0885",
+                    "channel": "CH2"
+                },
+                {
+                    "supply_id": "DP8B1519",
+                    "channel": "CH1"
+                },
+                {
+                    "supply_id": "DP8B1519",
+                    "channel": "CH2"
                 }
             ],
             "inter_channel_delay_s": 0.0

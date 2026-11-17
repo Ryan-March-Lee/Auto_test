@@ -1,0 +1,633 @@
+{
+    "schema_version": "1.0",
+    "kind": "measurement_mock_scenario",
+    "measurement_type": "cable_loss",
+    "title": "线损测量 · Mock 回放",
+    "description": "按 config.mock.json（保存的 Mock 配置）的 11 个频点与 40 dB 衰减器回放一次正常的两路径线损测量。",
+    "source_config": {
+        "template": "config.mock.json",
+        "copied_from": "test_results/configurations/Mock_20261114_1020/Mock.json",
+        "test_frequencies_ghz": [
+            1.0,
+            1.1,
+            1.2,
+            1.3,
+            1.4,
+            1.5,
+            1.6,
+            1.7,
+            1.8,
+            1.9,
+            2.0
+        ],
+        "attenuator_db": 40.0,
+        "compression_type": "5dB",
+        "driver_enabled": true,
+        "driver_estimated_gain_db": 40.0,
+        "driver_max_input_power_dbm": 0.0,
+        "dut_max_input_power_dbm": 6.0,
+        "power_scan_plans": [
+            {
+                "start_power": -20.0,
+                "step": 1.0,
+                "stop_power": 0.0
+            },
+            {
+                "start_power": 0.0,
+                "step": 0.5,
+                "stop_power": 5.0
+            }
+        ]
+    },
+    "run": {
+        "run_id": "20261117T060200Z_c3d9a1f4",
+        "mode": "driver",
+        "started_at": "2026-11-17T06:02:00Z"
+    },
+    "phases": [
+        {
+            "name": "path1",
+            "title": "路径1",
+            "start": {
+                "type": "auto"
+            },
+            "events": [
+                {
+                    "at_ms": 0,
+                    "type": "message",
+                    "text": "开始线损测量..."
+                },
+                {
+                    "at_ms": 1800,
+                    "type": "data",
+                    "payload": {
+                        "frequency": 1.0,
+                        "path": 1,
+                        "path1_loss": 41.842,
+                        "cable_losses": {
+                            "cable1": 0.921,
+                            "cable2": 0.921,
+                            "cable3": 0.0,
+                            "cable4": 0.0,
+                            "total_path1": 41.842,
+                            "total_path2": 41.842
+                        }
+                    }
+                },
+                {
+                    "at_ms": 1850,
+                    "type": "progress",
+                    "percent": 4,
+                    "stage": "path1"
+                },
+                {
+                    "at_ms": 3600,
+                    "type": "data",
+                    "payload": {
+                        "frequency": 1.1,
+                        "path": 1,
+                        "path1_loss": 41.888,
+                        "cable_losses": {
+                            "cable1": 0.944,
+                            "cable2": 0.944,
+                            "cable3": 0.0,
+                            "cable4": 0.0,
+                            "total_path1": 41.888,
+                            "total_path2": 41.888
+                        }
+                    }
+                },
+                {
+                    "at_ms": 3650,
+                    "type": "progress",
+                    "percent": 9,
+                    "stage": "path1"
+                },
+                {
+                    "at_ms": 5400,
+                    "type": "data",
+                    "payload": {
+                        "frequency": 1.2,
+                        "path": 1,
+                        "path1_loss": 41.936,
+                        "cable_losses": {
+                            "cable1": 0.968,
+                            "cable2": 0.968,
+                            "cable3": 0.0,
+                            "cable4": 0.0,
+                            "total_path1": 41.936,
+                            "total_path2": 41.936
+                        }
+                    }
+                },
+                {
+                    "at_ms": 5450,
+                    "type": "progress",
+                    "percent": 13,
+                    "stage": "path1"
+                },
+                {
+                    "at_ms": 7200,
+                    "type": "data",
+                    "payload": {
+                        "frequency": 1.3,
+                        "path": 1,
+                        "path1_loss": 41.986,
+                        "cable_losses": {
+                            "cable1": 0.993,
+                            "cable2": 0.993,
+                            "cable3": 0.0,
+                            "cable4": 0.0,
+                            "total_path1": 41.986,
+                            "total_path2": 41.986
+                        }
+                    }
+                },
+                {
+                    "at_ms": 7250,
+                    "type": "progress",
+                    "percent": 18,
+                    "stage": "path1"
+                },
+                {
+                    "at_ms": 9000,
+                    "type": "data",
+                    "payload": {
+                        "frequency": 1.4,
+                        "path": 1,
+                        "path1_loss": 42.038,
+                        "cable_losses": {
+                            "cable1": 1.019,
+                            "cable2": 1.019,
+                            "cable3": 0.0,
+                            "cable4": 0.0,
+                            "total_path1": 42.038,
+                            "total_path2": 42.038
+                        }
+                    }
+                },
+                {
+                    "at_ms": 9050,
+                    "type": "progress",
+                    "percent": 22,
+                    "stage": "path1"
+                },
+                {
+                    "at_ms": 10800,
+                    "type": "data",
+                    "payload": {
+                        "frequency": 1.5,
+                        "path": 1,
+                        "path1_loss": 42.092,
+                        "cable_losses": {
+                            "cable1": 1.046,
+                            "cable2": 1.046,
+                            "cable3": 0.0,
+                            "cable4": 0.0,
+                            "total_path1": 42.092,
+                            "total_path2": 42.092
+                        }
+                    }
+                },
+                {
+                    "at_ms": 10850,
+                    "type": "progress",
+                    "percent": 27,
+                    "stage": "path1"
+                },
+                {
+                    "at_ms": 12600,
+                    "type": "data",
+                    "payload": {
+                        "frequency": 1.6,
+                        "path": 1,
+                        "path1_loss": 42.148,
+                        "cable_losses": {
+                            "cable1": 1.074,
+                            "cable2": 1.074,
+                            "cable3": 0.0,
+                            "cable4": 0.0,
+                            "total_path1": 42.148,
+                            "total_path2": 42.148
+                        }
+                    }
+                },
+                {
+                    "at_ms": 12650,
+                    "type": "progress",
+                    "percent": 31,
+                    "stage": "path1"
+                },
+                {
+                    "at_ms": 14400,
+                    "type": "data",
+                    "payload": {
+                        "frequency": 1.7,
+                        "path": 1,
+                        "path1_loss": 42.206,
+                        "cable_losses": {
+                            "cable1": 1.103,
+                            "cable2": 1.103,
+                            "cable3": 0.0,
+                            "cable4": 0.0,
+                            "total_path1": 42.206,
+                            "total_path2": 42.206
+                        }
+                    }
+                },
+                {
+                    "at_ms": 14450,
+                    "type": "progress",
+                    "percent": 36,
+                    "stage": "path1"
+                },
+                {
+                    "at_ms": 16200,
+                    "type": "data",
+                    "payload": {
+                        "frequency": 1.8,
+                        "path": 1,
+                        "path1_loss": 42.266,
+                        "cable_losses": {
+                            "cable1": 1.133,
+                            "cable2": 1.133,
+                            "cable3": 0.0,
+                            "cable4": 0.0,
+                            "total_path1": 42.266,
+                            "total_path2": 42.266
+                        }
+                    }
+                },
+                {
+                    "at_ms": 16250,
+                    "type": "progress",
+                    "percent": 40,
+                    "stage": "path1"
+                },
+                {
+                    "at_ms": 18000,
+                    "type": "data",
+                    "payload": {
+                        "frequency": 1.9,
+                        "path": 1,
+                        "path1_loss": 42.328,
+                        "cable_losses": {
+                            "cable1": 1.164,
+                            "cable2": 1.164,
+                            "cable3": 0.0,
+                            "cable4": 0.0,
+                            "total_path1": 42.328,
+                            "total_path2": 42.328
+                        }
+                    }
+                },
+                {
+                    "at_ms": 18050,
+                    "type": "progress",
+                    "percent": 45,
+                    "stage": "path1"
+                },
+                {
+                    "at_ms": 19800,
+                    "type": "data",
+                    "payload": {
+                        "frequency": 2.0,
+                        "path": 1,
+                        "path1_loss": 42.392,
+                        "cable_losses": {
+                            "cable1": 1.196,
+                            "cable2": 1.196,
+                            "cable3": 0.0,
+                            "cable4": 0.0,
+                            "total_path1": 42.392,
+                            "total_path2": 42.392
+                        }
+                    }
+                },
+                {
+                    "at_ms": 19850,
+                    "type": "progress",
+                    "percent": 50,
+                    "stage": "path1"
+                }
+            ]
+        },
+        {
+            "name": "path2",
+            "title": "路径2",
+            "start": {
+                "type": "user_confirm",
+                "signal": "step_pause",
+                "checkpoint": "path2",
+                "prompt": "请连接路径2",
+                "accepted": "continue_stage2",
+                "rejected": "stop"
+            },
+            "events": [
+                {
+                    "at_ms": 1800,
+                    "type": "data",
+                    "payload": {
+                        "frequency": 1.0,
+                        "path": 2,
+                        "path1_loss": 41.842,
+                        "cable_losses": {
+                            "cable1": 0.921,
+                            "cable2": 0.921,
+                            "cable3": 0.788,
+                            "cable4": 0.788,
+                            "total_path1": 41.842,
+                            "total_path2": 43.418
+                        },
+                        "path2_loss": 43.418
+                    }
+                },
+                {
+                    "at_ms": 1850,
+                    "type": "progress",
+                    "percent": 54,
+                    "stage": "path2"
+                },
+                {
+                    "at_ms": 3600,
+                    "type": "data",
+                    "payload": {
+                        "frequency": 1.1,
+                        "path": 2,
+                        "path1_loss": 41.888,
+                        "cable_losses": {
+                            "cable1": 0.944,
+                            "cable2": 0.944,
+                            "cable3": 0.801,
+                            "cable4": 0.801,
+                            "total_path1": 41.888,
+                            "total_path2": 43.49
+                        },
+                        "path2_loss": 43.49
+                    }
+                },
+                {
+                    "at_ms": 3650,
+                    "type": "progress",
+                    "percent": 59,
+                    "stage": "path2"
+                },
+                {
+                    "at_ms": 5400,
+                    "type": "data",
+                    "payload": {
+                        "frequency": 1.2,
+                        "path": 2,
+                        "path1_loss": 41.936,
+                        "cable_losses": {
+                            "cable1": 0.968,
+                            "cable2": 0.968,
+                            "cable3": 0.815,
+                            "cable4": 0.815,
+                            "total_path1": 41.936,
+                            "total_path2": 43.566
+                        },
+                        "path2_loss": 43.566
+                    }
+                },
+                {
+                    "at_ms": 5450,
+                    "type": "progress",
+                    "percent": 63,
+                    "stage": "path2"
+                },
+                {
+                    "at_ms": 7200,
+                    "type": "data",
+                    "payload": {
+                        "frequency": 1.3,
+                        "path": 2,
+                        "path1_loss": 41.986,
+                        "cable_losses": {
+                            "cable1": 0.993,
+                            "cable2": 0.993,
+                            "cable3": 0.829,
+                            "cable4": 0.829,
+                            "total_path1": 41.986,
+                            "total_path2": 43.644
+                        },
+                        "path2_loss": 43.644
+                    }
+                },
+                {
+                    "at_ms": 7250,
+                    "type": "progress",
+                    "percent": 68,
+                    "stage": "path2"
+                },
+                {
+                    "at_ms": 9000,
+                    "type": "data",
+                    "payload": {
+                        "frequency": 1.4,
+                        "path": 2,
+                        "path1_loss": 42.038,
+                        "cable_losses": {
+                            "cable1": 1.019,
+                            "cable2": 1.019,
+                            "cable3": 0.844,
+                            "cable4": 0.844,
+                            "total_path1": 42.038,
+                            "total_path2": 43.726
+                        },
+                        "path2_loss": 43.726
+                    }
+                },
+                {
+                    "at_ms": 9050,
+                    "type": "progress",
+                    "percent": 72,
+                    "stage": "path2"
+                },
+                {
+                    "at_ms": 10800,
+                    "type": "data",
+                    "payload": {
+                        "frequency": 1.5,
+                        "path": 2,
+                        "path1_loss": 42.092,
+                        "cable_losses": {
+                            "cable1": 1.046,
+                            "cable2": 1.046,
+                            "cable3": 0.859,
+                            "cable4": 0.859,
+                            "total_path1": 42.092,
+                            "total_path2": 43.81
+                        },
+                        "path2_loss": 43.81
+                    }
+                },
+                {
+                    "at_ms": 10850,
+                    "type": "progress",
+                    "percent": 77,
+                    "stage": "path2"
+                },
+                {
+                    "at_ms": 12600,
+                    "type": "data",
+                    "payload": {
+                        "frequency": 1.6,
+                        "path": 2,
+                        "path1_loss": 42.148,
+                        "cable_losses": {
+                            "cable1": 1.074,
+                            "cable2": 1.074,
+                            "cable3": 0.875,
+                            "cable4": 0.875,
+                            "total_path1": 42.148,
+                            "total_path2": 43.898
+                        },
+                        "path2_loss": 43.898
+                    }
+                },
+                {
+                    "at_ms": 12650,
+                    "type": "progress",
+                    "percent": 81,
+                    "stage": "path2"
+                },
+                {
+                    "at_ms": 14400,
+                    "type": "data",
+                    "payload": {
+                        "frequency": 1.7,
+                        "path": 2,
+                        "path1_loss": 42.206,
+                        "cable_losses": {
+                            "cable1": 1.103,
+                            "cable2": 1.103,
+                            "cable3": 0.891,
+                            "cable4": 0.891,
+                            "total_path1": 42.206,
+                            "total_path2": 43.988
+                        },
+                        "path2_loss": 43.988
+                    }
+                },
+                {
+                    "at_ms": 14450,
+                    "type": "progress",
+                    "percent": 86,
+                    "stage": "path2"
+                },
+                {
+                    "at_ms": 16200,
+                    "type": "data",
+                    "payload": {
+                        "frequency": 1.8,
+                        "path": 2,
+                        "path1_loss": 42.266,
+                        "cable_losses": {
+                            "cable1": 1.133,
+                            "cable2": 1.133,
+                            "cable3": 0.908,
+                            "cable4": 0.908,
+                            "total_path1": 42.266,
+                            "total_path2": 44.082
+                        },
+                        "path2_loss": 44.082
+                    }
+                },
+                {
+                    "at_ms": 16250,
+                    "type": "progress",
+                    "percent": 90,
+                    "stage": "path2"
+                },
+                {
+                    "at_ms": 18000,
+                    "type": "data",
+                    "payload": {
+                        "frequency": 1.9,
+                        "path": 2,
+                        "path1_loss": 42.328,
+                        "cable_losses": {
+                            "cable1": 1.164,
+                            "cable2": 1.164,
+                            "cable3": 0.925,
+                            "cable4": 0.925,
+                            "total_path1": 42.328,
+                            "total_path2": 44.178
+                        },
+                        "path2_loss": 44.178
+                    }
+                },
+                {
+                    "at_ms": 18050,
+                    "type": "progress",
+                    "percent": 95,
+                    "stage": "path2"
+                },
+                {
+                    "at_ms": 19800,
+                    "type": "data",
+                    "payload": {
+                        "frequency": 2.0,
+                        "path": 2,
+                        "path1_loss": 42.392,
+                        "cable_losses": {
+                            "cable1": 1.196,
+                            "cable2": 1.196,
+                            "cable3": 0.943,
+                            "cable4": 0.943,
+                            "total_path1": 42.392,
+                            "total_path2": 44.278
+                        },
+                        "path2_loss": 44.278
+                    }
+                },
+                {
+                    "at_ms": 19850,
+                    "type": "progress",
+                    "percent": 100,
+                    "stage": "path2"
+                },
+                {
+                    "at_ms": 19950,
+                    "type": "progress",
+                    "percent": 100,
+                    "stage": "complete"
+                }
+            ]
+        }
+    ],
+    "completion": [
+        {
+            "type": "result",
+            "file": "20261117T060245Z_9b2e7d10.json"
+        },
+        {
+            "type": "archival",
+            "outcome": {
+                "run_id": "20261117T060200Z_c3d9a1f4",
+                "stage": "cable_loss",
+                "test_status": "partial",
+                "formal_result_path": "inputs/cable_loss.json",
+                "artifacts": [
+                    {
+                        "kind": "csv",
+                        "status": "not_applicable"
+                    },
+                    {
+                        "kind": "report",
+                        "status": "not_applicable"
+                    }
+                ],
+                "archived_at": "2026-11-17T06:02:46Z"
+            }
+        },
+        {
+            "type": "message",
+            "text": "线损测量完成！"
+        },
+        {
+            "type": "finished"
+        }
+    ]
+}

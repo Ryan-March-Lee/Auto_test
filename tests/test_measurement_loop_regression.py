@@ -264,17 +264,17 @@ class MeasurementLoopRegressionTests(unittest.TestCase):
         self.assertIn(("set_power", 20.0), upper_instrument.operations)
 
         lower_inputs = amplifier_inputs(
-            start_power_dbm=-50.0,
-            stop_power_dbm=-50.0,
+            start_power_dbm=-100.0,
+            stop_power_dbm=-100.0,
             max_input_power_dbm=1000.0,
         )
         lower_instrument = FakeMeasurementInstrument()
         lower_service = make_service(instrument=lower_instrument, inputs=lower_inputs)
         lower_sweep = lower_service.perform_power_sweep(1.0)["sweep_data"]
 
-        self.assertEqual(lower_sweep["input_power_dut"], [-50.0])
-        self.assertEqual(lower_sweep["sg_power"], [-50.0])
-        self.assertIn(("set_power", -50.0), lower_instrument.operations)
+        self.assertEqual(lower_sweep["input_power_dut"], [-100.0])
+        self.assertEqual(lower_sweep["sg_power"], [-100.0])
+        self.assertIn(("set_power", -100.0), lower_instrument.operations)
 
     def test_no_driver_mode_clamps_only_epsilon_level_boundary_error(self):
         """epsilon 内的浮点误差收敛到边界，下发值和记录值都不会越过硬件范围。"""

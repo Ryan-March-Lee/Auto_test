@@ -2,7 +2,7 @@
 
 覆盖计划中的验收点：
 
-- 起点是“最低目标输入 - 预估增益 - 10 dB”，并收敛到 -50～20 dBm；
+- 起点是“最低目标输入 - 预估增益 - 10 dB”，并收敛到 -100～20 dBm；
 - 线性增益与压缩曲线都能收敛到每个目标；
 - 已命中读数不会复用于另一个目标，目标间隔小于容差时仍会新测；
 - 命中容差为 ±0.2 dB（含边界）；
@@ -161,14 +161,14 @@ class DriverMappingStartPointTests(unittest.TestCase):
         instrument = _FakeInstrument(lambda _source: 0.0)
         service = _service(
             lambda _source: 0.0,
-            config=_config(start=-40.0, gain=1.0),
+            config=_config(start=-100.0, gain=1.0),
             instrument=instrument,
         )
 
         with self.assertRaises(DriverMappingError):
             service.run()
 
-        # 公式得到 -51 dBm，但任何硬件动作都不得低于 -50 dBm。
+        # 公式得到 -111 dBm，但任何硬件动作都不得低于 -100 dBm。
         self.assertEqual(instrument.measurements[0][1], DRIVER_MAPPING_SOURCE_MIN_DBM)
 
     def test_target_grid_is_limited_by_dut_max_input(self):
@@ -431,7 +431,7 @@ class DriverMappingFailureTests(unittest.TestCase):
         instrument = _FakeInstrument(lambda _source: 0.0)
         service = _service(
             lambda _source: 0.0,
-            config=_config(start=-40.0, gain=1.0),
+            config=_config(start=-100.0, gain=1.0),
             instrument=instrument,
         )
 
@@ -510,7 +510,7 @@ class DriverMappingFailureTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "不能低于信号源最小可设功率"):
             _service(
                 lambda source: source + 1.0,
-                config=_config(driver_max_input=-60.0),
+                config=_config(driver_max_input=-110.0),
                 instrument=instrument,
             )
 

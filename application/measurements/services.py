@@ -91,7 +91,7 @@ DRIVER_MAPPING_MAX_STEP_DB = 10.0
 DRIVER_MAPPING_MIN_SLOPE = 0.05
 # 信号源可设定的功率范围（dBm）。驱动映射用它约束搜索起点/终点，无驱动模式在
 # 打开 RF 之前用同一范围预检“目标 DUT 输入 + 线①”反算出的源功率，两处不各写一份。
-SIGNAL_SOURCE_POWER_MIN_DBM = -50.0
+SIGNAL_SOURCE_POWER_MIN_DBM = -100.0
 SIGNAL_SOURCE_POWER_MAX_DBM = 20.0
 _SIGNAL_SOURCE_POWER_EPSILON_DB = 1e-9
 DRIVER_MAPPING_SOURCE_MIN_DBM = SIGNAL_SOURCE_POWER_MIN_DBM
@@ -532,7 +532,7 @@ class DriverPowerMappingService(_Service):
     起点与推进规则（重构步骤 6）：
 
     - 每个频点从 ``最低目标输入 - 预估增益 - 10 dB`` 起步（源功率始终限制在
-      -50 dBm 与“驱放最大输入功率/信号源硬件上限”的较小值之间）；
+      -100 dBm 与“驱放最大输入功率/信号源硬件上限”的较小值之间）；
     - 依据当前实测输出与目标的误差调整源功率，接近目标时步长自然收缩；
     - 已形成目标两侧区间后改用区间二分，不再按固定步长扫完整范围；
     - 每个目标要求一次独立实测输出落在 ±0.2 dB 内，已命中读数不会再次分配给

@@ -34,6 +34,7 @@ from application.dto import AmplifierInputError
 from application.dto.mock_scenario import MockScenarioError
 from application.measurements import AmplifierCalibrationError
 from application.measurements.services import DriverMappingError
+from application.mock_configuration_matcher import MockConfigurationError
 from application.ports.measurement_session import (
     CleanupRecord,
     CleanupStepStatus,
@@ -110,6 +111,7 @@ class ExistingErrorClassificationTests(unittest.TestCase):
             AmplifierCalibrationError,
             AmplifierInputError,
             MockScenarioError,
+            MockConfigurationError,
             StageInputUnavailable,
             StageResultNotRecorded,
             RunNotResumable,

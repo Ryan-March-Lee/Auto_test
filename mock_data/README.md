@@ -34,6 +34,32 @@ test_results/configurations/Mock_20261114_1020/Mock.json
 -20, -19, ..., 0, 0.5, 1.0, ..., 5.0 dBm
 ```
 
+## 在界面中使用模拟模式
+
+1. 启动界面，在欢迎页点击“加载配置”，选择显示名称为 `Mock` 的已保存快照。
+   名称去除首尾空白后大小写不敏感匹配；`Mock 副本` 等其它名称仍走普通配置。
+2. 加载后会校验配置摘要与三套场景的 `source_config` 是否一致；不一致会在“连接仪器”
+   之前给出可读错误，不会进入模拟会话。
+3. 测试配置页在模拟模式下只读，参数与保存按钮被锁定；“连接仪器”只提交模拟会话，
+   不创建 `PreparedRun`、不打开 VISA、不生成 `runs/` 目录。
+4. 进入工作区后，三个测量页分别点击“开始测量”。每个页面回放各自阶段：
+   线损 `cable_loss/scenario.json`、驱动映射 `driver_mapping/scenario.json`、
+   主功放 `amplifier/scenario.json`。
+5. 数据按 `data` 事件逐点发送：第一条数据立即出现，之后每 0.5 秒一个数据点；
+   场景里的 `at_ms` 只用于数据校验，不决定实际播放速度。
+6. 线损路径 1 完成后仍停在“请连接路径2”确认点；确认后继续路径 2，拒绝则按普通
+   停止处理，已经显示的数据保留。
+7. 驱动映射和主功放不需要手动加载校准结果：模拟会话按 `source_config.cable_loss_result`
+   与 `driver_mapping_result` 固定绑定本目录内的正式结果文件，页面显示 `mock_data`
+   来源并禁用会被忽略的手动加载按钮。
+8. 回放完成时按 `completion.result.file` 加载同目录下的正式结果文档并展示，同时显示
+   “模拟数据，仅展示，未写入正式结果”。不写 `test_results`、不调用正式归档服务、
+   不生成 CSV/测试报告，也不显示虚假的归档路径。
+9. 停止后保留已经显示的数据；再次点击“开始测量”会从场景第一个事件重新播放。
+
+模拟模式与正式会话严格互斥：已连接正式运行、存在待提交运行或未决端口时不能加载
+Mock 快照；返回欢迎页会清除模拟会话与只读状态，之后可以正常加载普通配置。
+
 ## 回放数据格式
 
 `scenario.json` 的 `kind = measurement_mock_scenario`，描述一次从“开始测量”到
@@ -103,9 +129,9 @@ test_results/configurations/Mock_20261114_1020/Mock.json
 省略。`result.file` 必须是阶段目录内的纯文件名，不能包含路径分隔、盘符、`.`/`..`、
 NUL 或 Windows 保留设备名。
 
-`at_ms` 是相对于本阶段开始的毫秒数。线损按每个频点约 `1.8 s` 编排；驱动映射按每个
-目标点 `0.5 s` 编排。测试模式可以按真实时间播放，也可以整体缩放，数据本身不规定
-播放速度。
+`at_ms` 是相对于本阶段开始的毫秒数，只用于数据自身的顺序与校验，不决定播放速度。
+模拟回放按 `data` 事件计时：第一条数据立即发出，之后每个数据点间隔 0.5 秒；线损
+数据本身按每个频点约 `1.8 s` 编排，驱动映射按每个目标点 `0.5 s` 编排。
 
 ### 契约约束
 
@@ -426,16 +452,14 @@ voltages / currents / dc_power / efficiency
 & "D:\Anaconda\envs\Auto_test\python.exe" -c "import json; from application.dto.measurement_results import measurement_result_from_document; [measurement_result_from_document(json.load(open(p, encoding='utf-8'))) for p in [r'mock_data/cable_loss/20261117T060245Z_9b2e7d10.json', r'mock_data/driver_mapping/20261117T060600Z_5c1d9e42.json', r'mock_data/amplifier/20261117T070237Z_7b3d9f21.json']]"
 ```
 
-现有界面中的使用方式：
+界面中的使用方式：
 
-- 线损：把结果文件复制到 `test_results/cable_loss/`，在线损页点击“加载测量结果”查看。
-- 驱动映射：把结果文件复制到 `test_results/driver_mapping/`，可作为主功放页的
-  “加载驱动映射结果”校准输入；驱动映射页当前没有独立的“加载结果”入口，曲线回放
-  需要等测试模式接入。
-- 主功放：把结果文件复制到 `test_results/amplifier/` 后，可由历史/可视化入口打开；
-  页面实时回放仍按 `scenario.json` 播放。
-
-测试模式接入后不需要复制，直接按 `scenario.json` 的 `completion.result.file` 加载。
+- 线损、驱动映射和主功放都通过“加载 Mock 快照 → 连接仪器 → 各页开始测量”直接回放
+  本目录的 `scenario.json`，不需要先复制结果文件。
+- 回放完成后页面按 `completion.result.file` 展示同目录下的正式结果；驱动映射页目前
+  仍没有独立的“加载结果”入口，历史曲线由实时回放展示。
+- 需要脱离模拟模式查看历史结果时，仍可把正式结果复制到 `test_results/<stage>/`，
+  或由历史运行入口打开；模拟链路本身不会写入这些目录。
 
 ## 与真实流程的对应关系
 

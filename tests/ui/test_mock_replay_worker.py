@@ -305,6 +305,48 @@ class MockReplayWorkerTests(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         self.assertIn("结果文件与模拟会话不一致", errors[0])
 
+    def test_short_scenario_replays_on_a_real_qt_thread(self):
+        """短场景烟测：真实 QThread + 生产 worker，只把回放间隔设为 0。"""
+        stage = _short_scenario_stage(Path(self._temporary.name))
+        worker = self._worker(stage)
+        messages = []
+        progresses = []
+        data = []
+        results = []
+        completions = []
+        finished = []
+        errors = []
+        worker.signals.message.connect(messages.append)
+        worker.signals.progress.connect(progresses.append)
+        worker.signals.data_update.connect(data.append)
+        worker.signals.result.connect(results.append)
+        worker.signals.simulation_completed.connect(completions.append)
+        worker.signals.finished.connect(lambda: finished.append(True))
+        worker.signals.error.connect(errors.append)
+
+        worker.start()
+        try:
+            deadline = time.monotonic() + 10
+            while not finished and time.monotonic() < deadline:
+                QCoreApplication.processEvents()
+                time.sleep(0.005)
+            self.assertTrue(worker.wait(5000))
+            QCoreApplication.processEvents()
+        finally:
+            if worker.isRunning():
+                worker.stop()
+                worker.wait(5000)
+
+        self.assertEqual(errors, [])
+        self.assertEqual([item["frequency"] for item in data], [1.0, 1.1])
+        self.assertEqual(progresses, [100])
+        self.assertTrue(any("短场景" in text for text in messages))
+        self.assertEqual(len(results), 1)
+        self.assertIs(results[0].measurement_type, MeasurementType.CABLE_LOSS)
+        self.assertEqual(len(completions), 1)
+        self.assertEqual(completions[0].result_filename, "short_result.json")
+        self.assertEqual(finished, [True])
+
     def test_worker_requires_a_simulation_stage(self):
         with self.assertRaises(TypeError):
             MockReplayWorker(stage=object())
@@ -331,6 +373,101 @@ def _corrupted_result_stage(directory):
         scenario=stage.scenario,
         scenario_path=stage.scenario_path,
         result_path=path,
+    )
+
+
+def _short_scenario_stage(directory):
+    """在临时目录生成两数据点的短场景与正式结果，用于真实线程烟测。
+
+    不复制仓库大 JSON：场景只保留契约要求的字段，结果只声明一个频点；正式结果
+    仍由 ``measurement_result_from_document`` 校验，页面消费路径与仓库数据一致。
+    """
+    result_document = {
+        "run_id": "20261117T000000Z_short001",
+        "measurement_type": "cable_loss",
+        "status": "completed",
+        "attenuator_value": 40.0,
+        "cable_losses": {
+            "1.0": {
+                "cable1": 1.0,
+                "cable2": 1.0,
+                "cable3": 0.5,
+                "cable4": 0.5,
+                "total_path1": 42.0,
+                "total_path2": 43.0,
+            }
+        },
+    }
+    result_path = directory / "short_result.json"
+    result_path.write_text(json.dumps(result_document), encoding="utf-8")
+
+    scenario_document = {
+        "schema_version": "1.0",
+        "kind": "measurement_mock_scenario",
+        "measurement_type": "cable_loss",
+        "title": "短场景",
+        "description": "",
+        "source_config": {
+            "template": "config.mock.json",
+            "test_frequencies_ghz": [1.0, 1.1],
+            "attenuator_db": 40.0,
+            "driver_enabled": True,
+            "driver_estimated_gain_db": 40.0,
+            "driver_max_input_power_dbm": 0.0,
+            "dut_max_input_power_dbm": 6.0,
+            "power_scan_plans": [
+                {"start_power": -20.0, "step": 1.0, "stop_power": 0.0}
+            ],
+        },
+        "run": {
+            "run_id": "20261117T000000Z_short001",
+            "mode": "driver",
+            "started_at": "2026-11-17T00:00:00Z",
+        },
+        "phases": [
+            {
+                "name": "path1",
+                "title": "路径1",
+                "start": {"type": "auto"},
+                "events": [
+                    {"at_ms": 0, "type": "message", "text": "短场景开始"},
+                    {
+                        "at_ms": 0,
+                        "type": "data",
+                        "payload": {"frequency": 1.0},
+                    },
+                    {
+                        "at_ms": 500,
+                        "type": "data",
+                        "payload": {"frequency": 1.1},
+                    },
+                    {
+                        "at_ms": 600,
+                        "type": "progress",
+                        "percent": 100,
+                        "stage": "path1",
+                    },
+                ],
+            }
+        ],
+        "completion": [
+            {"type": "result", "file": "short_result.json"},
+            {"type": "message", "text": "短场景完成"},
+            {"type": "finished"},
+        ],
+    }
+    scenario_path = directory / "scenario.json"
+    scenario_path.write_text(
+        json.dumps(scenario_document, ensure_ascii=False), encoding="utf-8"
+    )
+    scenario = load_mock_scenario(
+        scenario_path, expected_measurement_type=MeasurementType.CABLE_LOSS
+    )
+    return SimulationStage(
+        measurement_type=MeasurementType.CABLE_LOSS,
+        scenario=scenario,
+        scenario_path=scenario_path,
+        result_path=result_path,
     )
 
 

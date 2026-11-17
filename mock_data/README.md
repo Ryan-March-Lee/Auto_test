@@ -98,9 +98,33 @@ test_results/configurations/Mock_20261114_1020/Mock.json
 | `message` | `text` | 完成日志 |
 | `finished` | 无 | 结束信号 |
 
+`completion[]` 的顺序固定为 `result → archival → message → finished`；`result` 和
+`finished` 必须各出现一次，`finished` 必须最后，`archival` 最多一次，`message` 可以
+省略。`result.file` 必须是阶段目录内的纯文件名，不能包含路径分隔、盘符、`.`/`..`、
+NUL 或 Windows 保留设备名。
+
 `at_ms` 是相对于本阶段开始的毫秒数。线损按每个频点约 `1.8 s` 编排；驱动映射按每个
 目标点 `0.5 s` 编排。测试模式可以按真实时间播放，也可以整体缩放，数据本身不规定
 播放速度。
+
+### 契约约束
+
+- `phases` 至少一个；第一个阶段必须以 `auto` 开始，最多一个 `user_confirm`；确认点
+  固定 `signal = step_pause`、`accepted = continue_stage2`、`rejected = stop`。
+- `events[].at_ms` 是非负整数，阶段内非递减；每个阶段至少一个 `data` 事件。
+- `data.payload` 必须包含正数 `frequency`。
+- `progress.percent` 是 0–100 的整数，跨阶段不能倒退。
+- `completion[]` 按上面的固定顺序和数量校验；未知完成类型直接失败。
+- `source_config` 的必需字段是 `template`、`test_frequencies_ghz`、`attenuator_db`、
+  `driver_enabled`、`driver_estimated_gain_db`、`driver_max_input_power_dbm`、
+  `dut_max_input_power_dbm`、`power_scan_plans`；可选字段为 `copied_from`、
+  `compression_type`、`compression_point`、`target_input_powers_dbm`、
+  `signal_source_power_range_dbm`、`cable_loss_result`、`driver_mapping_result`、
+  `drain_channel`、`dut_channel_settings`、`dut_power_sequence`。其余字段必须失败，
+  拼写错误不会被静默忽略。
+- `source_config.cable_loss_result` 和 `driver_mapping_result` 必须是
+  `mock_data/<stage>/<文件名>` 形式的相对路径，不能是绝对路径或包含 `..`。
+- `run.started_at` 必须是带时区的 ISO 8601 时间。
 
 ## cable_loss/
 

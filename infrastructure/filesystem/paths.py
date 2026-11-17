@@ -8,6 +8,8 @@ from types import MappingProxyType
 from typing import Mapping, Optional, Union
 from uuid import uuid4
 
+from application.errors import ConfigurationError
+
 
 PathLike = Union[str, Path]
 
@@ -91,8 +93,12 @@ MOCK_CONFIG_FILENAME = "config.mock.json"
 MOCK_SCENARIO_FILENAME = "scenario.json"
 
 
-class MockDataPathError(ValueError):
-    """Mock 数据路径契约失败：未知阶段、非法文件名或文件缺失。"""
+class MockDataPathError(ConfigurationError):
+    """Mock 数据路径契约失败：未知阶段、非法文件名或文件缺失。
+
+    归入配置类异常（同时保留 :class:`ValueError` 基类），使步骤 8 的回放 worker
+    与 :class:`application.dto.mock_scenario.MockScenarioError` 使用同一错误类别。
+    """
 
 
 class MockStage(str, Enum):

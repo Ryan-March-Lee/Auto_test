@@ -58,6 +58,11 @@ from .measurement_results import (
     validate_measurement_id,
     validate_measurement_result_filename,
 )
+from .mock_scenario import (
+    MockScenario,
+    MockScenarioError,
+    mock_scenario_from_document,
+)
 
 __all__ = [
     "MeasurementRequest",
@@ -112,4 +117,7 @@ __all__ = [
     "validate_generated_measurement_id",
     "validate_measurement_id",
     "validate_measurement_result_filename",
+    "MockScenario",
+    "MockScenarioError",
+    "mock_scenario_from_document",
 ]

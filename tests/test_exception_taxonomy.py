@@ -31,6 +31,7 @@ from application.errors import (
 )
 from application.export_service import ExportRequestError
 from application.dto import AmplifierInputError
+from application.dto.mock_scenario import MockScenarioError
 from application.measurements import AmplifierCalibrationError
 from application.measurements.services import DriverMappingError
 from application.ports.measurement_session import (
@@ -41,6 +42,7 @@ from application.ports.measurement_session import (
 from application.run_service import RunNotResumable
 from application.run_stages import StageInputUnavailable, StageResultNotRecorded
 from instrument.drivers.spectrum_analyzer import SpectrumAnalyzerMeasurementError
+from infrastructure.filesystem.paths import MockDataPathError
 from instrument.flow import SafetyShutdownError
 from instrument.flow.cleanup import cleanup_measurement
 from instrument.ports import InstrumentCapabilityError
@@ -107,6 +109,7 @@ class ExistingErrorClassificationTests(unittest.TestCase):
         for error_type in (
             AmplifierCalibrationError,
             AmplifierInputError,
+            MockScenarioError,
             StageInputUnavailable,
             StageResultNotRecorded,
             RunNotResumable,
@@ -115,6 +118,10 @@ class ExistingErrorClassificationTests(unittest.TestCase):
         ):
             self.assertIs(error_type.category, ErrorCategory.CONFIGURATION)
         self.assertIs(DriverMappingError.category, ErrorCategory.MEASUREMENT)
+
+    def test_mock_data_path_error_is_configuration(self):
+        self.assertIs(MockDataPathError.category, ErrorCategory.CONFIGURATION)
+        self.assertTrue(issubclass(MockDataPathError, ValueError))
 
     def test_historical_builtin_bases_are_preserved(self):
         """分类是叠加：既有 except RuntimeError / except ValueError 处理器继续生效。"""

@@ -10,7 +10,10 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from presentation.qt.measurement_controller_contract import MeasurementCommand
+from presentation.qt.measurement_controller_contract import (
+    MeasurementCommand,
+    MeasurementExecutionMode,
+)
 from application.dto.measurement_requests import StageResultDigest
 from presentation.qt.measurement_start_facade import (
     BUSY_MESSAGE,
@@ -22,6 +25,8 @@ from presentation.qt.measurement_start_facade import (
 )
 from presentation.qt.measurement_state import MeasurementKind
 from presentation.qt.run_contract import is_valid_prepared_run
+from presentation.qt.simulation_session import SimulationSession
+from tests.support.simulation_sessions import simulation_session
 
 ROOT = Path(__file__).resolve().parents[2]
 QT_ROOT = ROOT / "presentation" / "qt"
@@ -399,6 +404,132 @@ class MeasurementStartFacadeTests(unittest.TestCase):
 
         self.assertEqual(len(checked.calls), 1)
         self.assertEqual(self.controller.calls, [])
+
+    # ---- 步骤 10：模拟会话启动 ------------------------------------------------
+
+    def _simulation_decision(self, *, confirmed=None):
+        confirmed = confirmed if confirmed is not None else []
+        session = simulation_session()
+        self.facade = MeasurementStartFacade(
+            config_path_provider=lambda: "config.json",
+            simulation_session_provider=lambda: session,
+        )
+        decision = self.facade.prepare(
+            lambda: StartMeasurementRequest.from_session(
+                MeasurementKind.CABLE_LOSS, session
+            ),
+            controller=self.controller,
+            confirm_connection=lambda: confirmed.append(True) or True,
+        )
+        return session, decision, confirmed
+
+    def test_simulation_start_skips_the_run_contract_and_wiring_confirmation(self):
+        session, decision, confirmed = self._simulation_decision()
+
+        self.assertTrue(decision.ready)
+        self.assertEqual(confirmed, [])
+        self.assertIsInstance(decision.command, MeasurementCommand)
+        self.assertIs(decision.command.mode, MeasurementExecutionMode.SIMULATION)
+        self.assertIs(decision.command.simulation_session, session)
+        self.assertIsNone(decision.command.prepared_run)
+        self.assertTrue(decision.launch())
+        self.assertEqual(len(self.controller.calls), 1)
+        self.assertIs(self.controller.calls[0][0], MeasurementKind.CABLE_LOSS)
+
+    def test_simulation_start_is_still_rejected_while_another_measurement_runs(self):
+        self.controller = _Controller(is_active=True)
+        reads = []
+        session, decision, confirmed = self._simulation_decision()
+        self.assertEqual(decision.status, StartMeasurementStatus.BUSY)
+        self.assertEqual(confirmed, [])
+
+    def test_busy_simulation_start_does_not_read_the_session(self):
+        self.controller = _Controller(is_active=True)
+        reads = []
+        facade = MeasurementStartFacade(
+            config_path_provider=lambda: "config.json",
+            simulation_session_provider=lambda: reads.append(True),
+        )
+        decision = facade.prepare(
+            lambda: StartMeasurementRequest.from_session(
+                MeasurementKind.CABLE_LOSS, simulation_session()
+            ),
+            controller=self.controller,
+            confirm_connection=lambda: True,
+        )
+        self.assertEqual(decision.status, StartMeasurementStatus.BUSY)
+        self.assertEqual(reads, [])
+
+    def test_from_session_routes_a_formal_run_unchanged(self):
+        run = _prepared_run()
+        request = StartMeasurementRequest.from_session(
+            MeasurementKind.AMPLIFIER, run
+        )
+        self.assertIs(request.prepared_run, run)
+        self.assertIsNone(request.simulation_session)
+        self.assertFalse(request.simulation)
+
+    def test_from_session_drops_page_selections_for_a_simulation_session(self):
+        session = simulation_session()
+        request = StartMeasurementRequest.from_session(
+            MeasurementKind.AMPLIFIER,
+            session,
+            cable_loss_path="test_results/cable_loss/a.json",
+            driver_mapping_path="test_results/driver_mapping/b.json",
+            cable_loss_digest=StageResultDigest(sha256="a" * 64, size_bytes=10),
+        )
+        self.assertTrue(request.simulation)
+        self.assertIs(request.simulation_session, session)
+        self.assertIsNone(request.prepared_run)
+        self.assertIsNone(request.cable_loss_path)
+        self.assertIsNone(request.driver_mapping_path)
+        self.assertIsNone(request.cable_loss_digest)
+
+    def test_simulation_request_rejects_a_formal_run_or_page_selections(self):
+        session = simulation_session()
+        digest = StageResultDigest(sha256="a" * 64, size_bytes=10)
+        invalid = {
+            "正式运行": dict(
+                prepared_run=_prepared_run(), simulation_session=session
+            ),
+            "线损路径": dict(
+                simulation_session=session, cable_loss_path="test_results/a.json"
+            ),
+            "驱动路径": dict(
+                simulation_session=session,
+                driver_mapping_path="test_results/b.json",
+            ),
+            "线损摘要": dict(simulation_session=session, cable_loss_digest=digest),
+            "驱动摘要": dict(simulation_session=session, driver_mapping_digest=digest),
+        }
+        for case, payload in invalid.items():
+            with self.subTest(case=case), self.assertRaisesRegex(
+                ValueError, "模拟启动请求"
+            ):
+                StartMeasurementRequest(MeasurementKind.AMPLIFIER, **payload)
+
+        with self.assertRaises(TypeError):
+            StartMeasurementRequest(
+                MeasurementKind.AMPLIFIER, simulation_session=object()
+            )
+
+    def test_facade_reads_the_simulation_session_silently(self):
+        session = simulation_session()
+        reads = []
+        facade = MeasurementStartFacade(
+            config_path_provider=lambda: "config.json",
+            simulation_session_provider=lambda: reads.append(True) or session,
+        )
+        self.assertIs(facade.simulation_session(), session)
+        self.assertEqual(reads, [True])
+
+        plain = MeasurementStartFacade(config_path_provider=lambda: "config.json")
+        self.assertIsNone(plain.simulation_session())
+        with self.assertRaises(TypeError):
+            MeasurementStartFacade(
+                config_path_provider=lambda: "config.json",
+                simulation_session_provider=object(),
+            )
 
 
 class MeasurementPagesUseTheFacadeTests(unittest.TestCase):

@@ -12,7 +12,7 @@ from types import MappingProxyType
 from typing import Any, Mapping
 
 from application.dto.measurement_requests import StageResultDigest
-from application.dto.measurement_results import MeasurementStatus
+from application.dto.measurement_results import MeasurementStatus, MeasurementType
 from application.lifecycle import MeasurementLifecycle
 
 
@@ -20,6 +20,17 @@ class MeasurementKind(str, Enum):
     CABLE_LOSS = "cable_loss"
     DRIVER_MAPPING = "driver_mapping"
     AMPLIFIER = "amplifier"
+
+
+#: 页面测量入口 → 正式测量类型。模拟会话按正式测量类型索引场景与校准输入；
+#: 页面、worker 工厂与 Mock 完成载荷共用这一份映射，避免各写一套别名。
+MEASUREMENT_TYPES: Mapping[MeasurementKind, MeasurementType] = MappingProxyType(
+    {
+        MeasurementKind.CABLE_LOSS: MeasurementType.CABLE_LOSS,
+        MeasurementKind.DRIVER_MAPPING: MeasurementType.DRIVER_POWER_MAPPING,
+        MeasurementKind.AMPLIFIER: MeasurementType.AMPLIFIER,
+    }
+)
 
 
 def _freeze(value: Any) -> Any:
@@ -183,6 +194,7 @@ class DriverMappingPageResultState(PageResultState):
 
 
 __all__ = [
+    "MEASUREMENT_TYPES",
     "MeasurementKind",
     "MeasurementStatus",
     "MeasurementResultReference",

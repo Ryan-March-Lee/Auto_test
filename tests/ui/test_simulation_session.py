@@ -164,6 +164,16 @@ class SimulationSessionTests(unittest.TestCase):
             [MeasurementType.CABLE_LOSS, MeasurementType.DRIVER_POWER_MAPPING],
         )
         self.assertEqual(inputs[1].path.name, DRIVER_RESULT)
+        self.assertIs(
+            session.calibration_input_for("amplifier", "cable_loss"), inputs[0]
+        )
+        self.assertIs(
+            session.calibration_input_for("amplifier", "driver_power_mapping"),
+            inputs[1],
+        )
+        self.assertIsNone(
+            session.calibration_input_for("cable_loss", "driver_power_mapping")
+        )
 
     def test_driver_stage_without_calibration_reference_is_rejected(self):
         driver = _derived_scenario(MeasurementType.DRIVER_POWER_MAPPING)

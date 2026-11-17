@@ -1,9 +1,10 @@
 import os
 import unittest
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QCoreApplication, QEvent, Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -11,16 +12,29 @@ from PySide6.QtWidgets import (
 )
 
 from application.dto import CableLossMeasurementResult, CableLossRow
+from application.dto.measurement_results import MeasurementType
 from presentation.qt.cable_loss_page import CableLossPage
 from presentation.qt.measurement_console import CheckState
-from presentation.qt.measurement_controller_contract import MeasurementCommand
+from presentation.qt.measurement_controller_contract import (
+    MeasurementCommand,
+    MeasurementExecutionMode,
+)
 from presentation.qt.measurement_controls import MeasurementAction
 from presentation.qt.measurement_state import (
     MeasurementKind,
     MeasurementResultReference,
     MeasurementStatus,
 )
+from presentation.qt.mock_replay import MOCK_SIMULATION_NOTICE, MockReplayCompletion
 from presentation.qt.stage_summary import NOT_STARTED, StageMetric
+from tests.support.simulation_sessions import simulation_session
+
+
+def _destroy_widget(widget):
+    """销毁离屏顶层控件，避免 Qt 对象跨用例累积。"""
+    widget.close()
+    widget.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 class Signal:
@@ -43,7 +57,7 @@ class Signals:
         for name in (
             "progress", "message", "data_update", "result", "finished",
             "stopped", "error", "step_pause", "rejected", "state_changed",
-            "archival",
+            "archival", "simulation_completed",
         ):
             setattr(self, name, Signal())
 
@@ -91,6 +105,7 @@ class CableLossPageTests(unittest.TestCase):
 
         self.logs = []
         self.errors = []
+        self.simulation = None
         self.run = type("PreparedRun", (), {
             "run_id": "run-cable-loss", "run_repository": object(),
             "run_directory": "runs/run-cable-loss",
@@ -98,13 +113,17 @@ class CableLossPageTests(unittest.TestCase):
         })()
         self.page = CableLossPage(
             config_path_provider=lambda: "config.json",
-            run_provider=lambda: self.run,
+            run_provider=lambda: (
+                self.simulation if self.simulation is not None else self.run
+            ),
             connection_dialog_factory=dialog_factory,
+            simulation_session_provider=lambda: self.simulation,
             log_callback=self.logs.append,
             error_callback=self.errors.append,
             archival_run_id_provider=lambda: self.run.run_id,
         )
         self.page.bind_controller(self.controller)
+        self.addCleanup(_destroy_widget, self.page)
 
         self.assertEqual(self.page.cable_loss_table.columnCount(), 5)
         self.assertEqual(self.page.start_measurement_btn.text(), "开始测量")
@@ -127,6 +146,73 @@ class CableLossPageTests(unittest.TestCase):
         )()
         self.page.start_measurement()
         self.assertEqual(self.controller.calls, [])
+
+    def test_simulation_start_skips_wiring_confirmation_and_uses_the_session(self):
+        self.simulation = simulation_session(MeasurementType.CABLE_LOSS)
+        self.page.on_activated()
+        self.page.start_measurement()
+
+        self.assertEqual(self.dialog_types, [])
+        command = self.controller.calls[0][1]
+        self.assertIsInstance(command, MeasurementCommand)
+        self.assertIs(command.mode, MeasurementExecutionMode.SIMULATION)
+        self.assertIs(command.simulation_session, self.simulation)
+        self.assertIsNone(command.prepared_run)
+        self.assertEqual(self.page.console.mode_text(), "Mock 模拟回放")
+        self.assertEqual(
+            self.page.console.check_state("执行会话"), CheckState.READY
+        )
+        self.assertTrue(any("模拟回放开始" in line for line in self.logs))
+        self.assertFalse(any("自动归档" in line for line in self.logs))
+        self.assertTrue(
+            any("线损测量仅展示" in line for line in self.logs)
+        )
+
+    def test_simulation_completion_shows_the_mock_notice_without_archival_wording(self):
+        self.simulation = simulation_session(MeasurementType.CABLE_LOSS)
+        self.page.start_measurement()
+        completion = MockReplayCompletion(
+            measurement_type=MeasurementType.CABLE_LOSS,
+            title="线损模拟",
+            result_filename="20261117T060245Z_9b2e7d10.json",
+            result_path=Path("mock_data/cable_loss/20261117T060245Z_9b2e7d10.json"),
+        )
+
+        self.controller.signals.simulation_completed.emit(completion)
+
+        self.assertTrue(any("模拟数据已加载" in line for line in self.logs))
+        self.assertTrue(
+            any(MOCK_SIMULATION_NOTICE in line for line in self.logs)
+        )
+        self.assertFalse(any("已自动归档" in line for line in self.logs))
+
+    def test_simulation_completion_is_ignored_when_this_run_is_not_simulated(self):
+        completion = MockReplayCompletion(
+            measurement_type=MeasurementType.CABLE_LOSS,
+            title="线损模拟",
+            result_filename="20261117T060245Z_9b2e7d10.json",
+            result_path=Path("mock_data/cable_loss/20261117T060245Z_9b2e7d10.json"),
+        )
+
+        self.controller.signals.simulation_completed.emit(completion)
+
+        self.assertFalse(any("模拟数据已加载" in line for line in self.logs))
+        self.assertFalse(self.page._archival_simulation)
+
+    def test_simulation_stop_and_error_are_reported_as_mock(self):
+        self.simulation = simulation_session(MeasurementType.CABLE_LOSS)
+        self.page.start_measurement()
+
+        self.controller.signals.stopped.emit("用户停止")
+        self.controller.signals.error.emit("数据包损坏")
+
+        self.assertTrue(any("模拟回放已停止" in line for line in self.logs))
+        self.assertTrue(any("模拟回放失败" in line for line in self.logs))
+        self.assertTrue(
+            any(MOCK_SIMULATION_NOTICE in line for line in self.logs)
+        )
+        self.assertFalse(any("阶段结果已清理" in line for line in self.logs))
+        self.assertFalse(any(line.startswith("[归档") for line in self.logs))
 
 
     def test_realtime_and_structured_result_fill_table(self):

@@ -14,6 +14,7 @@ from presentation.qt.measurement_controls import (
     MeasurementAction,
     MeasurementControlAvailability,
     MeasurementControlPresenter,
+    set_auxiliary_inputs_enabled,
     state_is_active,
 )
 from presentation.qt.measurement_state import (
@@ -338,6 +339,24 @@ class MeasurementPagesUseThePresenterTests(unittest.TestCase):
                     and node.value.id == "MeasurementAction"
                 }
                 self.assertEqual(declared, expected_actions[name])
+
+    def test_auxiliary_inputs_follow_the_external_session_fact(self):
+        first = _Sink()
+        second = _Sink()
+
+        set_auxiliary_inputs_enabled((first, second), False)
+        self.assertEqual([first.enabled, second.enabled], [False, False])
+
+        set_auxiliary_inputs_enabled((first, second), True)
+        self.assertEqual([first.enabled, second.enabled], [True, True])
+
+    def test_auxiliary_inputs_reject_invalid_arguments(self):
+        with self.assertRaises(TypeError):
+            set_auxiliary_inputs_enabled((_Sink(),), 1)
+        with self.assertRaises(TypeError):
+            set_auxiliary_inputs_enabled(object(), True)
+        with self.assertRaises(TypeError):
+            set_auxiliary_inputs_enabled((object(),), True)
 
     def test_controls_module_is_pure_python(self):
         tree = ast.parse(

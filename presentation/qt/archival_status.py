@@ -12,6 +12,9 @@
 - 测试异常：本次没有归档结果，给出失败原因；
 - 停止：本次没有归档结果，给出停止原因；用户停止时保存的部分结果会一并说明位置。
 
+模拟回放另有独立文案（开始/完成/停止/失败）：它们只说明 mock_data 与“仅展示、未写入
+正式结果”，不复用 ``ArchivalOutcome``，也不承诺 CSV、报告或自动补生成。
+
 归档进行中同样有明确状态（:func:`summarize_archival_running` 与
 :func:`summarize_archival_missing`），避免用户误以为测试结束后一切都已完成。
 """
@@ -29,6 +32,7 @@ from application.dto.archival import (
 from domain.run.models import ArtifactKind, ArtifactStatus
 
 from .measurement_state import MeasurementKind
+from .mock_replay import MOCK_SIMULATION_NOTICE, MockReplayCompletion
 
 
 TONE_INFO = "info"
@@ -230,6 +234,66 @@ def summarize_test_stopped(
     )
 
 
+def summarize_simulation_running(kind: MeasurementKind | str) -> ArchivalSummary:
+    """模拟回放刚开始：明确数据来自 mock_data，不会产生正式结果。"""
+    label = _kind_label(kind)
+    return ArchivalSummary(
+        headline=f"{label}模拟回放开始",
+        detail=(
+            f"按 0.5 秒/数据点回放 Mock 数据；{MOCK_SIMULATION_NOTICE}，"
+            "也不会生成 CSV 或测试报告。"
+        ),
+        tone=TONE_INFO,
+    )
+
+
+def summarize_simulation_completion(
+    kind: MeasurementKind | str, completion: MockReplayCompletion
+) -> ArchivalSummary:
+    """模拟回放完成：展示结果来源与“未写入正式结果”的边界。"""
+    if not isinstance(completion, MockReplayCompletion):
+        raise TypeError(
+            "模拟完成提示只接受 MockReplayCompletion，实际: "
+            + type(completion).__name__
+        )
+    label = _kind_label(kind)
+    return ArchivalSummary(
+        headline=f"{label}模拟数据已加载",
+        detail=(
+            f"场景「{completion.title}」回放完成，结果 {completion.result_filename} "
+            f"来自 mock_data；{MOCK_SIMULATION_NOTICE}，"
+            "未生成 CSV 或测试报告。"
+        ),
+        tone=TONE_INFO,
+    )
+
+
+def summarize_simulation_stopped(
+    kind: MeasurementKind | str, reason: str
+) -> ArchivalSummary:
+    """模拟回放被停止：已显示的数据保留，但没有正式结果。"""
+    label = _kind_label(kind)
+    stop_reason = (reason or "").strip() or "用户停止"
+    return ArchivalSummary(
+        headline=f"{label}模拟回放已停止",
+        detail=f"停止原因：{stop_reason}；已显示的数据保留，{MOCK_SIMULATION_NOTICE}。",
+        tone=TONE_WARNING,
+    )
+
+
+def summarize_simulation_failure(
+    kind: MeasurementKind | str, error: str
+) -> ArchivalSummary:
+    """模拟回放异常：区别于正式测量失败，不承诺任何归档产物。"""
+    label = _kind_label(kind)
+    reason = (error or "").strip() or "未提供失败原因"
+    return ArchivalSummary(
+        headline=f"{label}模拟回放失败",
+        detail=f"失败原因：{reason}。{MOCK_SIMULATION_NOTICE}。",
+        tone=TONE_ERROR,
+    )
+
+
 def _kind_label(kind: MeasurementKind | str) -> str:
     value = kind.value if isinstance(kind, MeasurementKind) else str(kind)
     label = _KIND_LABELS.get(value)
@@ -266,6 +330,10 @@ __all__ = [
     "summarize_archival_missing",
     "summarize_archival_running",
     "summarize_archival_saving",
+    "summarize_simulation_completion",
+    "summarize_simulation_failure",
+    "summarize_simulation_running",
+    "summarize_simulation_stopped",
     "summarize_test_failure",
     "summarize_test_stopped",
 ]

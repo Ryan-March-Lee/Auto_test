@@ -7,17 +7,9 @@ from typing import Any
 from application.dto.measurement_results import MeasurementType
 
 from .measurement_controller_contract import MeasurementCommand, WorkerFactories
-from .measurement_state import MeasurementKind
+from .measurement_state import MEASUREMENT_TYPES, MeasurementKind
 from .mock_replay_worker import MockReplayWorker
 from .workers import AmplifierWorker, CableLossWorker, DriverMappingWorker
-
-
-#: 页面测量类型只用于选择 controller 入口；模拟会话按正式 MeasurementType 索引场景。
-_SIMULATION_MEASUREMENT_TYPES = {
-    MeasurementKind.CABLE_LOSS: MeasurementType.CABLE_LOSS,
-    MeasurementKind.DRIVER_MAPPING: MeasurementType.DRIVER_POWER_MAPPING,
-    MeasurementKind.AMPLIFIER: MeasurementType.AMPLIFIER,
-}
 
 
 def build_measurement_worker_factories() -> WorkerFactories:
@@ -41,7 +33,7 @@ def build_simulation_worker_factories() -> WorkerFactories:
     """
     return {
         kind: _simulation_factory(measurement_type)
-        for kind, measurement_type in _SIMULATION_MEASUREMENT_TYPES.items()
+        for kind, measurement_type in MEASUREMENT_TYPES.items()
     }
 
 

@@ -479,7 +479,8 @@ class MainWindowAssemblyBoundaryTests(unittest.TestCase):
     def test_main_window_uses_the_coordinator_for_gui_state(self):
         for literal in (
             "ApplicationCoordinator(",
-            "run_provider=self.coordinator.resolve_measurement_run",
+            "run_provider=self.coordinator.resolve_measurement_session",
+            "simulation_session_provider=self.coordinator.active_simulation_session",
             "config_path_provider=self.coordinator.measurement_config_path",
             "driver_mode_provider=self._current_driver_mode",
         ):

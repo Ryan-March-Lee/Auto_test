@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, Mapping, Protocol, runtime_checkable
+from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
 
 from .measurement_state import MeasurementKind, MeasurementStatus
 
@@ -89,6 +89,25 @@ def state_is_active(state: Any) -> bool:
     return _state_snapshot(state)[2]
 
 
+def set_auxiliary_inputs_enabled(
+    controls: Sequence[EnableSink], enabled: bool
+) -> None:
+    """按外部会话事实启用/禁用非测量动作控件。
+
+    例如模拟会话使用固定校准结果时，手动“加载校准输入”不属于 START/STOP 测量动作，
+    但页面仍需明确禁用它们。控件写入集中在本模块，页面只声明输入可用性判定。
+    """
+    if not isinstance(enabled, bool):
+        raise TypeError("enabled 必须是 bool")
+    if not isinstance(controls, Sequence):
+        raise TypeError("controls 必须是控件序列")
+    for control in controls:
+        if not callable(getattr(control, "setEnabled", None)):
+            raise TypeError("辅助输入控件必须提供 setEnabled")
+    for control in controls:
+        control.setEnabled(enabled)
+
+
 class MeasurementControlPresenter:
     """把测量状态映射成页面声明过的控制按钮可用性。
 
@@ -159,5 +178,6 @@ __all__ = [
     "MeasurementAction",
     "MeasurementControlAvailability",
     "MeasurementControlPresenter",
+    "set_auxiliary_inputs_enabled",
     "state_is_active",
 ]

@@ -146,6 +146,37 @@ class MockSimulationWindowTests(unittest.TestCase):
             [item.path.name for item in session.calibration_inputs_for("amplifier")],
             ["20261117T060245Z_9b2e7d10.json", "20261117T060600Z_5c1d9e42.json"],
         )
+        # 三个页面共享同一个模拟会话：启动入口读取统一会话，页面展示 mock_data 来源。
+        self.assertIs(
+            window.cable_loss_page._start_facade.simulation_session(), session
+        )
+        self.assertIs(
+            window.driver_mapping_page._start_facade.simulation_session(), session
+        )
+        self.assertIs(
+            window.amplifier_page._start_facade.simulation_session(), session
+        )
+        self.assertTrue(coordinator.measurement_config_path())
+        window.driver_mapping_page.on_activated()
+        window.amplifier_page.on_activated()
+        cable_source = session.calibration_input_for(
+            "driver_power_mapping", "cable_loss"
+        )
+        self.assertIn(
+            cable_source.path.name,
+            window.driver_mapping_page.cable_loss_source_label.text(),
+        )
+        self.assertIn(
+            "Mock 模拟数据",
+            window.driver_mapping_page.cable_loss_source_label.text(),
+        )
+        for dependency, label in (
+            ("cable_loss", window.amplifier_page.cable_loss_source_label),
+            ("driver_power_mapping", window.amplifier_page.driver_mapping_source_label),
+        ):
+            source = session.calibration_input_for("amplifier", dependency)
+            self.assertIn(source.path.name, label.text())
+            self.assertIn("Mock 模拟数据", label.text())
         self.assertIsNone(coordinator.instrument_ctrl)
         self.assertIsNone(coordinator.instrument_worker)
         create.assert_not_called()

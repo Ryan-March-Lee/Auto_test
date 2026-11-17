@@ -4,16 +4,28 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QCoreApplication, QEvent
 from PySide6.QtWidgets import QApplication, QDialog, QLabel, QWidget
 
 from presentation.qt.amplifier_page import AmplifierPage
 from presentation.qt.measurement_console import CheckState
-from presentation.qt.measurement_controller_contract import MeasurementCommand
+from presentation.qt.measurement_controller_contract import (
+    MeasurementCommand,
+    MeasurementExecutionMode,
+)
 from presentation.qt.measurement_controls import MeasurementAction
 from presentation.qt.measurement_state import MeasurementKind, MeasurementStatus
 from presentation.qt.measurement_workspace import mode_text
 from presentation.qt.stage_summary import NOT_STARTED, StageMetric
 from presentation.qt.theme import MEASUREMENT_LEFT_PANEL_MIN_WIDTH
+from tests.support.simulation_sessions import simulation_session
+
+
+def _destroy_widget(widget):
+    """销毁离屏顶层控件，避免 Qt 对象跨用例累积。"""
+    widget.close()
+    widget.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 class Signal:
@@ -36,6 +48,7 @@ class Signals:
         for name in (
             "progress", "message", "data_update", "result", "finished",
             "stopped", "error", "rejected", "state_changed", "archival",
+            "simulation_completed",
         ):
             setattr(self, name, Signal())
 
@@ -93,16 +106,22 @@ class AmplifierPageTests(unittest.TestCase):
         self.errors = []
         self.dialogs = []
         self.prepared = []
+        self.simulation = None
         self.page = AmplifierPage(
             config_path_provider=lambda: "config.json",
-            run_provider=lambda: self.prepared.append(True) or self.run,
+            run_provider=lambda: (
+                self.prepared.append(True)
+                or (self.simulation if self.simulation is not None else self.run)
+            ),
             driver_mode_provider=lambda: True,
             connection_dialog_factory=lambda *_: self.dialogs.append(True) or Dialog(),
             plot_widget_factory=lambda parent: Plot(parent),
+            simulation_session_provider=lambda: self.simulation,
             log_callback=self.logs.append,
             error_callback=self.errors.append,
             archival_run_id_provider=lambda: self.run.run_id,
         )
+        self.addCleanup(_destroy_widget, self.page)
         self.page.bind_controller(self.controller)
 
         self.assertTrue(self.page.amplifier_test_btn.isEnabled())
@@ -279,6 +298,72 @@ class AmplifierPageTests(unittest.TestCase):
         )
         self.assertIn("未选择主功放必需的校准输入，主功放测试未启动", self.logs)
         self.assertNotIn("开始主功放测试...", self.logs)
+
+    def test_simulation_start_binds_both_fixed_inputs_and_skips_the_dialog(self):
+        self.simulation = simulation_session()
+        self.page.on_activated()
+
+        self.page.start_measurement()
+
+        self.assertEqual(self.dialogs, [])
+        self.assertEqual(self.errors, [])
+        command = self.controller.calls[0][1]
+        self.assertIsInstance(command, MeasurementCommand)
+        self.assertIs(command.mode, MeasurementExecutionMode.SIMULATION)
+        self.assertIs(command.simulation_session, self.simulation)
+        self.assertIsNone(command.prepared_run)
+        self.assertIsNone(command.cable_loss_path)
+        self.assertIsNone(command.driver_mapping_path)
+        self.assertIn("Mock 模拟数据", self.page.cable_loss_source_label.text())
+        self.assertIn(
+            "Mock 模拟数据", self.page.driver_mapping_source_label.text()
+        )
+        self.assertFalse(self.page.load_cable_loss_btn.isEnabled())
+        self.assertFalse(self.page.load_driver_mapping_btn.isEnabled())
+        for label in ("执行会话", "线损结果", "驱动映射结果"):
+            self.assertEqual(
+                self.page.console.check_state(label), CheckState.READY
+            )
+        self.assertIn("主功放仅展示", " ".join(self.logs))
+        self.assertFalse(any("自动归档" in line for line in self.logs))
+
+    def test_simulation_data_shows_gain_efficiency_and_dc_power(self):
+        self.simulation = simulation_session()
+        self.page.start_measurement()
+
+        self.controller.signals.data_update.emit(
+            {
+                "frequency": 1.0,
+                "sweep_data": {
+                    "input_power_dut": [-20.0],
+                    "output_power_dut": [15.0],
+                    "gain": [35.0],
+                    "efficiency": [0.29],
+                    "dc_power": [11.0],
+                },
+            }
+        )
+
+        self.assertEqual(len(self.page.amplifier_plot_widget.updated), 1)
+        self.assertEqual(self.page.readout.frequency_text(), "1.0")
+        metrics = {metric.label: metric.value for metric in self.page.readout.metrics()}
+        self.assertEqual(metrics["输出功率"], "15.0")
+        self.assertEqual(metrics["增益"], "35.0")
+        self.assertEqual(metrics["效率"], "0.3")
+        self.assertEqual(metrics["DC功耗"], "11.00")
+        self.assertIn("效率", metrics)
+
+    def test_manual_calibration_inputs_are_reenabled_after_leaving_simulation(self):
+        self.simulation = simulation_session()
+        self.page.on_activated()
+        self.assertFalse(self.page.load_cable_loss_btn.isEnabled())
+        self.assertFalse(self.page.load_driver_mapping_btn.isEnabled())
+
+        self.simulation = None
+        self.page.on_activated()
+
+        self.assertTrue(self.page.load_cable_loss_btn.isEnabled())
+        self.assertTrue(self.page.load_driver_mapping_btn.isEnabled())
 
     def test_driver_on_requires_both_inputs(self):
         # 有驱放：只选线损仍不够，驱动映射也必须显式选择。

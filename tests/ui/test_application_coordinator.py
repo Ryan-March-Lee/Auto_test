@@ -1865,6 +1865,19 @@ class MockSimulationSessionTests(unittest.TestCase):
         self.assertIsNone(coordinator.editing_read_only_reason())
         self.assertIn("Mock", coordinator.run_status_text())
 
+    def test_silent_simulation_provider_and_config_metadata(self):
+        coordinator = self._mock_coordinator()
+        self.assertIsNone(coordinator.active_simulation_session())
+
+        session = self._session()
+        coordinator._simulation_session = session
+
+        self.assertIs(coordinator.active_simulation_session(), session)
+        # 模拟命令只把配置路径当元数据；没有正式运行快照也不能抛 RunNotResumable。
+        self.assertEqual(
+            coordinator.measurement_config_path(), str(coordinator.config_path)
+        )
+
     def test_loading_a_normal_snapshot_clears_mock_mode(self):
         page = _Page()
         coordinator = self._mock_coordinator(page=page)

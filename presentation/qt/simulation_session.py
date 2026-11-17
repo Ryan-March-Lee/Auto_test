@@ -178,6 +178,21 @@ class SimulationSession:
         """该阶段启动前自动绑定的固定校准结果（按场景声明的顺序）。"""
         return self.stage_for(measurement_type).calibration_inputs
 
+    def calibration_input_for(
+        self,
+        measurement_type: MeasurementType | str,
+        dependency: MeasurementType | str,
+    ) -> SimulationCalibrationInput | None:
+        """按“阶段 + 上游测量类型”取一份固定校准输入；不需要该上游时返回 ``None``。
+
+        页面只按正式测量类型查找，不解析场景 JSON，也不自行拼接 Mock 路径。
+        """
+        expected = _coerce_measurement_type(dependency)
+        for item in self.calibration_inputs_for(measurement_type):
+            if item.measurement_type is expected:
+                return item
+        return None
+
 
 def build_simulation_session(
     match: MockConfigurationMatch, *, mock_paths: Any

@@ -1,6 +1,7 @@
 """步骤 6：归档结果到页面文案的映射（无 Qt、无文件访问）。"""
 
 import unittest
+from pathlib import Path
 
 from application.dto.archival import (
     ArchivalOutcome,
@@ -8,6 +9,7 @@ from application.dto.archival import (
     ArchivalTestStatus,
     ArchivedArtifact,
 )
+from application.dto.measurement_results import MeasurementType
 from domain.run.models import ArtifactKind
 from presentation.qt.archival_status import (
     TONE_ERROR,
@@ -19,10 +21,15 @@ from presentation.qt.archival_status import (
     summarize_archival_missing,
     summarize_archival_running,
     summarize_archival_saving,
+    summarize_simulation_completion,
+    summarize_simulation_failure,
+    summarize_simulation_running,
+    summarize_simulation_stopped,
     summarize_test_failure,
     summarize_test_stopped,
 )
 from presentation.qt.measurement_state import MeasurementKind
+from presentation.qt.mock_replay import MOCK_SIMULATION_NOTICE, MockReplayCompletion
 
 
 RUN_ID = "20260101T000000Z_deadbeef"
@@ -263,6 +270,58 @@ class ArchivalFallbackSummaryTests(unittest.TestCase):
             ArchivalSummary(
                 headline="标题", detail="说明", can_regenerate=True
             )
+
+
+class SimulationSummaryTests(unittest.TestCase):
+    """步骤 13：模拟回放只展示数据，文案不能冒充正式归档。"""
+
+    def _completion(self):
+        return MockReplayCompletion(
+            measurement_type=MeasurementType.CABLE_LOSS,
+            title="线损模拟",
+            result_filename="20261117T060245Z_9b2e7d10.json",
+            result_path=Path("mock_data/cable_loss/20261117T060245Z_9b2e7d10.json"),
+        )
+
+    def test_running_summary_state_the_mock_boundary_and_interval(self):
+        summary = summarize_simulation_running(MeasurementKind.CABLE_LOSS)
+
+        self.assertEqual(summary.tone, TONE_INFO)
+        self.assertIn("模拟回放开始", summary.headline)
+        self.assertIn("0.5 秒", summary.detail)
+        self.assertIn(MOCK_SIMULATION_NOTICE, summary.detail)
+
+    def test_completion_summary_names_the_mock_result_and_never_archive(self):
+        summary = summarize_simulation_completion(
+            MeasurementKind.CABLE_LOSS, self._completion()
+        )
+
+        self.assertEqual(summary.tone, TONE_INFO)
+        self.assertIn("模拟数据已加载", summary.headline)
+        self.assertIn("20261117T060245Z_9b2e7d10.json", summary.detail)
+        self.assertIn("线损模拟", summary.detail)
+        self.assertIn(MOCK_SIMULATION_NOTICE, summary.detail)
+        self.assertNotIn("自动归档", summary.headline)
+        self.assertIsNone(summary.run_id)
+
+    def test_completion_summary_rejects_a_foreign_payload(self):
+        with self.assertRaises(TypeError):
+            summarize_simulation_completion(
+                MeasurementKind.CABLE_LOSS, object()
+            )
+
+    def test_stopped_and_failed_summaries_are_distinct(self):
+        stopped = summarize_simulation_stopped(MeasurementKind.AMPLIFIER, "用户停止")
+        failed = summarize_simulation_failure(MeasurementKind.AMPLIFIER, "数据包损坏")
+
+        self.assertEqual(stopped.tone, TONE_WARNING)
+        self.assertIn("模拟回放已停止", stopped.headline)
+        self.assertIn("用户停止", stopped.detail)
+        self.assertIn(MOCK_SIMULATION_NOTICE, stopped.detail)
+        self.assertEqual(failed.tone, TONE_ERROR)
+        self.assertIn("模拟回放失败", failed.headline)
+        self.assertIn("数据包损坏", failed.detail)
+        self.assertIn(MOCK_SIMULATION_NOTICE, failed.detail)
 
 
 if __name__ == "__main__":

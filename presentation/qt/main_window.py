@@ -343,7 +343,8 @@ class MainWindow(ConfigurationSnapshotActions, QMainWindow):
         context = PageContext(
             controller=self.measurement_controller,
             config_path_provider=self.coordinator.measurement_config_path,
-            run_provider=self.coordinator.resolve_measurement_run,
+            run_provider=self.coordinator.resolve_measurement_session,
+            simulation_session_provider=self.coordinator.active_simulation_session,
             driver_mode_provider=self._current_driver_mode,
             connection_dialog_factory=lambda kind, parent: ConnectionDialog(kind, parent),
             plot_widget_factory=lambda _parent: RealTimePlotWidget(show_nav_buttons=True),
@@ -510,7 +511,6 @@ class MainWindow(ConfigurationSnapshotActions, QMainWindow):
         self._status_panel_slot = None
 
     # ---- 配置快照与连接入口（动作在 ConfigurationSnapshotActions） ----
-
     def _finalize_run(self):
         """执行一次最终化事务；连接成功且端口提交后才进入测量区。"""
         page = getattr(self, "test_config_page", None)

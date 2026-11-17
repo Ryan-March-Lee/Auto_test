@@ -503,6 +503,14 @@ class ApplicationCoordinator:
         """当前模拟会话；没有进入模拟模式时为 ``None``。"""
         return self._simulation_session
 
+    def active_simulation_session(self) -> SimulationSession | None:
+        """静默读取当前模拟会话，供页面判断是否跳过物理接线与手动校准输入。
+
+        与 :meth:`resolve_measurement_session` 不同，本入口不检查正式运行、不弹窗：
+        页面在“开始”前的展示与输入前置判断里调用它，正式入口仍由 facade 单独读取。
+        """
+        return self._simulation_session
+
     def simulation_session_active(self) -> bool:
         """是否已经提交模拟会话（可以进入测量区，但没有真机端口）。"""
         return self._simulation_session is not None
@@ -874,7 +882,12 @@ class ApplicationCoordinator:
 
         执行会话契约不可用（未创建会话、快照缺失、被删除、校验失败，或对象没有校验入口）
         时直接抛出 :class:`RunNotResumable`。
+
+        模拟会话没有正式运行快照：返回本次加载的配置路径仅作为页面命令的元数据，
+        worker 不会读取它，也不会据此连接仪器。
         """
+        if self._simulation_session is not None:
+            return str(self.config_path)
         run = self.prepared_run
         if run is None:
             raise RunNotResumable(

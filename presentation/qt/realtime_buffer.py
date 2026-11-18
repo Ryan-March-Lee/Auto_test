@@ -73,6 +73,8 @@ class RealtimeMeasurementBuffer:
 
     def next(self) -> dict[str, Any] | None:
         if self.current_index >= len(self._frequencies) - 1:
+            # 已经在最后一个频点：再点“下一个”表示回到自动跟随，而不是什么都不做。
+            self.follow_latest()
             return self.current()
         self.current_index += 1
         self.user_browsing = self.current_index != len(self._frequencies) - 1
@@ -91,16 +93,24 @@ class RealtimeMeasurementBuffer:
     def select(self, index: int) -> bool:
         """直接切到指定频点；越界索引返回 ``False``，不抛异常打断点击。
 
-        语义与 :meth:`next` 一致：切到最后一个频点后恢复自动跟随，其余位置保持
-        用户浏览状态，新的实时数据不会把用户正在看的频点顶掉。
+        点击是明确的“我要看这个频点”，因此任何一次选择都进入用户浏览状态：
+        即使点到的是当前最新的频点，后续新到达的频点也不会把画面顶掉。要回到
+        自动跟随，用户在最后一个频点上再点“下一个”，或调用
+        :meth:`follow_latest`。
         """
         if isinstance(index, bool) or not isinstance(index, int):
             raise TypeError("频点索引必须是整数")
         if not 0 <= index < len(self._frequencies):
             return False
         self.current_index = index
-        self.user_browsing = index != len(self._frequencies) - 1
+        self.user_browsing = True
         return True
+
+    def follow_latest(self) -> None:
+        """回到自动跟随最新频点的状态；空列表时保持索引 0。"""
+        self.user_browsing = False
+        if self._frequencies:
+            self.current_index = len(self._frequencies) - 1
 
     def clear(self) -> None:
         self._data.clear()

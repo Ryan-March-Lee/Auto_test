@@ -6,7 +6,7 @@ import math
 from collections.abc import Mapping
 from typing import Any
 
-from .realtime_buffer import RealtimeMeasurementBuffer
+from .realtime_buffer import RealtimeMeasurementBuffer, normalize_frequency
 
 __all__ = [
     "RealtimePageMixin",
@@ -54,10 +54,29 @@ class RealtimePageMixin:
             return
         if not self.realtime_buffer.store(data):
             return
+        # 用户浏览某个已测频点时，新到达的频点只进缓存、更新胶片条，不抢占画面；
+        # 只有到达的数据属于当前正在看的频点时，才刷新它的曲线与读数。
+        if self.realtime_buffer.user_browsing:
+            if self._incoming_is_current(data):
+                current = self.realtime_buffer.current()
+                if current is not None:
+                    self._update_plot(dict(current))
+                    self._update_readout(dict(current))
+            self._update_navigation()
+            self._realtime_data_callback(dict(data))
+            return
         self._update_plot(dict(data))
         self._update_readout(dict(data))
         self._update_navigation()
         self._realtime_data_callback(dict(data))
+
+    def _incoming_is_current(self, data: Mapping[str, Any]) -> bool:
+        """到达的数据是否属于当前浏览的频点；频率无效时按“否”处理。"""
+        incoming = normalize_frequency(data.get("frequency"))
+        current = self.realtime_buffer.current()
+        if incoming is None or current is None:
+            return False
+        return incoming == normalize_frequency(current.get("frequency"))
 
     def previous_frequency(self) -> None:
         self.realtime_buffer.previous()
@@ -80,11 +99,17 @@ class RealtimePageMixin:
         data = self.realtime_buffer.current()
         if data is not None:
             self._update_plot(data)
-            self._update_readout(data)
+            self._update_readout(data, animate=True)
         self._update_navigation()
 
-    def _update_readout(self, data: Mapping[str, Any]) -> None:
-        """页面可选覆盖：把当前频点写进读数条；默认不做任何事。"""
+    def _update_readout(
+        self, data: Mapping[str, Any], *, animate: bool = False
+    ) -> None:
+        """页面可选覆盖：把当前频点写进读数条；默认不做任何事。
+
+        ``animate`` 只在用户主动切换频点（胶片条/箭头）时为 ``True``；实时数据流
+        到达时保持 ``False``，读数条不逐点重播淡入动画。
+        """
         return None
 
     def _reset_readout(self) -> None:
@@ -99,7 +124,12 @@ class RealtimePageMixin:
         if previous is not None:
             previous.setEnabled(buffer.current_index > 0)
         if following is not None:
-            following.setEnabled(buffer.current_index < len(buffer.frequencies) - 1)
+            # 浏览状态下停在最后一个频点时“下一个”仍可用：它是回到自动跟随的入口。
+            at_last = buffer.current_index >= len(buffer.frequencies) - 1
+            following.setEnabled(not at_last or buffer.user_browsing)
+            following.setToolTip(
+                "回到自动跟随最新频点" if at_last and buffer.user_browsing else "下一个频点"
+            )
         # 页面自己的绘图控件可能不是 RealTimePlotWidget（测试替身、历史页）：
         # 只有真正提供胶片条入口时才同步，缺失时静默跳过。
         setter = getattr(widget, "set_frequencies", None)

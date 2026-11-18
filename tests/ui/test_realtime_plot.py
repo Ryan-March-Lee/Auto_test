@@ -15,6 +15,8 @@ from presentation.qt.realtime_plot import (
     PlotTargetBand,
     RealTimePlotWidget,
 )
+from presentation.qt.realtime_buffer import RealtimeMeasurementBuffer
+from presentation.qt.realtime_page import RealtimePageMixin
 from presentation.qt.theme import build_stylesheet
 
 
@@ -331,6 +333,95 @@ class BlitRenderTests(_PlotCase):
 
         self.assertLess(float(np.mean(blitted != full)), 0.001)
 
+    def test_growing_sweep_settles_instead_of_rebuilding_per_point(self):
+        """一条扫频曲线越扫越长时只扩界几次，不每个点都整图重绘一遍。"""
+        plot = self._shown_plot()
+        powers = [-30, -24, -20.5, -17.4, -14.8, -12.6, -10.7, -9.1, -7.7, -6.5]
+
+        with patch.object(
+            plot, "rebuild_background", wraps=plot.rebuild_background
+        ) as rebuild:
+            for index in range(1, len(powers) + 1):
+                points = powers[:index]
+                plot.update_plot(
+                    {
+                        "frequency": 1.0,
+                        "sweep_data": {
+                            "input_power_sg": points,
+                            "output_power_driver": [value + 11 for value in points],
+                            "gain": [11.0] * index,
+                        },
+                    }
+                )
+                plot._render()
+
+        self.assertLessEqual(
+            rebuild.call_count, 4, "扩界要为后续扫描点留余量，不能逐点重建"
+        )
+
+    def test_new_frequency_does_not_shrink_the_view(self):
+        plot = self._shown_plot()
+        plot.update_plot(
+            {
+                "frequency": 1.0,
+                "sweep_data": {
+                    "input_power_sg": [-30.0, -10.0],
+                    "output_power_driver": [-19.0, 1.0],
+                },
+            }
+        )
+        plot._render()
+        wide = plot.ax1.get_xlim()
+
+        plot.update_plot(
+            {
+                "frequency": 1.1,
+                "sweep_data": {
+                    "input_power_sg": [-12.0],
+                    "output_power_driver": [-1.0],
+                },
+            }
+        )
+        plot._render()
+
+        low, high = plot.ax1.get_xlim()
+        self.assertLessEqual(low, wide[0])
+        self.assertGreaterEqual(high, wide[1])
+
+
+class NavigationStateTests(_PlotCase):
+    """频点浏览与“下一个”按钮：最后一个频点上仍可回到自动跟随。"""
+
+    @staticmethod
+    def _host(plot):
+        class Host(RealtimePageMixin):
+            def __init__(self, widget):
+                self.realtime_buffer = RealtimeMeasurementBuffer()
+                self._realtime_plot_widget = widget
+
+            def _update_plot(self, data):
+                return None
+
+        return Host(plot)
+
+    def test_pinned_last_frequency_keeps_next_enabled_to_resume_following(self):
+        plot = self._plot(nav=True)
+        host = self._host(plot)
+        for frequency in (1.0, 1.1):
+            host.realtime_buffer.store({"frequency": frequency})
+
+        host.realtime_buffer.select(1)
+        host._update_navigation()
+
+        self.assertTrue(plot.nav_next_btn.isEnabled())
+        self.assertIn("跟随", plot.nav_next_btn.toolTip())
+
+        host.next_frequency()
+
+        self.assertFalse(host.realtime_buffer.user_browsing)
+        self.assertFalse(plot.nav_next_btn.isEnabled())
+        self.assertEqual(plot.nav_next_btn.toolTip(), "下一个频点")
+
 
 class FilmstripOnPlotTests(_PlotCase):
     def test_navigation_plot_carries_a_filmstrip(self):
@@ -352,6 +443,22 @@ class FilmstripOnPlotTests(_PlotCase):
         plot.frequency_filmstrip.chips()[1].click()
 
         self.assertEqual(received, [1.2])
+
+    def test_appending_a_frequency_keeps_the_existing_chips(self):
+        plot = self._plot(nav=True)
+        plot.set_frequencies([1.0, 1.2], 1)
+        strip = plot.frequency_filmstrip
+        first = strip.chips()[0]
+
+        plot.set_frequencies([1.0, 1.2, 1.4], 2)
+
+        self.assertEqual(len(strip.chips()), 3)
+        self.assertIs(strip.chips()[0], first, "新频点只补建自己的 chip")
+        self.assertEqual(strip.current_index(), 2)
+        self.assertEqual(
+            [chip.text() for chip in strip.chips()],
+            ["✓ 1", "✓ 1.2", "✓ 1.4"],
+        )
 
     def test_plot_without_navigation_ignores_frequencies(self):
         plot = self._plot(nav=False)

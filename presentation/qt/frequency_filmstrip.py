@@ -124,8 +124,14 @@ class FrequencyFilmstrip(QWidget):
         """写入频点与当前项；频点未变化时只移动高亮，不重建控件。"""
         values = _normalise(frequencies)
         if values != self._frequencies:
+            previous = self._frequencies
             self._frequencies = values
-            self._rebuild(values)
+            if previous and values[: len(previous)] == previous:
+                # 扫描只会追加频点：保留已有 chip，只为新增频点补控件。整条重建会
+                # 让每个新频点都销毁并重排全部 chip，页面跟着闪一下。
+                self._append_chips(values[len(previous) :], start=len(previous))
+            else:
+                self._rebuild(values)
         if not values:
             self._current = -1
             self.hide()
@@ -155,7 +161,13 @@ class FrequencyFilmstrip(QWidget):
             chip.setParent(None)
             chip.deleteLater()
         self._chips.clear()
-        for index, value in enumerate(values):
+        self._append_chips(values, start=0)
+        self._current = -1
+
+    def _append_chips(self, values: tuple[float, ...], *, start: int) -> None:
+        """为 ``values`` 依次补建 chip，插在已有 chip 之后、尾部留白之前。"""
+        for offset, value in enumerate(values):
+            index = start + offset
             chip = QPushButton(self._content)
             chip.setObjectName("frequencyChip")
             chip.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -172,7 +184,6 @@ class FrequencyFilmstrip(QWidget):
             )
             self._row.insertWidget(index, chip)
             self._chips.append(chip)
-        self._current = -1
 
     def _apply_current(self, index: int) -> None:
         self._current = index

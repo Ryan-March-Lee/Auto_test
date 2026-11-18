@@ -60,10 +60,15 @@ __all__ = [
     "RealTimePlotWidget",
 ]
 
-#: 量程滞回：数据仍在视窗内时只 blit；越界才按“span 的 8%”扩界并重建背景。
-_VIEW_PAD_RATIO = 0.08
+#: 量程滞回：数据仍在视窗内时只 blit；越界才扩界并重建背景。
+#: 一次扩界要整图重绘（百毫秒级），所以新视窗必须给“后面还会到的点”留出余量：
+#: 按 span 的 35% 留白，再向外取整到刻度友好的边界。只按 8% 留白时，每个新
+#: 扫频点都会再次越界，整条扫频曲线几乎每个点都要重画一遍，页面看上去一直在闪。
+_VIEW_PAD_RATIO = 0.35
 #: 常数序列（例如整条增益都等于 11dB）没有 span，至少留这么多上下余量。
 _VIEW_MIN_PAD = 0.5
+#: 扩界取整后的视窗希望容纳的刻度数；太少会让刻度挤在一起，太多会浪费画面。
+_VIEW_TICK_COUNT = 5
 #: 背景重建防抖：拖拽窗口时只重建一次，而不是每个 resize 事件都整图绘制。
 _BACKGROUND_DEBOUNCE_MS = 160
 #: 页面显示后延迟重建：等切页过渡播完，再付这一次整图绘制的钱。
@@ -273,6 +278,8 @@ class _PanelArtists:
     xlim: tuple[float, float] = (0.0, 1.0)
     ylim: tuple[float, float] = (0.0, 1.0)
     has_data: bool = False
+    #: 视窗是否已经由真实数据建立；构造时的 0..1 占位范围不参与后续扩界合并。
+    view_from_data: bool = False
 
     def dynamics(self) -> list[Any]:
         """需要每帧重画的艺术家；没有数据的面板只有隐藏的空曲线。"""
@@ -342,25 +349,58 @@ def _pair(
     return (xs[:length], ys[:length]) if length else None
 
 
+def _nice_step(span: float, tick_count: int = _VIEW_TICK_COUNT) -> float:
+    """返回 1/2/2.5/5 乘以十的整数次幂的“好看”步长，让边界落在刻度上。"""
+    span = abs(float(span))
+    if not math.isfinite(span) or span <= 0.0:
+        return 1.0
+    raw = span / max(1, int(tick_count))
+    magnitude = 1.0
+    # 用乘除十把 ``raw`` 归一到 [1, 10)，避免引入单位换算里被禁止的幂与对数。
+    while raw >= 10.0:
+        raw /= 10.0
+        magnitude *= 10.0
+    while raw < 1.0:
+        raw *= 10.0
+        magnitude /= 10.0
+    for factor in (1.0, 2.0, 2.5, 5.0, 10.0):
+        if raw <= factor * (1.0 + 1e-12):
+            return factor * magnitude
+    return 10.0 * magnitude
+
+
 def _padded_bounds(
     values: Sequence[float],
     *,
     pad_ratio: float = _VIEW_PAD_RATIO,
     min_pad: float = _VIEW_MIN_PAD,
+    current: tuple[float, float] | None = None,
 ) -> tuple[float, float]:
-    """给数据范围留出余量：下一次数据小幅变化时不用重建背景。
+    """给数据范围留出余量并向外取整，让后续若干个点不用再次扩界。
 
-    常数序列没有 span（例如整条增益都是 11dB），按数值大小的 5% 与 ``min_pad``
-    取较大者，避免 matplotlib 收到退化区间；其余情况按 span 的比例加余量。
+    ``pad_ratio`` 按 span 留白（常数序列改用数值比例与 ``min_pad`` 取较大者），
+    再把上下界向外取整到一个好看的刻度步长：一次扩界就能覆盖后面一段扫描，
+    而不是每个新点都触发一次整图重绘。``current`` 是当前视窗，扩界只增不减：
+    新频点的数据范围比旧视窗更窄时，坐标轴不会突然缩回去再弹开。
     """
     low = float(min(values))
     high = float(max(values))
     span = high - low
     if span <= 0.0:
-        pad = max(abs(high) * 0.05, min_pad)
+        pad = max(abs(high) * 0.2, min_pad)
     else:
-        pad = span * pad_ratio
-    return low - pad, high + pad
+        pad = max(span * pad_ratio, min_pad)
+    low -= pad
+    high += pad
+    if current is not None:
+        low = min(low, float(current[0]))
+        high = max(high, float(current[1]))
+    step = _nice_step(high - low)
+    low = math.floor(low / step) * step
+    high = math.ceil(high / step) * step
+    if high <= low:  # 极端浮点退化时的兜底，matplotlib 不接受零宽视窗。
+        high = low + step
+    return low, high
 
 
 class RealTimePlotWidget(QWidget):
@@ -837,7 +877,11 @@ class RealTimePlotWidget(QWidget):
         xs: list[float],
         ys: list[float],
     ) -> bool:
-        """数据越出当前视窗才扩界；小幅变化保持视窗，避免每个频点都重建背景。"""
+        """数据越出当前视窗才扩界；扩界一次就覆盖后面一段扫描。
+
+        视窗只增不减：新频点的数据范围更窄时坐标轴不会缩回去。因此一条扫频曲线
+        的早期扩张只重绘两三次，之后的新点都在同一视窗里 blit。
+        """
         x_low, x_high = panel.xlim
         y_low, y_high = panel.ylim
         if (
@@ -847,10 +891,19 @@ class RealTimePlotWidget(QWidget):
             and max(ys) <= y_high
         ):
             return False
-        panel.axis.set_xlim(*_padded_bounds(xs))
-        panel.axis.set_ylim(*_padded_bounds(ys))
+        panel.axis.set_xlim(
+            *_padded_bounds(
+                xs, current=panel.xlim if panel.view_from_data else None
+            )
+        )
+        panel.axis.set_ylim(
+            *_padded_bounds(
+                ys, current=panel.ylim if panel.view_from_data else None
+            )
+        )
         panel.xlim = tuple(float(value) for value in panel.axis.get_xlim())
         panel.ylim = tuple(float(value) for value in panel.axis.get_ylim())
+        panel.view_from_data = True
         return True
 
     @staticmethod
@@ -859,6 +912,7 @@ class RealTimePlotWidget(QWidget):
         panel.axis.set_ylim(0.0, 1.0)
         panel.xlim = (0.0, 1.0)
         panel.ylim = (0.0, 1.0)
+        panel.view_from_data = False
 
     # -- 频点浏览 -----------------------------------------------------------
 

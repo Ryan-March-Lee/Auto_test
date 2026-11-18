@@ -513,7 +513,9 @@ class DriverMappingPage(
             ),
         )
 
-    def _update_readout(self, data: Mapping[str, Any]) -> None:
+    def _update_readout(
+        self, data: Mapping[str, Any], *, animate: bool = False
+    ) -> None:
         readout = getattr(self, "readout", None)
         if readout is None:
             return
@@ -523,13 +525,18 @@ class DriverMappingPage(
             "GHz" if frequency else "",
             self._readout_metrics(data),
             active=self._measurement_active(),
+            animate=animate,
         )
 
     def _reset_readout(self) -> None:
         readout = getattr(self, "readout", None)
         if readout is not None:
             readout.set_reading(
-                "—", "", self._readout_metrics(), active=self._measurement_active()
+                "—",
+                "",
+                self._readout_metrics(),
+                active=self._measurement_active(),
+                animate=False,
             )
 
     def _on_state_changed(self, state: Any) -> None:

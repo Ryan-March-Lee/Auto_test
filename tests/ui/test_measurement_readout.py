@@ -145,6 +145,26 @@ class MeasurementReadoutTests(unittest.TestCase):
         self.assertIsNone(readout._content.graphicsEffect())
         self.assertIsNone(readout._content_effect)
 
+    def test_streaming_updates_do_not_replay_the_fade(self):
+        """实时数据流不逐点播淡入：深色读数条否则会持续闪烁。"""
+        readout = self._track(MeasurementReadout())
+        readout.resize(600, 110)
+        readout.show()
+        self.app.processEvents()
+        readout.set_reading(
+            "2.45", "GHz", (ReadoutMetric("输出功率", "10.0", "dBm"),)
+        )
+
+        readout.set_reading(
+            "2.45",
+            "GHz",
+            (ReadoutMetric("输出功率", "10.5", "dBm"),),
+            animate=False,
+        )
+
+        self.assertIsNone(readout._content.graphicsEffect())
+        self.assertEqual(readout._chips[0].value.text(), "10.5")
+
     def test_no_nested_effect_while_a_page_reveal_is_playing(self):
         """切页过渡已经挂在页面上时，读数条不再叠加自己的透明度效果。"""
         page = self._track(QWidget())

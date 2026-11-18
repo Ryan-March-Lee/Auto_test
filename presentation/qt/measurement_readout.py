@@ -341,8 +341,14 @@ class MeasurementReadout(QFrame):
         metrics: Sequence[ReadoutMetric] = (),
         *,
         active: bool | None = None,
+        animate: bool = True,
     ) -> None:
-        """写入当前频点与一组读数；``active`` 为 ``None`` 时保留现有活动状态。"""
+        """写入当前频点与一组读数；``active`` 为 ``None`` 时保留现有活动状态。
+
+        ``animate`` 为 ``False`` 时不播数值淡入：实时测量每几十毫秒就更新一次读数，
+        逐次重播透明度效果会让深色读数条持续闪烁；页面只在用户主动切换频点时才
+        请求动画。
+        """
         if not isinstance(frequency, str) or not isinstance(unit, str):
             raise TypeError("频点与单位必须是字符串")
         if isinstance(metrics, (str, bytes)) or not isinstance(metrics, Sequence):
@@ -369,7 +375,8 @@ class MeasurementReadout(QFrame):
         if active is not None:
             self.set_active(active)
         if (
-            changed
+            animate
+            and changed
             and self._has_reading
             and self._animations_enabled
             and self.isVisible()

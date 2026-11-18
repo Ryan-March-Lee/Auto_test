@@ -122,21 +122,6 @@ def _close_owned_measurement_port(port: Any) -> None:
         logger.exception("测量对象构造失败后的仪器清理也失败")
 
 
-def create_offline_measurement_port(
-    *,
-    dut_power_plan: Any = None,
-    driver_power_plan: Any = None,
-    recorder: Any = None,
-) -> Any:
-    """Create the explicit simulation assembly used by offline callers."""
-    return create_measurement_port(
-        mode="simulation",
-        dut_power_plan=dut_power_plan,
-        driver_power_plan=driver_power_plan,
-        recorder=recorder,
-    )
-
-
 def prepare_configuration(
     config_path: str,
     *,

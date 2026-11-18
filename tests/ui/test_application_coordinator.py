@@ -20,8 +20,6 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from application.ports.configuration_snapshots import ConfigurationSaveOutcome
-from application.dto.measurement_results import MeasurementType
-from application.mock_configuration_matcher import MockConfigurationError
 from domain.run.models import RunStatus, default_manifest
 from presentation.qt.application_coordinator import (
     ApplicationCoordinator,
@@ -1780,8 +1778,8 @@ class StageStartFailureTests(unittest.TestCase):
         self.assertTrue(any("阶段启动失败" in message for message in coordinator.messages))
 
 
-class MockSimulationSessionTests(unittest.TestCase):
-    """阶段二：Mock 配置加载、模拟会话提交与真机入口隔离。"""
+class MockModeTests(unittest.TestCase):
+    """Mock 配置：只读身份、真机入口隔离与普通配置恢复。"""
 
     def _saveable_config(self):
         return {
@@ -1826,30 +1824,7 @@ class MockSimulationSessionTests(unittest.TestCase):
             )
         )
 
-    def _session(self):
-        return SimpleNamespace(
-            snapshot_name="Mock",
-            measurement_types=(MeasurementType.CABLE_LOSS,),
-        )
-
-    def _enter(self, coordinator, *, session=None, error=None):
-        match = SimpleNamespace()
-        with patch(
-            "presentation.qt.application_coordinator.load_mock_scenario"
-        ) as load, patch(
-            "presentation.qt.application_coordinator.MockConfigurationMatcher"
-        ) as matcher_type, patch(
-            "presentation.qt.application_coordinator.build_simulation_session"
-        ) as build:
-            load.return_value = SimpleNamespace()
-            match_result = matcher_type.return_value.match
-            if error is not None:
-                match_result.side_effect = error
-            build.return_value = session or self._session()
-            started = coordinator.finalize_configuration()
-        return started, load, match_result, build
-
-    def test_loading_a_mock_snapshot_marks_the_session_without_a_run(self):
+    def test_loading_a_mock_snapshot_marks_mock_mode_without_a_run(self):
         page = _Page()
         coordinator = self._mock_coordinator(page=page)
 
@@ -1857,26 +1832,13 @@ class MockSimulationSessionTests(unittest.TestCase):
 
         self.assertEqual(coordinator.mock_configuration_name(), "mock")
         self.assertTrue(coordinator.is_mock_mode())
-        self.assertFalse(coordinator.simulation_session_active())
+        self.assertFalse(coordinator.is_simulated_run_active())
         self.assertIsNone(coordinator.prepared_run)
         self.assertEqual(page.simulation_modes[-1][0], True)
-        self.assertIn("Mock 模拟配置", page.simulation_modes[-1][1])
+        self.assertIn("Mock 仿真配置", page.simulation_modes[-1][1])
         # 版本只读与 Mock 只读分开：Mock 不占用 version 只读原因。
         self.assertIsNone(coordinator.editing_read_only_reason())
         self.assertIn("Mock", coordinator.run_status_text())
-
-    def test_silent_simulation_provider_and_config_metadata(self):
-        coordinator = self._mock_coordinator()
-        self.assertIsNone(coordinator.active_simulation_session())
-
-        session = self._session()
-        coordinator._simulation_session = session
-
-        self.assertIs(coordinator.active_simulation_session(), session)
-        # 模拟命令只把配置路径当元数据；没有正式运行快照也不能抛 RunNotResumable。
-        self.assertEqual(
-            coordinator.measurement_config_path(), str(coordinator.config_path)
-        )
 
     def test_loading_a_normal_snapshot_clears_mock_mode(self):
         page = _Page()
@@ -1888,62 +1850,6 @@ class MockSimulationSessionTests(unittest.TestCase):
         self.assertIsNone(coordinator.mock_configuration_name())
         self.assertFalse(coordinator.is_mock_mode())
         self.assertFalse(page.simulation_modes[-1][0])
-
-    def test_mock_finalize_commits_a_session_and_never_creates_a_run(self):
-        page = _Page()
-        coordinator = self._mock_coordinator(page=page)
-        self._load_mock(coordinator)
-        session = self._session()
-
-        with patch(
-            "presentation.qt.application_coordinator.prepare_configuration"
-        ) as create, patch.object(
-            coordinator, "_instrument_worker_factory"
-        ) as worker_factory:
-            started, load, match_result, build = self._enter(
-                coordinator, session=session
-            )
-
-        self.assertTrue(started)
-        self.assertIs(coordinator.state, RunFlowState.SIMULATING)
-        self.assertIs(coordinator.simulation_session, session)
-        self.assertIsNone(coordinator.prepared_run)
-        self.assertIsNone(coordinator.instrument_worker)
-        self.assertIsNone(coordinator._pending_run)
-        create.assert_not_called()
-        worker_factory.assert_not_called()
-        # Mock 最终化只在内存中规范化配置：不写 config.json，也不调用保存入口。
-        coordinator.save_configuration.assert_not_called()
-        coordinator.gui_data_service.configuration.save.assert_not_called()
-        self.assertEqual(load.call_count, 3)
-        match_result.assert_called_once()
-        self.assertEqual(match_result.call_args.args[0], "Mock")
-        build.assert_called_once()
-        self.assertTrue(coordinator.measurement_session_ready())
-
-    def test_mock_matching_failure_keeps_the_page_and_creates_no_session(self):
-        page = _Page()
-        coordinator = self._mock_coordinator(page=page)
-        self._load_mock(coordinator)
-
-        with patch(
-            "presentation.qt.application_coordinator.prepare_configuration"
-        ) as create:
-            started, _load, _match, build = self._enter(
-                coordinator,
-                error=MockConfigurationError("配置与 Mock 数据不一致"),
-            )
-
-        self.assertFalse(started)
-        self.assertIsNone(coordinator.simulation_session)
-        self.assertIsNone(coordinator.prepared_run)
-        self.assertIsNone(coordinator.instrument_worker)
-        create.assert_not_called()
-        build.assert_not_called()
-        coordinator.gui_data_service.configuration.save.assert_not_called()
-        self.assertTrue(
-            any("Mock 数据不一致" in message for _title, message in coordinator.warnings)
-        )
 
     def test_mock_mode_refuses_the_real_instrument_entry(self):
         coordinator = self._mock_coordinator()
@@ -2004,29 +1910,14 @@ class MockSimulationSessionTests(unittest.TestCase):
 
         self.assertFalse(coordinator.measurement_session_ready())
 
-    def test_leaving_a_simulation_session_for_a_normal_snapshot_resets_the_state(self):
-        coordinator = self._mock_coordinator()
-        self._load_mock(coordinator)
-        coordinator._simulation_session = self._session()
-        coordinator._set_state(RunFlowState.SIMULATING)
-
-        self._load_mock(coordinator, display_name="普通配置")
-
-        self.assertIsNone(coordinator.simulation_session)
-        self.assertIs(coordinator.state, RunFlowState.CONFIGURING)
-        self.assertFalse(coordinator.measurement_session_ready())
-
     def test_abandoning_the_session_clears_mock_state_and_page_lock(self):
         page = _Page()
         coordinator = self._mock_coordinator(page=page)
         self._load_mock(coordinator)
-        coordinator._simulation_session = self._session()
-        coordinator._set_state(RunFlowState.SIMULATING)
 
         self.assertTrue(coordinator.abandon_current_session())
 
         self.assertIsNone(coordinator.mock_configuration_name())
-        self.assertIsNone(coordinator.simulation_session)
         self.assertFalse(coordinator.is_mock_mode())
         self.assertIs(coordinator.state, RunFlowState.DEVICE_SELECTION)
         self.assertFalse(page.simulation_modes[-1][0])

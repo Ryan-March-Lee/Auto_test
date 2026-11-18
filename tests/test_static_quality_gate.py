@@ -234,11 +234,6 @@ BROAD_CATCH_BASELINE = {
         "AmplifierWorker.run#1",
         "AmplifierWorker.run#2",
     ),
-    # 回放线程边界：场景/结果文件损坏、时钟异常与未知回放失败都翻译成 error 信号，
-    # 不能让 QThread 带着未报告终态退出。
-    "presentation/qt/mock_replay_worker.py": (
-        "MockReplayWorker.run#1",
-    ),
     # CLI 启动器的边界处理（解释器、依赖、配置、GUI 启动）
     "launcher.py": (
         "list_runs#1",

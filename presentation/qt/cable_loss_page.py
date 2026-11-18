@@ -22,9 +22,6 @@ from .measurement_console import (
     MeasurementRunConsole,
     archive_check,
     run_session_check,
-    simulation_archive_check,
-    simulation_session_check,
-    simulation_wiring_check,
     wiring_check,
 )
 from .measurement_empty_state import MeasurementEmptyState
@@ -77,7 +74,6 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         config_path_provider: Callable[[], str],
         run_provider: Callable[[], Any],
         connection_dialog_factory: Callable[[str, QWidget], Any],
-        simulation_session_provider: Callable[[], Any] | None = None,
         log_callback: Callable[[str], Any] | None = None,
         progress_callback: Callable[[int], Any] | None = None,
         error_callback: Callable[[str], Any] | None = None,
@@ -89,7 +85,6 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         self._run_provider = run_provider
         self._start_facade = MeasurementStartFacade(
             config_path_provider=config_path_provider,
-            simulation_session_provider=simulation_session_provider,
         )
         self._connection_dialog_factory = connection_dialog_factory
         self._log_callback = log_callback or (lambda _message: None)
@@ -231,9 +226,7 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         self._connect_signal(signals.finished, self._on_finished)
 
     def start_measurement(self) -> None:
-        # 模拟会话不弹物理接线确认；正式模式的前置检查与命令构造仍完全走
-        # facade，页面不复制运行契约判据。
-        simulation = self._start_facade.simulation_session()
+        # 前置检查与命令构造完全走 facade，页面不复制运行契约判据。
         # controller 只在 prepare 时读取一次：决策携带检查过的那个对象，接线对话框
         # 的嵌套事件循环返回后不会重新读取 self.controller。
         decision = self._start_facade.prepare(
@@ -246,19 +239,12 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         if not decision.ready:
             decision.report(self._log_callback, self._error_callback)
             return
-        # 启动模式以 Facade 已检查并封装进请求的会话为准；不要使用点击开始前的
-        # 静默查询结果给归档展示打标签，避免会话在前置检查期间切换后文案与命令不一致。
-        simulation = decision.request.simulation
-        if not simulation:
-            self._log_callback("线损路径1现场接线已确认")
-        else:
-            self._log_callback("Mock 模拟回放：线损测量仅展示，不写入正式结果")
+        self._log_callback("线损路径1现场接线已确认")
         self.clear_results()
         self._log_callback("开始线损测量...")
         self._archival_try_start(
             lambda: decision.launch(),
             "线损测量未能启动，未开始测量",
-            simulation=simulation,
         )
 
     def _confirm_start_connection(self) -> bool:
@@ -306,21 +292,6 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         """
         console = getattr(self, "console", None)
         if console is None:
-            return
-        if self._start_facade.simulation_session() is not None:
-            console.set_run_facts(
-                run_id=None,
-                mode="Mock 模拟回放",
-                archive=None,
-                archive_configured=False,
-            )
-            console.set_checks(
-                (
-                    simulation_session_check(),
-                    simulation_wiring_check(),
-                    simulation_archive_check(),
-                )
-            )
             return
         run_id = self._current_run_id()
         configured = self._archival_location_provider is not None

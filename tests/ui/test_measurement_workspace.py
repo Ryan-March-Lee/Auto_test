@@ -366,8 +366,8 @@ class ModeTextTests(unittest.TestCase):
         self.assertEqual(mode_text(None), "未选择测试模式")
 
     def test_simulation_mode_has_its_own_label(self):
-        self.assertEqual(mode_text(True, simulation=True), "Mock 模拟模式")
-        self.assertEqual(mode_text(None, simulation=True), "Mock 模拟模式")
+        self.assertEqual(mode_text(True, simulation=True), "仿真运行")
+        self.assertEqual(mode_text(None, simulation=True), "仿真运行")
 
 
 

@@ -9,6 +9,7 @@ schema 与身份全部由阶段结果仓库校验，这里不扫描目录，也�
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Callable
 
 from PySide6.QtWidgets import QFileDialog, QWidget
@@ -177,8 +178,107 @@ def load_amplifier_driver_mapping(window: Any) -> None:
     )
 
 
+#: 阶段完成后需要回填的下游页面：``(页面标签, 页面属性, 回填方法, 选择属性)``。
+#: 线损结果同时是驱动映射与主功放的上游校准输入；驱动映射结果只回填主功放。
+_SIMULATION_BACKFILL_TARGETS = {
+    MeasurementKind.CABLE_LOSS: (
+        (
+            "驱动映射使用的线损结果",
+            "driver_mapping_page",
+            "show_loaded_cable_loss",
+            "cable_loss_selection",
+        ),
+        (
+            "主功放使用的线损结果",
+            "amplifier_page",
+            "show_loaded_cable_loss",
+            "cable_loss_selection",
+        ),
+    ),
+    MeasurementKind.DRIVER_MAPPING: (
+        (
+            "主功放使用的驱动映射结果",
+            "amplifier_page",
+            "show_loaded_driver_mapping",
+            "driver_mapping_selection",
+        ),
+    ),
+}
+
+_STAGE_FOR_KIND = {
+    MeasurementKind.CABLE_LOSS: MeasurementStage.CABLE_LOSS,
+    MeasurementKind.DRIVER_MAPPING: MeasurementStage.DRIVER_MAPPING,
+}
+
+
+def backfill_simulated_calibration(window: Any, reference: Any) -> None:
+    """仿真运行阶段完成后，用仿真作用域结果查询按显式路径回填下游校准来源。
+
+    只在仿真运行内生效：正式运行的校准输入仍由用户显式选择，页面不会因为一次测量
+    完成就悄悄换掉输入。路径取本次结果自带的 ``archive_path``（阶段结果权威文件），
+    不扫描目录、不猜最新文件；文件内容、阶段边界与摘要仍由结果查询实现校验。
+
+    用户手动选择的另一份结果不会被覆盖：只有当前选择为空、或正好指向本次刚完成的
+    同一份文件时才替换；保留时在日志中说明原因。回填失败只记录日志，不阻断已经完成
+    的测量，也不改写页面的现有选择。
+    """
+    coordinator = getattr(window, "coordinator", None)
+    if coordinator is None or not coordinator.is_simulated_run_active():
+        return
+    kind = getattr(reference, "kind", None)
+    targets = _SIMULATION_BACKFILL_TARGETS.get(kind)
+    if not targets:
+        return
+    value = getattr(reference, "value", None)
+    result_reference = getattr(value, "result_reference", None)
+    if not isinstance(result_reference, Mapping):
+        window.add_log_message("仿真结果缺少结果引用，无法自动回填校准来源")
+        return
+    path = result_reference.get("archive_path")
+    if not isinstance(path, str) or not path.strip():
+        window.add_log_message("仿真结果缺少阶段结果路径，无法自动回填校准来源")
+        return
+    path = path.strip()
+    stage = _STAGE_FOR_KIND[kind]
+    query = _result_query(window)
+    for label, page_attribute, shower_name, selection_attribute in targets:
+        page = getattr(window, page_attribute, None)
+        if page is None:
+            continue
+        selection = getattr(page, selection_attribute, None)
+        selected_path = getattr(selection, "path", None)
+        if selection is not None and selected_path != path:
+            window.add_log_message(
+                f"{label}保留当前手动选择；本次完成的仿真结果未自动回填"
+            )
+            continue
+        try:
+            loaded = query.load_stage_result(stage, path)
+            sha256 = getattr(loaded, "sha256", None)
+            size_bytes = getattr(loaded, "size_bytes", None)
+            if sha256 is None or size_bytes is None:
+                raise ValueError("结果缺少文件摘要")
+            getattr(page, shower_name)(
+                path=path,
+                filename=loaded.filename,
+                created_at=loaded.result.created_at,
+                sha256=sha256,
+                size_bytes=size_bytes,
+            )
+        except (OSError, ValueError) as error:
+            logger.warning("仿真校准来源自动回填失败: %s", error)
+            window.add_log_message(
+                f"{label}自动回填失败（可手动选择）: {error}"
+            )
+            continue
+        window.add_log_message(
+            f"{label}已按本次仿真结果自动回填：{loaded.filename}"
+        )
+
+
 __all__ = [
     "JSON_FILTER",
+    "backfill_simulated_calibration",
     "choose_stage_result",
     "load_amplifier_cable_loss",
     "load_amplifier_driver_mapping",

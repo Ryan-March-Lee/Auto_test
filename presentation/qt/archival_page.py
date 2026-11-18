@@ -32,14 +32,10 @@ from .archival_status import (
     summarize_archival_missing,
     summarize_archival_running,
     summarize_archival_saving,
-    summarize_simulation_completion,
-    summarize_simulation_failure,
-    summarize_simulation_running,
-    summarize_simulation_stopped,
     summarize_test_failure,
     summarize_test_stopped,
 )
-from .measurement_state import MEASUREMENT_TYPES, MeasurementKind
+from .measurement_state import MeasurementKind
 
 
 class ArchivalPageMixin:
@@ -82,10 +78,6 @@ class ArchivalPageMixin:
         # 最近一次归档提示只用于切运行时的清理判断；提示条由页面按需创建。
         self._archival_summary: ArchivalSummary | None = None
         self._archival_banner = None
-        # 模拟回放走独立的展示分支：不写正式结果、不生成交付产物，也不能显示
-        # “已自动归档”。标志在每次 _archival_try_start 时按本次模式重设。
-        self._archival_simulation = False
-        self._archival_simulation_completed = False
 
     def _build_archival_banner(self):
         """创建失败提示条；页面必须把它加入左栏布局（默认隐藏）。
@@ -102,14 +94,9 @@ class ArchivalPageMixin:
     # -- controller 事件 ---------------------------------------------------
 
     def _connect_archival_signals(self, controller: Any) -> None:
-        """连接进度、归档与模拟完成事件；页面在 ``_connect_controller_signals`` 中调用。"""
+        """连接进度与归档事件；页面在 ``_connect_controller_signals`` 中调用。"""
         self._connect_signal(controller.signals.progress, self._on_archival_progress)
         self._connect_signal(controller.signals.archival, self.show_archival)
-        # 模拟完成走专用载荷：正式归档 DTO 要求真实运行与产物路径，模拟链路没有，
-        # 两条通道不能互相顶替。
-        self._connect_signal(
-            controller.signals.simulation_completed, self.show_simulation_completion
-        )
 
     def _archival_is_for_this_page(self) -> bool:
         """当前 controller 的测量类型是否属于本页面；未开始时视为属于。"""
@@ -120,33 +107,23 @@ class ArchivalPageMixin:
         return kind is None or kind is self._archival_kind
 
     def _archival_measurement_started(self) -> None:
-        """controller 已接受启动：正式模式显示“结束后会自动归档”，模拟模式说明只展示。"""
+        """controller 已接受启动：显示“结束后会自动归档”。"""
         self._archival_pending = True
         self._archival_saving = False
-        if self._archival_simulation:
-            self._show_archival_summary(summarize_simulation_running(self._archival_kind))
-            return
         self._show_archival_summary(summarize_archival_running(self._archival_kind))
 
     def _archival_try_start(
         self,
         start: Callable[[], Any],
         rejection: str,
-        *,
-        simulation: bool = False,
     ) -> bool:
         """执行 controller 启动，只在接受之后进入“等待归档”。
 
         controller 的启动失败是同步上报的：它可能先发出 ``error`` 事件、再返回
         ``False``。这里记住启动期间是否已经发布过终端提示，避免“拒绝启动”的中性
         外观覆盖刚显示出来的失败原因。
-
-        ``simulation`` 记录本次启动是模拟回放：结束后只显示模拟完成载荷，不能出现
-        “自动归档”“仍在生成交付产物”这类正式链路文案。
         """
         self._archival_terminal_events = 0
-        self._archival_simulation = bool(simulation)
-        self._archival_simulation_completed = False
         started = start()
         if started is False:
             if self._archival_terminal_events == 0:
@@ -168,9 +145,6 @@ class ArchivalPageMixin:
 
     def _on_archival_progress(self, value: Any) -> None:
         """进度到 100% 表示扫描结束，随后是保存结果与生成产物：明确告知用户。"""
-        if self._archival_simulation:
-            # 模拟回放没有保存与产物阶段；保留模拟回放文案，不进入正式归档外观。
-            return
         if not self._archival_pending or self._archival_saving:
             return
         if not self._archival_is_for_this_page():
@@ -200,31 +174,6 @@ class ArchivalPageMixin:
             return
         self._show_archival_summary(summary)
 
-    def show_simulation_completion(self, completion: Any) -> None:
-        """显示模拟回放完成载荷：只展示结果来源，不写正式归档状态。
-
-        worker 先发正式结果（页面照常渲染）再发本事件；这里不读取文件、不调用归档
-        服务，也不把场景里的归档摘要伪装成真实 ``ArchivalOutcome``。
-
-        本事件只属于当前这次模拟启动：正式测量已经开始时收到的旧完成载荷必须忽略，
-        不能把正式运行改成模拟文案。
-        """
-        if not self._archival_simulation:
-            return
-        measurement_type = getattr(completion, "measurement_type", None)
-        if measurement_type is not MEASUREMENT_TYPES[self._archival_kind]:
-            return
-        self._archival_simulation_completed = True
-        self._archival_pending = False
-        self._archival_saving = False
-        self._archival_terminal_events += 1
-        try:
-            summary = summarize_simulation_completion(self._archival_kind, completion)
-        except (TypeError, ValueError) as error:
-            self._log_callback(f"模拟完成结果无法显示: {error}")
-            return
-        self._show_archival_summary(summary)
-
     # -- 终止事件 -----------------------------------------------------------
 
     def _archival_test_failed(self, message: str) -> None:
@@ -232,11 +181,6 @@ class ArchivalPageMixin:
         self._archival_pending = False
         self._archival_saving = False
         self._archival_terminal_events += 1
-        if self._archival_simulation:
-            self._show_archival_summary(
-                summarize_simulation_failure(self._archival_kind, message)
-            )
-            return
         self._show_archival_summary(
             summarize_test_failure(self._archival_kind, message)
         )
@@ -246,11 +190,6 @@ class ArchivalPageMixin:
         self._archival_pending = False
         self._archival_saving = False
         self._archival_terminal_events += 1
-        if self._archival_simulation:
-            self._show_archival_summary(
-                summarize_simulation_stopped(self._archival_kind, reason)
-            )
-            return
         self._show_archival_summary(
             summarize_test_stopped(self._archival_kind, reason, partial_path)
         )
@@ -274,17 +213,7 @@ class ArchivalPageMixin:
         return path.strip() if isinstance(path, str) and path.strip() else None
 
     def _archival_test_finished(self) -> None:
-        """测试完成：已收到归档结果时保留；否则如实提示“状态未知”。
-
-        模拟回放的完成文案由 :meth:`show_simulation_completion` 展示；没有收到完成
-        载荷时只记录一条状态说明，不冒充“已保存但未归档”。
-        """
-        if self._archival_simulation:
-            self._archival_pending = False
-            self._archival_saving = False
-            if not self._archival_simulation_completed:
-                self._log_callback("模拟回放已结束，但未收到模拟完成载荷")
-            return
+        """测试完成：已收到归档结果时保留；否则如实提示“状态未知”。"""
         if not self._archival_pending:
             return
         self._archival_pending = False
@@ -320,8 +249,6 @@ class ArchivalPageMixin:
         self._archival_summary = None
         self._archival_pending = False
         self._archival_saving = False
-        self._archival_simulation = False
-        self._archival_simulation_completed = False
         banner = self._archival_banner
         if banner is not None:
             banner.clear()
@@ -340,13 +267,10 @@ class ArchivalPageMixin:
         location = self._archival_directory(summary.run_id)
         if location is not None and location not in message:
             message = f"{message} 结果目录：{location}"
-        # 模拟回放没有归档环节：警告/错误前缀只属于正式归档，不能让模拟停止或失败
-        # 看起来像一次归档异常。
-        if not self._archival_simulation:
-            if summary.tone == TONE_WARNING:
-                message = f"[归档警告] {message}"
-            elif summary.tone == TONE_ERROR:
-                message = f"[归档错误] {message}"
+        if summary.tone == TONE_WARNING:
+            message = f"[归档警告] {message}"
+        elif summary.tone == TONE_ERROR:
+            message = f"[归档错误] {message}"
         self._log_callback(message)
         banner = self._archival_banner
         if banner is not None:

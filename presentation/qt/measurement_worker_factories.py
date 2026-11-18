@@ -8,8 +8,7 @@ from typing import Any, Callable
 from application.dto.measurement_results import MeasurementType
 
 from .measurement_controller_contract import MeasurementCommand, WorkerFactories
-from .measurement_state import MEASUREMENT_TYPES, MeasurementKind
-from .mock_replay_worker import MockReplayWorker
+from .measurement_state import MeasurementKind
 from .workers import AmplifierWorker, CableLossWorker, DriverMappingWorker
 
 
@@ -23,7 +22,7 @@ def build_measurement_worker_factories(
     ``config_path`` 只是页面输入元数据，不再进入 worker 或装配入口。
 
     ``simulated_context_provider`` 是协调器持有的仿真运行上下文查询（无副作用）。
-    返回非空上下文时，正式工厂仍返回三个现有 worker，但会：
+    返回非空上下文时，仍返回三个现有 worker，但会：
 
     - 在 worker 创建前调用 ``port.activate(measurement_type)`` 绑定阶段；失败在
       worker 启动前抛出，由控制器发出 ``stage_start_failed``，协调器关闭端口；
@@ -105,18 +104,6 @@ def build_measurement_worker_factories(
     }
 
 
-def build_simulation_worker_factories() -> WorkerFactories:
-    """Return the Mock replay worker factories, one per measurement kind.
-
-    模拟回放没有测量端口，也不接收正式运行契约；工厂只把命令里的模拟会话阶段交给
-    ``MockReplayWorker``。缺少对应阶段时在 worker 启动前失败。
-    """
-    return {
-        kind: _simulation_factory(measurement_type)
-        for kind, measurement_type in MEASUREMENT_TYPES.items()
-    }
-
-
 def _simulated_worker(context: Any, measurement_type: MeasurementType, build: Callable[[], Any]) -> Any:
     """绑定阶段后再构造正式 worker；激活失败在 worker 启动前抛出。"""
     context.port.activate(measurement_type)
@@ -168,20 +155,6 @@ def _amplifier_factory(command: MeasurementCommand, *, measurement_port: Any = N
     )
 
 
-def _simulation_factory(measurement_type: MeasurementType):
-    def factory(command: MeasurementCommand, *, measurement_port: Any = None) -> Any:
-        if measurement_port is not None:
-            raise ValueError("模拟回放 worker 不接受测量端口")
-        session = command.simulation_session
-        if session is None:
-            raise ValueError("模拟回放命令缺少模拟会话")
-        stage = session.stage_for(measurement_type)
-        return MockReplayWorker(stage=stage)
-
-    return factory
-
-
 __all__ = [
     "build_measurement_worker_factories",
-    "build_simulation_worker_factories",
 ]

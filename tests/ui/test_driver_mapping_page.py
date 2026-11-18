@@ -8,13 +8,9 @@ from PySide6.QtCore import QCoreApplication, QEvent
 from PySide6.QtWidgets import QApplication, QDialog, QLabel, QWidget
 
 from application.dto import DriverMappingRawPoint, DriverPowerMappingMeasurementResult
-from application.dto.measurement_results import MeasurementType
 from presentation.qt.driver_mapping_page import DriverMappingPage
 from presentation.qt.measurement_console import CheckState
-from presentation.qt.measurement_controller_contract import (
-    MeasurementCommand,
-    MeasurementExecutionMode,
-)
+from presentation.qt.measurement_controller_contract import MeasurementCommand
 from presentation.qt.measurement_controls import MeasurementAction
 from presentation.qt.measurement_state import (
     DriverMappingPageResultState,
@@ -23,7 +19,6 @@ from presentation.qt.measurement_state import (
 )
 from presentation.qt.stage_summary import NOT_STARTED, StageMetric
 from presentation.qt.theme import MEASUREMENT_LEFT_PANEL_MIN_WIDTH
-from tests.support.simulation_sessions import simulation_session
 
 
 def _destroy_widget(widget):
@@ -53,7 +48,6 @@ class Signals:
         for name in (
             "progress", "message", "data_update", "result", "finished",
             "stopped", "error", "rejected", "state_changed", "archival",
-            "simulation_completed",
         ):
             setattr(self, name, Signal())
 
@@ -115,7 +109,6 @@ class DriverMappingPageTests(unittest.TestCase):
         self.errors = []
         self.realtime = []
         self.clears = []
-        self.simulation = None
         self.run = type("PreparedRun", (), {
             "run_id": "run-driver", "run_repository": object(),
             "run_directory": "runs/run-driver",
@@ -123,13 +116,9 @@ class DriverMappingPageTests(unittest.TestCase):
         })()
         self.page = DriverMappingPage(
             config_path_provider=lambda: "config.json",
-            run_provider=lambda: (
-                self.prepared.append(True)
-                or (self.simulation if self.simulation is not None else self.run)
-            ),
+            run_provider=lambda: self.prepared.append(True) or self.run,
             connection_dialog_factory=lambda *_: self.dialogs.append(True) or self.dialog,
             plot_widget_factory=lambda parent: Plot(parent),
-            simulation_session_provider=lambda: self.simulation,
             realtime_data_callback=self.realtime.append,
             clear_realtime_callback=lambda: self.clears.append(True),
             log_callback=self.logs.append,
@@ -185,35 +174,8 @@ class DriverMappingPageTests(unittest.TestCase):
         self.assertIn("未选择线损测量结果，驱动映射未启动", self.logs)
         self.assertNotIn("开始驱动功放映射...", self.logs)
 
-    def test_simulation_start_needs_no_manual_cable_loss_and_skips_the_dialog(self):
-        self.simulation = simulation_session(MeasurementType.DRIVER_POWER_MAPPING)
-        self.page.on_activated()
-
-        self.page.start_measurement()
-
-        self.assertEqual(self.dialogs, [])
-        self.assertEqual(self.errors, [])
-        command = self.controller.calls[0][1]
-        self.assertIsInstance(command, MeasurementCommand)
-        self.assertIs(command.mode, MeasurementExecutionMode.SIMULATION)
-        self.assertIs(command.simulation_session, self.simulation)
-        self.assertIsNone(command.prepared_run)
-        self.assertIsNone(command.cable_loss_path)
-        self.assertIn("Mock 模拟数据", self.page.cable_loss_source_label.text())
-        self.assertEqual(
-            self.page.console.check_state("线损结果"), CheckState.READY
-        )
-        self.assertEqual(
-            self.page.console.check_state("执行会话"), CheckState.READY
-        )
-        self.assertEqual(self.page.console.mode_text(), "Mock 模拟回放")
-        self.assertFalse(self.page.load_cable_loss_btn.isEnabled())
-        self.assertIn("固定的 Mock", self.page.load_cable_loss_btn.toolTip())
-        self.assertIn("驱动映射仅展示", " ".join(self.logs))
-        self.assertFalse(any("自动归档" in line for line in self.logs))
-
-    def test_simulation_data_updates_the_realtime_plot_and_readout(self):
-        self.simulation = simulation_session(MeasurementType.DRIVER_POWER_MAPPING)
+    def test_data_updates_the_realtime_plot_and_readout(self):
+        self._select_cable_loss()
         self.page.start_measurement()
 
         self.controller.signals.data_update.emit(
@@ -229,16 +191,6 @@ class DriverMappingPageTests(unittest.TestCase):
         self.assertEqual(len(self.page.driver_plot_widget.updated), 1)
         self.assertEqual(self.page.readout.frequency_text(), "1.0")
         self.assertEqual(self.page.readout.unit_text(), "GHz")
-
-    def test_manual_calibration_input_is_reenabled_after_leaving_simulation(self):
-        self.simulation = simulation_session(MeasurementType.DRIVER_POWER_MAPPING)
-        self.page.on_activated()
-        self.assertFalse(self.page.load_cable_loss_btn.isEnabled())
-
-        self.simulation = None
-        self.page.on_activated()
-
-        self.assertTrue(self.page.load_cable_loss_btn.isEnabled())
 
     def test_a_busy_measurement_is_reported_before_the_missing_cable_loss(self):
         # 另一页测量运行时“开始”按钮仍可能被点到：先报告更直接的原因，

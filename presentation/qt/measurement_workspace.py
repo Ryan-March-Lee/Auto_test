@@ -86,8 +86,8 @@ _UNCONNECTED_RUN_TEXT = "未连接"
 _MODE_TEXT_DRIVER = "有驱放测试"
 _MODE_TEXT_NO_DRIVER = "无驱放测试"
 _MODE_TEXT_UNSET = "未选择测试模式"
-#: Mock 模拟会话文案：独立于驱动模式，明确“不会连接真实仪器”。
-_MODE_TEXT_SIMULATION = "Mock 模拟模式"
+#: 仿真运行文案：独立于驱动模式，明确“不会连接真实仪器”。
+_MODE_TEXT_SIMULATION = "仿真运行"
 
 #: 顶栏：阶段条与状态簇共用一行。左右 16px 与此前页头的外边距保持一致；阶段条
 #: 固定 52px 高，状态簇垂直居中，整条顶栏不会因为按钮更高而变高。

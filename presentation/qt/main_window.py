@@ -38,6 +38,7 @@ from presentation.qt.measurement_workspace import MeasurementWorkspace, mode_tex
 from presentation.qt.pages import PageContext, build_pages
 from presentation.qt.realtime_plot import RealTimePlotWidget
 from presentation.qt.stage_result_selection import (
+    backfill_simulated_calibration,
     load_amplifier_cable_loss,
     load_amplifier_driver_mapping,
     load_cable_loss_result,
@@ -88,6 +89,10 @@ class MainWindow(ConfigurationSnapshotActions, QMainWindow):
         )
         self.measurement_controller.signals.message.connect(self.add_log_message)
         self.measurement_controller.signals.rejected.connect(self.add_log_message)
+        # 仿真运行的阶段结果同时回填下游页面的校准来源；正式运行里这个槽不做任何事。
+        self.measurement_controller.signals.result.connect(
+            self._backfill_simulated_calibration
+        )
         self.coordinator.load_configuration()
         self.init_ui()
         self.log_timer = QTimer()
@@ -344,7 +349,6 @@ class MainWindow(ConfigurationSnapshotActions, QMainWindow):
             controller=self.measurement_controller,
             config_path_provider=self.coordinator.measurement_config_path,
             run_provider=self.coordinator.resolve_measurement_session,
-            simulation_session_provider=self.coordinator.active_simulation_session,
             driver_mode_provider=self._current_driver_mode,
             connection_dialog_factory=lambda kind, parent: ConnectionDialog(kind, parent),
             plot_widget_factory=lambda _parent: RealTimePlotWidget(show_nav_buttons=True),
@@ -524,7 +528,7 @@ class MainWindow(ConfigurationSnapshotActions, QMainWindow):
         )
         if not started:
             self._restore_test_config_page()
-        elif self.coordinator.simulation_session_active():
+        elif self.coordinator.is_simulated_run_active():
             self.on_instrument_connected()
 
     def _restore_test_config_page(self):
@@ -611,6 +615,10 @@ class MainWindow(ConfigurationSnapshotActions, QMainWindow):
     def _load_cable_loss_result(self):
         """由用户显式选择线损结果文件；取消或失败都保留当前显示。"""
         load_cable_loss_result(self)
+
+    def _backfill_simulated_calibration(self, reference):
+        """仿真运行阶段完成后回填下游页面校准来源；正式运行不做任何事。"""
+        backfill_simulated_calibration(self, reference)
 
     def _load_driver_mapping_cable_loss(self):
         """显式选择驱动映射使用的线损结果；页面回显来源文件与测量时间。"""

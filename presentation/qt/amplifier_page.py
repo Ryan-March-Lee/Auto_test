@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
 )
 
 from application.dto.measurement_requests import StageResultDigest
-from application.dto.measurement_results import MeasurementType
 from .archival_page import ArchivalPageMixin
 from .measurement_console import (
     CheckState,
@@ -26,15 +25,11 @@ from .measurement_console import (
     archive_check,
     input_check,
     run_session_check,
-    simulation_archive_check,
-    simulation_session_check,
-    simulation_wiring_check,
     wiring_check,
 )
 from .measurement_controls import (
     MeasurementAction,
     MeasurementControlPresenter,
-    set_auxiliary_inputs_enabled,
     state_is_active,
 )
 from .measurement_readout import MeasurementReadout, ReadoutMetric
@@ -43,7 +38,7 @@ from .measurement_start_facade import (
     StartMeasurementRequest,
     is_busy,
 )
-from .measurement_state import MEASUREMENT_TYPES, MeasurementKind, StageResultSelection
+from .measurement_state import MeasurementKind, StageResultSelection
 from .measurement_surface import (
     CONTROL_SURFACE,
     RESULT_SURFACE,
@@ -71,10 +66,6 @@ from .theme import (
 )
 
 
-#: 本页在模拟会话里按正式测量类型取阶段与固定校准输入。
-_MEASUREMENT_TYPE = MEASUREMENT_TYPES[MeasurementKind.AMPLIFIER]
-
-
 class AmplifierPage(
     RealtimePageMixin, ArchivalPageMixin, PageControllerBindingMixin, QWidget
 ):
@@ -96,7 +87,6 @@ class AmplifierPage(
         driver_mode_provider: Callable[[], bool],
         connection_dialog_factory: Callable[[str, QWidget], Any],
         plot_widget_factory: Callable[[QWidget], QWidget],
-        simulation_session_provider: Callable[[], Any] | None = None,
         realtime_data_callback: Callable[[Mapping[str, Any]], Any] | None = None,
         clear_realtime_callback: Callable[[], Any] | None = None,
         log_callback: Callable[[str], Any] | None = None,
@@ -114,7 +104,6 @@ class AmplifierPage(
         self._driver_mapping_selection: StageResultSelection | None = None
         self._start_facade = MeasurementStartFacade(
             config_path_provider=config_path_provider,
-            simulation_session_provider=simulation_session_provider,
         )
         self._driver_mode_provider = driver_mode_provider
         self._connection_dialog_factory = connection_dialog_factory
@@ -264,13 +253,7 @@ class AmplifierPage(
         #
         # 其它页面测量运行时先让 facade 统一报告“已有测量正在运行”，不要用
         # 输入缺失掩盖更直接的原因；忙碌判据来自 facade 的 is_busy。
-        # 模拟会话已固定线损/驱动映射来源，不再要求用户手动选择校准输入。
-        simulation = self._start_facade.simulation_session()
-        if (
-            simulation is None
-            and self.controller is not None
-            and not is_busy(self.controller)
-        ):
+        if self.controller is not None and not is_busy(self.controller):
             self._sync_driver_input_availability()
             missing = self._missing_input_message()
             if missing is not None:
@@ -294,18 +277,13 @@ class AmplifierPage(
         if not decision.ready:
             decision.report(self._log_callback, self._error_callback)
             return
-        simulation = decision.request.simulation
-        if not simulation:
-            self._log_callback("主功放现场接线已确认")
-        else:
-            self._log_callback("Mock 模拟回放：主功放仅展示，不写入正式结果")
+        self._log_callback("主功放现场接线已确认")
         self.reset_realtime_data()
         self._log_callback("开始主功放测试...")
         # “等待归档”只在 controller 接受启动之后出现。
         self._archival_try_start(
             lambda: decision.launch(),
             "主功放测试未能启动，未开始测量",
-            simulation=simulation,
         )
 
     def _missing_input_message(self) -> str | None:
@@ -434,10 +412,6 @@ class AmplifierPage(
         label = getattr(self, "cable_loss_source_label", None)
         if label is None:
             return
-        source = self._simulation_calibration(MeasurementType.CABLE_LOSS)
-        if source is not None:
-            label.setText(f"线损来源：{source.path.name}（Mock 模拟数据）")
-            return
         selection = self._cable_loss_selection
         if selection is None:
             label.setText("未选择线损结果：开始前请先加载线损测量结果")
@@ -450,10 +424,6 @@ class AmplifierPage(
         label = getattr(self, "driver_mapping_source_label", None)
         if label is None:
             return
-        source = self._simulation_calibration(MeasurementType.DRIVER_POWER_MAPPING)
-        if source is not None:
-            label.setText(f"驱动映射来源：{source.path.name}（Mock 模拟数据）")
-            return
         selection = self._driver_mapping_selection
         if selection is None:
             label.setText("未选择驱动映射结果：开始前请先加载驱动映射测量结果")
@@ -462,35 +432,9 @@ class AmplifierPage(
             f"驱动映射来源：{selection.filename}\n测量时间：{selection.created_at}"
         )
 
-    def _simulation_calibration(self, dependency: MeasurementType):
-        """模拟会话固定的上游结果；普通模式返回 ``None``。
-
-        页面只按正式测量类型查询，不解析场景 JSON，也不自行拼接 mock_data 路径。
-        """
-        session = self._start_facade.simulation_session()
-        if session is None:
-            return None
-        return session.calibration_input_for(_MEASUREMENT_TYPE, dependency)
-
     def _sync_driver_input_availability(self) -> None:
         """驱动关闭时隐藏整行驱动映射输入：该模式下它既不需要，也不会被检查。"""
         required = bool(self._driver_mode_provider())
-        simulation = self._start_facade.simulation_session() is not None
-        input_buttons = tuple(
-            button
-            for button in (
-                getattr(self, "load_cable_loss_btn", None),
-                getattr(self, "load_driver_mapping_btn", None),
-            )
-            if button is not None
-        )
-        set_auxiliary_inputs_enabled(input_buttons, not simulation)
-        for input_button in input_buttons:
-            input_button.setToolTip(
-                "模拟会话自动使用固定的 Mock 校准结果"
-                if simulation
-                else ""
-            )
         row = getattr(self, "driver_mapping_input_row", None)
         button = getattr(self, "load_driver_mapping_btn", None)
         label = getattr(self, "driver_mapping_source_label", None)
@@ -512,42 +456,6 @@ class AmplifierPage(
         if console is None:
             return
         driver_mode = bool(self._driver_mode_provider())
-        session = self._start_facade.simulation_session()
-        if session is not None:
-            cable_ready = (
-                session.calibration_input_for(
-                    _MEASUREMENT_TYPE, MeasurementType.CABLE_LOSS
-                )
-                is not None
-            )
-            mapping_ready = (
-                session.calibration_input_for(
-                    _MEASUREMENT_TYPE, MeasurementType.DRIVER_POWER_MAPPING
-                )
-                is not None
-            )
-            console.set_run_facts(
-                run_id=None,
-                mode=f"Mock 模拟回放（{'有驱放' if driver_mode else '无驱放'}）",
-                archive=None,
-                archive_configured=False,
-            )
-            checks = [
-                simulation_session_check(),
-                input_check("线损结果", cable_ready),
-            ]
-            if driver_mode:
-                checks.append(input_check("驱动映射结果", mapping_ready))
-            else:
-                checks.append(
-                    ConsoleCheck(
-                        "驱动映射结果", CheckState.OPTIONAL, "无驱放模式不使用"
-                    )
-                )
-            checks.append(simulation_wiring_check())
-            checks.append(simulation_archive_check())
-            console.set_checks(tuple(checks))
-            return
         run_id = self._current_run_id()
         configured = self._archival_location_provider is not None
         directory = self._archival_directory(run_id)

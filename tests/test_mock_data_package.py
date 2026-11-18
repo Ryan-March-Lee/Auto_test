@@ -1,8 +1,8 @@
-"""阶段五步骤 15：``mock_data`` 数据包的一致性、结果对应与回放预算。
+"""阶段五步骤 15：``mock_data`` 数据包的一致性、结果对应与配置自洽。
 
 三套仓库场景、三份正式结果和 ``config.mock.json`` 必须彼此自洽：频点覆盖、事件
-数量、目标功率网格、校准引用和结果 DTO 类型都不能只靠人工检查。回放时长按
-``data`` 事件数量与 0.5 秒间隔计算，使用 fake clock 验证预算，不真的等待 181 秒。
+数量、目标功率网格、校准引用和结果 DTO 类型都不能只靠人工检查。场景现在是仿真运行
+的 ``readings.json`` 来源与期望输出，不再有 UI 回放预算。
 
 本模块只读仓库数据，不复制大 JSON，也不生成新的正式结果文件。
 """
@@ -11,7 +11,6 @@ import json
 import unittest
 from collections import Counter
 from pathlib import Path
-from threading import Event
 
 from application.dto.measurement_results import (
     AmplifierMeasurementResult,
@@ -28,10 +27,6 @@ from application.inputs.mock_result import load_mock_result
 from application.inputs.mock_scenario import load_mock_scenario
 from application.ports.stage_result_repository import measurement_type_for_stage
 from infrastructure.filesystem.paths import DEFAULT_MOCK_DATA_PATHS, MockStage
-from presentation.qt.mock_replay import (
-    MOCK_DATA_POINT_INTERVAL_S,
-    MockReplayClock,
-)
 
 PROJECT_ROOT = Path(__file__).parents[1]
 MOCK_CONFIG = PROJECT_ROOT / "config.mock.json"
@@ -67,13 +62,6 @@ EXPECTED_PER_FREQUENCY = {
         1.9: 28,
         2.0: 27,
     },
-}
-
-#: 假时钟下按 data 事件数量计算的回放预算（秒）。
-EXPECTED_REPLAY_SECONDS = {
-    MockStage.CABLE_LOSS: 10.5,
-    MockStage.DRIVER_MAPPING: 181.0,
-    MockStage.AMPLIFIER: 155.5,
 }
 
 RESULT_TYPES = {
@@ -388,31 +376,6 @@ class MockDataPackageTests(unittest.TestCase):
                     path, expected_measurement_type=expected_type
                 )
                 self.assertIs(result.measurement_type, expected_type)
-
-    def test_replay_budget_is_driven_by_data_points_with_a_fake_clock(self):
-        for stage, scenario in self.scenarios.items():
-            with self.subTest(stage=stage.value):
-                waits = []
-
-                def wait(seconds, waits=waits):
-                    waits.append(seconds)
-                    return True
-
-                clock = MockReplayClock(
-                    stop_event=Event(), wait_fn=wait
-                )
-                for _ in range(scenario.data_event_count):
-                    self.assertTrue(clock.next_data_point())
-
-                expected_waits = scenario.data_event_count - 1
-                self.assertEqual(waits, [MOCK_DATA_POINT_INTERVAL_S] * expected_waits)
-                self.assertAlmostEqual(
-                    clock.elapsed_s,
-                    expected_waits * MOCK_DATA_POINT_INTERVAL_S,
-                )
-                self.assertEqual(
-                    clock.elapsed_s, EXPECTED_REPLAY_SECONDS[stage]
-                )
 
     def test_repository_configuration_document_matches_the_scenario_facts(self):
         """``config.mock.json`` 仍是三套场景共同的配置来源，不只存在于 README。"""

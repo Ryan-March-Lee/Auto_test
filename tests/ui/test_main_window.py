@@ -472,15 +472,16 @@ class MainWindowAssemblyBoundaryTests(unittest.TestCase):
         # 是第三个、第四个整屏步骤，窗口只多出创建、接线与切换几行。测量工作台步骤 7
         # 只增加“连接后交接 01 线损测量”一个入口，方法保持 9 行：业务读数/校验/保存
         # 仍在页面与协调器。配置页“上一步”改为回上一级电源配置页，另加一个切页入口。
+        # 步骤 23 增加“仿真结果回填下游校准来源”的窗口槽，只转发给
+        # stage_result_selection，业务仍在应用层与页面。
         self.assertLessEqual(
-            line_count, 760, f"main_window.py 有 {line_count} 行，超出窗口装配上限"
+            line_count, 780, f"main_window.py 有 {line_count} 行，超出窗口装配上限"
         )
 
     def test_main_window_uses_the_coordinator_for_gui_state(self):
         for literal in (
             "ApplicationCoordinator(",
             "run_provider=self.coordinator.resolve_measurement_session",
-            "simulation_session_provider=self.coordinator.active_simulation_session",
             "config_path_provider=self.coordinator.measurement_config_path",
             "driver_mode_provider=self._current_driver_mode",
         ):

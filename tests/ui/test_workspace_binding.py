@@ -575,13 +575,13 @@ class WorkspaceBindingTests(unittest.TestCase):
 
         self.binding.set_simulation_mode(True)
 
-        self.assertEqual(self.mode_badge.text(), "Mock 模拟模式")
+        self.assertEqual(self.mode_badge.text(), "仿真运行")
         self.assertIs(self.binding.driver_mode(), True)
         self.assertTrue(self.binding.simulation_mode())
 
         self.binding.set_session_mode(False)
 
-        self.assertEqual(self.mode_badge.text(), "Mock 模拟模式")
+        self.assertEqual(self.mode_badge.text(), "仿真运行")
         self.assertIs(self.binding.driver_mode(), False)
 
         self.binding.set_simulation_mode(False)

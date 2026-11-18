@@ -45,9 +45,6 @@ __all__ = [
     "archive_check",
     "input_check",
     "run_session_check",
-    "simulation_archive_check",
-    "simulation_session_check",
-    "simulation_wiring_check",
     "wiring_check",
 ]
 
@@ -131,21 +128,6 @@ def input_check(label: str, selected: bool) -> ConsoleCheck:
 def wiring_check() -> ConsoleCheck:
     """接线没有常驻确认状态：只在开始弹窗里确认，控制台如实说明。"""
     return ConsoleCheck("接线确认", CheckState.OPTIONAL, "开始时确认")
-
-
-def simulation_session_check() -> ConsoleCheck:
-    """模拟会话没有正式运行标识，但执行会话本身已就绪。"""
-    return ConsoleCheck("执行会话", CheckState.READY, "Mock 模拟会话")
-
-
-def simulation_wiring_check() -> ConsoleCheck:
-    """模拟回放不操作真实接线，因此没有开始时的接线确认。"""
-    return ConsoleCheck("接线确认", CheckState.OPTIONAL, "模拟回放不接线")
-
-
-def simulation_archive_check() -> ConsoleCheck:
-    """模拟回放只展示数据，不写正式结果目录。"""
-    return ConsoleCheck("结果归档", CheckState.OPTIONAL, "模拟不回写")
 
 
 def archive_check(directory: str | None, *, configured: bool) -> ConsoleCheck:

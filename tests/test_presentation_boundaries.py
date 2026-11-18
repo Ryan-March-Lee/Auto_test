@@ -47,8 +47,6 @@ QT_FREE_PRESENTATION_MODULES = (
     "pages.py",
     "measurement_state.py",
     "measurement_stage.py",
-    "mock_replay.py",
-    "simulation_session.py",
     "stage_summary.py",
     "workspace_state.py",
 )
@@ -139,15 +137,13 @@ PAGE_ASSEMBLY_PATHS = frozenset({"main_window.py", "pages.py"})
 # 页面构造的唯一上下文。新增页面动作应经 ViewModel/Application facade 与页面自己的
 # 一个信号完成，不得把新回调塞进 PageContext；确需调整契约时先更新分层规则文档。
 #
-# 步骤 10（模拟回放）增加了 ``simulation_session_provider``：它是无副作用查询，
-# 只回答“当前是否有模拟会话”，让页面在“开始”之前决定是否要求手动校准输入；
-# 正式运行契约与模拟会话的统一读取仍走 ``run_provider``（resolve_measurement_session），
-# 两者都不能在页面里各自复制模式判断。
+# 仿真运行与正式运行共用 ``run_provider``（resolve_measurement_session）：仿真运行
+# 同样返回真实 ``PreparedRun``，端口读数来源由协调器持有的上下文决定，页面不需要
+# 第二套模式判断。
 PAGE_CONTEXT_FIELDS = (
     "controller",
     "config_path_provider",
     "run_provider",
-    "simulation_session_provider",
     "driver_mode_provider",
     "connection_dialog_factory",
     "plot_widget_factory",

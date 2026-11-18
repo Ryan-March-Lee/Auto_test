@@ -1132,21 +1132,13 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         )
         summary = workspace.stage_summary("cable_loss")
         self.assertIsNotNone(summary)
-        self.assertIn(
-            ("频点", "2"),
-            [(metric.label, metric.value) for metric in summary.metrics],
-        )
+        self.assertEqual(summary.headline, "2 频点")
 
-        # 选中行决定“当前频点”：阶段摘要必须跟着选择走，而不是停在最新一行。
+        # 选中行决定“当前频点”：读数条必须跟着选择走，而不是停在最新一行。
         page.cable_loss_table.selectRow(0)
         self.app.processEvents()
 
-        summary = workspace.stage_summary("cable_loss")
-        self.assertIsNotNone(summary)
-        self.assertIn(
-            ("当前频点", "2.4 GHz"),
-            [(metric.label, metric.value) for metric in summary.metrics],
-        )
+        self.assertEqual(page.readout.frequency_text(), "2.4")
 
         page.clear_results()
         self.app.processEvents()

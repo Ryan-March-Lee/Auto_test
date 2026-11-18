@@ -13,7 +13,7 @@ from presentation.qt.measurement_controller_contract import MeasurementCommand
 from presentation.qt.measurement_controls import MeasurementAction
 from presentation.qt.measurement_state import MeasurementKind, MeasurementStatus
 from presentation.qt.measurement_workspace import mode_text
-from presentation.qt.stage_summary import NOT_STARTED, StageMetric
+from presentation.qt.stage_summary import NOT_STARTED
 from presentation.qt.theme import MEASUREMENT_LEFT_PANEL_MIN_WIDTH
 
 
@@ -667,11 +667,8 @@ class AmplifierPageTests(unittest.TestCase):
 
         self.assertFalse(summary.has_data)
         self.assertEqual(summary.headline, NOT_STARTED)
-        self.assertEqual(
-            summary.metrics, (StageMetric("频点", NOT_STARTED),)
-        )
 
-    def test_stage_summary_follows_the_displayed_frequencies_and_sweep(self):
+    def test_stage_summary_follows_the_displayed_frequencies(self):
         self.page.update_realtime({
             "frequency": "2.4",
             "sweep_data": {
@@ -683,15 +680,6 @@ class AmplifierPageTests(unittest.TestCase):
         summary = self.page.stage_summary()
 
         self.assertEqual(summary.headline, "1 频点")
-        self.assertEqual(
-            summary.metrics,
-            (
-                StageMetric("频点", "1"),
-                StageMetric("当前频点", "2.4 GHz"),
-                StageMetric("扫频点", "3"),
-            ),
-        )
-        self.assertEqual(self.page.stage_metrics_row.metrics(), summary.metrics)
 
     def test_clearing_realtime_data_returns_to_not_started(self):
         self.page.update_realtime({"frequency": "2.4"})
@@ -699,10 +687,6 @@ class AmplifierPageTests(unittest.TestCase):
         self.page.reset_realtime_data()
 
         self.assertEqual(self.page.stage_summary().headline, NOT_STARTED)
-        self.assertEqual(
-            self.page.stage_metrics_row.metrics(),
-            (StageMetric("频点", NOT_STARTED),),
-        )
 
     def test_repeated_identical_data_does_not_announce_twice(self):
         events = []

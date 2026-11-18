@@ -34,7 +34,6 @@ from presentation.qt.measurement_workspace import (  # noqa: E402
 from presentation.qt.motion import RevealDirection, SlideFadeEffect  # noqa: E402
 from presentation.qt.stage_summary import (  # noqa: E402
     NOT_STARTED,
-    StageMetric,
     StageSummary,
 )
 from presentation.qt.theme import MOTION_SLIDE_PX, TOKENS  # noqa: E402
@@ -199,14 +198,7 @@ class StageSubsetTests(_WorkspaceTestCase):
 class StageSummaryTests(_WorkspaceTestCase):
     """步骤 15：摘要由页面传入，外壳只排版到阶段条与页头。"""
 
-    SUMMARY = StageSummary(
-        "6 频点",
-        (
-            StageMetric("频点", "6"),
-            StageMetric("当前频点", "3.5 GHz"),
-            StageMetric("线缆", "4"),
-        ),
-    )
+    SUMMARY = StageSummary("6 频点")
 
     def test_summary_is_written_to_the_rail_only(self):
         self.workspace.set_current_stage("cable_loss")

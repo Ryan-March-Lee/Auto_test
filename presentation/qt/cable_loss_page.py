@@ -39,17 +39,12 @@ from .measurement_state import CableLossPageResultState, MeasurementKind, Measur
 from .measurement_surface import (
     CONTROL_SURFACE,
     RESULT_SURFACE,
-    StageMetricsRow,
     build_surface,
 )
 from .pages import PageControllerBindingMixin
 from .stage_summary import (
-    NOT_STARTED,
-    StageMetric,
     StageSummary,
-    count_text,
     frequency_headline,
-    frequency_text,
 )
 from .status_panel import StatusSlot
 from .theme import (
@@ -92,7 +87,7 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         self._error_callback = error_callback or self._show_error
         # 批量载入结果期间先不逐行重算摘要，循环结束后只刷新一次。
         self._suspend_stage_summary = False
-        # 上一份已展示的摘要：只有真正变化时才重排 KPI 行并通知工作台。
+        # 上一份已展示的摘要：只有真正变化时才通知工作台刷新阶段条。
         self._last_stage_summary: StageSummary | None = None
         self._setup_archival(
             MeasurementKind.CABLE_LOSS,
@@ -164,16 +159,13 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         self.control_panel = left_panel
         layout.addWidget(left_panel)
 
-        # 结果面只放“测量结果”这一块内容：读数条在上，KPI 芯片、来源行与空态
-        # 依次向下，表格占满剩余高度。读数条回答“现在看的是哪个频点”，KPI 芯片
-        # 回答“这一段积累了多少”，两者的数据都来自页面已经显示的结果。
+        # 结果面只放“测量结果”这一块内容：读数条在上，来源行与空态依次向下，
+        # 表格占满剩余高度。读数条回答“现在看的是哪个频点、四条线缆各是多少”，
+        # 表格按频点保留完整测量记录，两者都来自页面已经显示的结果。
         result_surface = build_surface(RESULT_SURFACE, title="测量结果")
         result_layout = result_surface.layout()
         self.readout = MeasurementReadout(result_surface)
         result_layout.addWidget(self.readout)
-        # KPI 行只排版页面已有的数据：频点数、当前/最新频点与已显示线缆数。
-        self.stage_metrics_row = StageMetricsRow(result_surface)
-        result_layout.addWidget(self.stage_metrics_row)
         # 用户通过文件选择器加载结果时，在这里显示来源文件名；新测量或清空后隐藏。
         self.cable_loss_source_label = QLabel("")
         self.cable_loss_source_label.setObjectName("emptyHint")
@@ -189,8 +181,8 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
                 ("线缆4", TOKENS["series_4"]),
             )
         )
-        # 选中行决定“当前频点”：选择变化时 KPI 行、读数条与页头必须跟着走，
-        # 不能只在查询时读新值。
+        # 选中行决定“当前频点”：选择变化时当前行轨道与读数条必须跟着走，
+        # 不能只在查询时读新值；阶段条摘要只关心频点数，不受选择影响。
         self.cable_loss_table.itemSelectionChanged.connect(
             self._on_table_selection_changed
         )
@@ -357,38 +349,16 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         self._log_callback("已清空上一次线损测量结果")
 
     def stage_summary(self) -> StageSummary:
-        """从表格已经显示的数据里取阶段摘要与 KPI，不读取结果 DTO 或文件。
+        """从表格已经显示的数据里取阶段条摘要，不读取结果 DTO 或文件。
 
-        频点数取表格行数；当前频点优先取选中行，未选中时取最后一行（实时测量按到达
-        顺序追加）；线缆数统计已有非空测量值的列。没有行时统一显示“未开始”。
+        频点数取表格行数；没有行时统一显示“未开始”。当前频点与四条线缆读数由
+        结果面读数条承担，阶段摘要不再保存第二份。
         """
         table = getattr(self, "cable_loss_table", None)
         rows = 0 if table is None else table.rowCount()
         if rows <= 0:
             return StageSummary.not_started()
-        cables = sum(
-            1
-            for column in range(1, 5)
-            if any(self._cell_text(row, column) for row in range(rows))
-        )
-        return StageSummary(
-            frequency_headline(rows),
-            (
-                StageMetric("频点", count_text(rows)),
-                StageMetric(
-                    "当前频点",
-                    frequency_text(self._current_frequency(rows)) or NOT_STARTED,
-                ),
-                StageMetric("线缆", count_text(cables)),
-            ),
-        )
-
-    def _current_frequency(self, rows: int) -> str | None:
-        """选中行优先，否则取最后一行；表格没有该行时返回 ``None``。"""
-        row = self._current_row_index(rows)
-        if row < 0:
-            return None
-        return self._cell_text(row, 0) or None
+        return StageSummary(frequency_headline(rows))
 
     def _current_row_index(self, rows: int) -> int:
         """当前展示的频点行：选中行优先，未选中时取最后一行。"""
@@ -509,15 +479,15 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         return item.text().strip() if item is not None else ""
 
     def _on_table_selection_changed(self) -> None:
-        """表格选中行变化时刷新摘要；只影响展示，不触发测量或结果重算。"""
+        """表格选中行变化时刷新当前行与读数条；只影响展示，不触发测量或结果重算。"""
         self._refresh_stage_summary()
 
     def _refresh_stage_summary(self) -> None:
-        """把当前摘要写进结果面 KPI 行，并通知工作台刷新阶段条/页头。
+        """同步当前行/读数条，并把频点数变化通知工作台。
 
-        同一份摘要重复写入不重排控件、也不发信号：实时测量按频点追加数据时，
-        阶段条和页头只在频点数、当前频点或线缆数真的变化时才需要更新。当前行与
-        读数条每轮都刷新，因为它们跟着表格选中项走，而不只是跟着汇总值走。
+        同一份摘要重复出现时不发信号：实时测量按频点追加数据时，阶段条只在频点数
+        真的变化时才需要更新。当前行与读数条每轮都刷新，因为它们跟着表格选中项走，
+        而不只是跟着汇总值走。
         """
         if self._suspend_stage_summary:
             return
@@ -529,9 +499,6 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         if summary == self._last_stage_summary:
             return
         self._last_stage_summary = summary
-        row = getattr(self, "stage_metrics_row", None)
-        if row is not None:
-            row.set_metrics(summary.metrics)
         self.stage_summary_changed.emit()
 
     def _set_source_filename(self, filename: str | None) -> None:

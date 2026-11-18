@@ -24,7 +24,7 @@
   数值来自已有的 ``signals.progress``，有活动测量时显示、空闲时保持空白；它固定占
   2px，不推动内容区，也不替代状态面板里的详细进度条。
 - 阶段摘要（:meth:`MeasurementWorkspace.set_stage_summary`）由页面从已经显示的数据
-  里取好再交给外壳：阶段条显示 ``headline`` 一句话。页头不再另存一份 KPI 文本，
+  里取好再交给外壳：阶段条显示 ``headline`` 一句话。页头不再另存一份摘要文本，
   避免同一份摘要出现两个展示位。外壳不统计频点、不读结果 DTO，也不在工具页上
   显示摘要。
 
@@ -598,7 +598,7 @@ class MeasurementWorkspace(QWidget):
         """写入一个阶段的摘要；``None`` 清空该阶段的摘要。
 
         摘要由页面从已经显示的数据里取好（见 :mod:`presentation.qt.stage_summary`），
-        外壳只把它放到阶段条：``headline`` 是顶部唯一展示位，不再另存一份 KPI 文本。
+        外壳只把它放到阶段条：``headline`` 是顶部唯一展示位，不再另存一份摘要文本。
         key 必须是构造时接收的阶段集合里的 key。
         """
         if not isinstance(key, str):

@@ -139,9 +139,6 @@ TOKENS = {
     "readout_accent": "#38BDF8",
     # 自定义绘制用的网格线：只取颜色，透明度由绘制代码按屏幕像素比决定。
     "readout_grid": "#FFFFFF",
-    # 结果面的 KPI 芯片：比白底卡再低一层的“读数底座”，不引入新的边框层级。
-    "kpi_chip_bg": "#F4F8FF",
-    "kpi_chip_border": "#E1EBFA",
     # 控件表面：输入区“凹”、按钮“凸”。
     # 输入区用浅灰底 + 细边，按钮用白面 + 稍深的下边；两者因此不靠文字也能分辨。
     "button_face_top": "#FFFFFF",
@@ -1259,20 +1256,6 @@ QLabel#measurementSurfaceTitle {
     color: $primary_pressed;
     font-size: $font_small;
     font-weight: 700;
-}
-/* 结果面里的关键数字：比正文大一级，现场读数时先看到它。 */
-QLabel#measurementMetric {
-    color: $text;
-    font-family: "$font_mono";
-    font-size: $font_title;
-    font-weight: 700;
-}
-/* KPI 芯片：结果面里一组“标签在上、数字在下”的读数底座。它比白底结果面低一层，
-   不新增卡片边界；芯片之间只靠间距分开，不再等分拉满整行。 */
-QFrame#measurementKpiChip {
-    background-color: $kpi_chip_bg;
-    border: 1px solid $kpi_chip_border;
-    border-radius: 10px;
 }
 /* 读数条：深色玻璃带由 MeasurementReadout 自绘背景与网格，样式表只负责文字与芯片；
    背景留空，避免 QSS 再铺一层把自绘的渐变和细网格盖掉。 */

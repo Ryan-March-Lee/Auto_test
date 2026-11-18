@@ -47,7 +47,6 @@ from .measurement_state import (
 from .measurement_surface import (
     CONTROL_SURFACE,
     RESULT_SURFACE,
-    StageMetricsRow,
     build_surface,
     hairline,
     section_caption,
@@ -57,12 +56,8 @@ from .realtime_buffer import RealtimeMeasurementBuffer
 from .realtime_page import RealtimePageMixin, format_latest_number
 from .realtime_plot import DRIVER_MAPPING_PANELS
 from .stage_summary import (
-    NOT_STARTED,
-    StageMetric,
     StageSummary,
-    count_text,
     frequency_headline,
-    frequency_text,
 )
 from .status_panel import StatusSlot
 from .theme import (
@@ -116,7 +111,7 @@ class DriverMappingPage(
         self._error_callback = error_callback or self._show_error
         # 批量载入结果期间先不逐行重算摘要，循环结束后只刷新一次。
         self._suspend_stage_summary = False
-        # 上一份已展示的摘要：只有真正变化时才重排 KPI 行并通知工作台。
+        # 上一份已展示的摘要：只有真正变化时才通知工作台刷新阶段条。
         self._last_stage_summary: StageSummary | None = None
         self._setup_archival(
             MeasurementKind.DRIVER_MAPPING,
@@ -199,9 +194,6 @@ class DriverMappingPage(
         result_layout = result_surface.layout()
         self.readout = MeasurementReadout(result_surface)
         result_layout.addWidget(self.readout)
-        # KPI 行只排版已有实时数据：频点数、当前频点与当前扫频点数。
-        self.stage_metrics_row = StageMetricsRow(result_surface)
-        result_layout.addWidget(self.stage_metrics_row)
         self.driver_plot_widget = self._plot_widget_factory(result_surface)
         self._realtime_plot_widget = self.driver_plot_widget
         # 驱动映射只测输入-输出功率与增益；效率与 DC 功耗没有测量数据，不画空图。
@@ -409,48 +401,13 @@ class DriverMappingPage(
         frequencies = self.realtime_buffer.frequencies
         if not frequencies:
             return StageSummary.not_started()
-        return StageSummary(
-            frequency_headline(len(frequencies)),
-            (
-                StageMetric("频点", count_text(len(frequencies))),
-                StageMetric(
-                    "当前频点",
-                    frequency_text(self._buffered_frequency()) or NOT_STARTED,
-                ),
-                StageMetric("扫频点", count_text(self._sweep_point_count())),
-            ),
-        )
-
-    def _buffered_frequency(self):
-        """当前浏览频点：优先取缓存当前项，索引失效时回落到频点列表。"""
-        current = self.realtime_buffer.current()
-        if isinstance(current, Mapping):
-            value = current.get("frequency")
-            if value is not None:
-                return value
-        index = self.realtime_buffer.current_index
-        frequencies = self.realtime_buffer.frequencies
-        if 0 <= index < len(frequencies):
-            return frequencies[index]
-        return None
-
-    def _sweep_point_count(self) -> int:
-        """已存储数据里最长的一条扫频曲线点数；没有扫描数据时为 0。"""
-        longest = 0
-        for value in self._realtime_data.values():
-            sweep = value.get("sweep_data")
-            if not isinstance(sweep, Mapping):
-                continue
-            for points in sweep.values():
-                if isinstance(points, (list, tuple)):
-                    longest = max(longest, len(points))
-        return longest
+        return StageSummary(frequency_headline(len(frequencies)))
 
     def _refresh_stage_summary(self) -> None:
-        """把当前摘要写进结果面 KPI 行，并通知工作台刷新阶段条/页头。
+        """把频点数摘要写进阶段条，并通知工作台刷新。
 
-        同一份摘要重复写入不重排控件、也不发信号：批量载入已经暂停逐行刷新，普通
-        刷新也只在该阶段摘要真的变化时才更新阶段条与页头。
+        同一份摘要重复写入时不发信号：批量载入已经暂停逐行刷新，普通刷新也只在该
+        阶段摘要真的变化时才更新阶段条。
         """
         if self._suspend_stage_summary:
             return
@@ -458,9 +415,6 @@ class DriverMappingPage(
         if summary == self._last_stage_summary:
             return
         self._last_stage_summary = summary
-        row = getattr(self, "stage_metrics_row", None)
-        if row is not None:
-            row.set_metrics(summary.metrics)
         self.stage_summary_changed.emit()
 
     def _update_navigation(self) -> None:

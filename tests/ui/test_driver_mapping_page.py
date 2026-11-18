@@ -17,7 +17,6 @@ from presentation.qt.measurement_state import (
     MeasurementKind,
     MeasurementStatus,
 )
-from presentation.qt.stage_summary import NOT_STARTED, StageMetric
 from presentation.qt.theme import MEASUREMENT_LEFT_PANEL_MIN_WIDTH
 
 
@@ -508,7 +507,7 @@ class DriverMappingPageTests(unittest.TestCase):
 
 
 
-    def test_browsing_back_updates_the_current_frequency_and_announces_it(self):
+    def test_browsing_back_updates_the_readout_without_a_new_headline(self):
         for frequency in ("2.4", "3.5"):
             self.page.update_realtime({"frequency": frequency})
         events = []
@@ -516,11 +515,8 @@ class DriverMappingPageTests(unittest.TestCase):
 
         self.page.previous_frequency()
 
-        self.assertEqual(
-            self.page.stage_summary().metrics[1],
-            StageMetric("当前频点", "2.4 GHz"),
-        )
-        self.assertTrue(events)
+        self.assertEqual(self.page.readout.frequency_text(), "2.4")
+        self.assertEqual(events, [], "频点数没变，阶段条摘要不需要重发")
 
     def test_run_console_waits_for_the_cable_loss_input(self):
         console = self.page.console

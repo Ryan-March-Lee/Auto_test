@@ -41,7 +41,6 @@ from presentation.qt.measurement_workspace import (  # noqa: E402
 )
 from presentation.qt.stage_summary import (  # noqa: E402
     NOT_STARTED,
-    StageMetric,
     StageSummary,
 )
 from presentation.qt.workspace_binding import WorkspaceBinding  # noqa: E402
@@ -212,7 +211,7 @@ class WorkspaceBindingTests(unittest.TestCase):
     def _summary_binding(self, summary=None):
         page = _SummaryPage(
             summary
-            or StageSummary("6 频点", (StageMetric("频点", "6"),))
+            or StageSummary("6 频点")
         )
         tabs = QTabWidget()
         tabs.addTab(page, "线损测量")
@@ -275,10 +274,10 @@ class WorkspaceBindingTests(unittest.TestCase):
 
     def test_refresh_summaries_reads_every_stage_page(self):
         cable = _SummaryPage(
-            StageSummary("6 频点", (StageMetric("频点", "6"),))
+            StageSummary("6 频点")
         )
         amplifier = _SummaryPage(
-            StageSummary("2 频点", (StageMetric("频点", "2"),))
+            StageSummary("2 频点")
         )
         tabs = QTabWidget()
         tabs.addTab(cable, "线损测量")

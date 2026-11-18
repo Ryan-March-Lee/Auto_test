@@ -3,7 +3,7 @@
 三个测量页在步骤 10–12 里都会换成“控制面 + 结果面”。这里先锁定共享件本身：
 
 - 两种面由 objectName 区分，外观只由主题样式表决定；
-- 面自带垂直布局，标题、发丝线与度量标签都是面内可用的最小件；
+- 面自带垂直布局，标题与发丝线都是面内可用的最小件；
 - 未知面类型在构造时报错，而不是画出一块没有样式的空框；
 - 主题里确实存在对应选择器，``sectionCaption`` 也已登记为合法语义角色。
 
@@ -15,7 +15,7 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QCoreApplication, QEvent, Qt  # noqa: E402
+from PySide6.QtCore import QCoreApplication, QEvent  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
     QFrame,
@@ -30,13 +30,10 @@ from presentation.qt.measurement_surface import (  # noqa: E402
     SURFACE_KINDS,
     SURFACE_MARGINS,
     SURFACE_SPACING,
-    StageMetricsRow,
     build_surface,
     hairline,
-    metric_label,
     section_caption,
 )
-from presentation.qt.stage_summary import StageMetric  # noqa: E402
 from presentation.qt.theme import LABEL_ROLES, build_stylesheet  # noqa: E402
 
 
@@ -130,108 +127,6 @@ class MeasurementSurfaceTests(unittest.TestCase):
         self.assertEqual(policy.horizontalPolicy(), QSizePolicy.Policy.Expanding)
         self.assertEqual(policy.verticalPolicy(), QSizePolicy.Policy.Fixed)
 
-    def test_metric_label_is_read_only_text_with_shared_object_name(self):
-        metric = self._track(metric_label("6 频点"))
-
-        self.assertIsInstance(metric, QLabel)
-        self.assertEqual(metric.objectName(), "measurementMetric")
-        self.assertEqual(metric.text(), "6 频点")
-        self.assertEqual(metric.textFormat(), Qt.TextFormat.PlainText)
-        self.assertTrue(
-            metric.textInteractionFlags()
-            & Qt.TextInteractionFlag.TextSelectableByMouse
-        )
-
-
-class StageMetricsRowTests(unittest.TestCase):
-    """结果面 KPI 行：只排版页面传入的值，不做统计。"""
-
-    @classmethod
-    def setUpClass(cls):
-        cls.app = QApplication.instance() or QApplication([])
-
-    def _track(self, widget):
-        self.addCleanup(_destroy, widget)
-        return widget
-
-    def test_starts_hidden_with_no_metrics(self):
-        row = self._track(StageMetricsRow())
-
-        self.assertEqual(row.metrics(), ())
-        self.assertTrue(row.isHidden())
-
-    def test_metrics_are_laid_out_as_label_and_value_pairs(self):
-        row = self._track(StageMetricsRow())
-        metrics = (
-            StageMetric("频点", "6"),
-            StageMetric("当前频点", "3.5 GHz"),
-        )
-
-        row.set_metrics(metrics)
-
-        self.assertEqual(row.metrics(), metrics)
-        self.assertFalse(row.isHidden())
-        labels = row.findChildren(QLabel)
-        self.assertEqual(
-            [label.text() for label in labels],
-            ["频点", "6", "当前频点", "3.5 GHz"],
-        )
-        for container, _label, _value in row._cells[: len(metrics)]:
-            self.assertEqual(container.objectName(), "measurementKpiChip")
-        self.assertIsNotNone(
-            row._layout.itemAt(row._layout.count() - 1).spacerItem(),
-            "KPI 芯片后面应保留尾部留白，不能把芯片均分拉满整行",
-        )
-        caption_labels = [
-            label
-            for label in labels
-            if label.property("role") == "sectionCaption"
-        ]
-        self.assertEqual(
-            caption_labels,
-            [],
-            "KPI 标签使用 hint 角色，不能混进结果面的小标题",
-        )
-        values = [
-            label for label in labels if label.objectName() == "measurementMetric"
-        ]
-        self.assertEqual(
-            [value.text() for value in values], ["6", "3.5 GHz"]
-        )
-
-    def test_updating_with_fewer_metrics_reuses_and_hides_cells(self):
-        row = self._track(StageMetricsRow())
-        row.set_metrics(
-            (StageMetric("频点", "6"), StageMetric("线缆", "3"))
-        )
-        before = tuple((container, label) for container, label, _ in row._cells)
-
-        row.set_metrics((StageMetric("频点", "7"),))
-
-        after = tuple((container, label) for container, label, _ in row._cells)
-        self.assertEqual(after, before, "单元复用，不随每次数据更新重建控件")
-        self.assertEqual(row.metrics(), (StageMetric("频点", "7"),))
-        self.assertEqual(row._cells[0][1].text(), "频点")
-        self.assertEqual(row._cells[0][2].text(), "7")
-        self.assertTrue(row._cells[1][0].isHidden())
-
-    def test_empty_metrics_hide_the_whole_row(self):
-        row = self._track(StageMetricsRow())
-        row.set_metrics((StageMetric("频点", "6"),))
-
-        row.set_metrics(())
-
-        self.assertEqual(row.metrics(), ())
-        self.assertTrue(row.isHidden())
-
-    def test_invalid_payloads_are_rejected(self):
-        row = self._track(StageMetricsRow())
-        for payload in ("6", b"6", {"频点": "6"}, ("6",)):
-            with self.subTest(payload=payload):
-                with self.assertRaises(TypeError):
-                    row.set_metrics(payload)
-
-
 class MeasurementSurfaceThemeTests(unittest.TestCase):
     """共享面的外观必须在主题里确有规则，页面不再各自写样式。"""
 
@@ -243,8 +138,6 @@ class MeasurementSurfaceThemeTests(unittest.TestCase):
             "QFrame#measurementResultSurface",
             "QFrame#measurementResultSurface QTableWidget",
             'QLabel[role="sectionCaption"]',
-            "QLabel#measurementMetric",
-            "QFrame#measurementKpiChip",
             "QFrame#measurementHairline",
         ):
             with self.subTest(selector=selector):

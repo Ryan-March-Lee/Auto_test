@@ -20,7 +20,7 @@ from presentation.qt.measurement_state import (
     MeasurementResultReference,
     MeasurementStatus,
 )
-from presentation.qt.stage_summary import NOT_STARTED, StageMetric
+from presentation.qt.stage_summary import NOT_STARTED
 
 
 def _destroy_widget(widget):
@@ -329,10 +329,6 @@ class CableLossPageTests(unittest.TestCase):
 
         self.assertFalse(summary.has_data)
         self.assertEqual(summary.headline, NOT_STARTED)
-        self.assertEqual(
-            summary.metrics, (StageMetric("频点", NOT_STARTED),)
-        )
-        self.assertEqual(self.page.stage_metrics_row.metrics(), summary.metrics)
 
     def test_readout_follows_the_latest_frequency_and_cable_values(self):
         self.controller.signals.data_update.emit({
@@ -403,17 +399,8 @@ class CableLossPageTests(unittest.TestCase):
         summary = self.page.stage_summary()
 
         self.assertEqual(summary.headline, "2 频点")
-        self.assertEqual(
-            summary.metrics,
-            (
-                StageMetric("频点", "2"),
-                StageMetric("当前频点", "3.5 GHz"),
-                StageMetric("线缆", "2"),
-            ),
-        )
-        self.assertEqual(self.page.stage_metrics_row.metrics(), summary.metrics)
 
-    def test_selected_row_is_the_current_frequency(self):
+    def test_selected_row_becomes_the_current_frequency_in_the_readout(self):
         for frequency in ("2.4", "3.5"):
             self.controller.signals.data_update.emit({
                 "frequency": frequency,
@@ -422,10 +409,7 @@ class CableLossPageTests(unittest.TestCase):
 
         self.page.cable_loss_table.selectRow(0)
 
-        self.assertEqual(
-            self.page.stage_summary().metrics[1],
-            StageMetric("当前频点", "2.4 GHz"),
-        )
+        self.assertEqual(self.page.readout.frequency_text(), "2.4")
 
     def test_empty_table_returns_to_not_started(self):
         self.controller.signals.data_update.emit({
@@ -437,10 +421,6 @@ class CableLossPageTests(unittest.TestCase):
 
         summary = self.page.stage_summary()
         self.assertEqual(summary.headline, NOT_STARTED)
-        self.assertEqual(
-            self.page.stage_metrics_row.metrics(),
-            (StageMetric("频点", NOT_STARTED),),
-        )
 
     def test_data_changes_announce_the_stage_summary(self):
         events = []
@@ -454,7 +434,7 @@ class CableLossPageTests(unittest.TestCase):
 
         self.assertEqual(len(events), 2)
 
-    def test_selecting_a_row_updates_the_displayed_kpi_and_announces_it(self):
+    def test_selecting_a_row_updates_the_readout_without_a_new_headline(self):
         for frequency in ("2.4", "3.5"):
             self.controller.signals.data_update.emit({
                 "frequency": frequency,
@@ -465,11 +445,8 @@ class CableLossPageTests(unittest.TestCase):
 
         self.page.cable_loss_table.selectRow(0)
 
-        self.assertEqual(
-            self.page.stage_metrics_row.metrics()[1],
-            StageMetric("当前频点", "2.4 GHz"),
-        )
-        self.assertTrue(events, "选中行改变当前频点时必须通知工作台")
+        self.assertEqual(self.page.readout.frequency_text(), "2.4")
+        self.assertEqual(events, [], "频点数没变，阶段条摘要不需要重发")
 
     def test_clearing_the_selection_falls_back_to_the_last_frequency(self):
         for frequency in ("2.4", "3.5"):
@@ -482,8 +459,8 @@ class CableLossPageTests(unittest.TestCase):
         self.page.cable_loss_table.clearSelection()
 
         self.assertEqual(
-            self.page.stage_metrics_row.metrics()[1],
-            StageMetric("当前频点", "3.5 GHz"),
+            self.page.readout.frequency_text(),
+            "3.5",
             "取消选择后回落到最后一行，与实时追加顺序一致",
         )
 
@@ -511,14 +488,7 @@ class CableLossPageTests(unittest.TestCase):
         self.controller.signals.result.emit(reference)
 
         self.assertEqual(len(events), 1, "批量载入只在循环结束后刷新一次")
-        self.assertEqual(
-            self.page.stage_metrics_row.metrics(),
-            (
-                StageMetric("频点", "2"),
-                StageMetric("当前频点", "3.5 GHz"),
-                StageMetric("线缆", "1"),
-            ),
-        )
+        self.assertEqual(self.page.stage_summary().headline, "2 频点")
 
     def test_run_console_shows_the_run_and_the_remaining_prerequisites(self):
         console = self.page.console

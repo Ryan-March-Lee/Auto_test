@@ -238,7 +238,17 @@ class _CableService:
 
 class _MappingService:
     def __init__(self):
-        self.last_result = {"power_mapping": {"2.4": {"-10": 1.0}}}
+        self.last_result = {
+            "raw_points": {
+                "2.4": [
+                    {
+                        "source_power_dbm": -10.0,
+                        "driver_output_power_dbm": 1.0,
+                        "gain_db": 11.0,
+                    }
+                ]
+            }
+        }
         self.measure_called = threading.Event()
 
     def measure_all_frequencies(self):
@@ -1214,7 +1224,7 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         self.assertNotIn(
             "role",
             power.power_config_widgets["DP8B1519"]["channels"]["CH1"],
-            "旧 role 只由迁移器读取，不再出现在电源表单控件里",
+            "旧 role 只作为历史读取内容，不再出现在电源表单控件里",
         )
         built = page.build_config()
         channels = built["instruments"]["power_supplies"]["DP8B1519"]["channels"]

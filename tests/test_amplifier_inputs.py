@@ -852,8 +852,8 @@ class RunConfigurationInputTests(unittest.TestCase):
 
         self.assertIn("空档", str(raised.exception))
 
-    def test_unconfirmed_power_range_semantics_is_rejected(self):
-        """旧配置未确认功率语义时，不能进入正式输入构造。"""
+    def test_missing_power_range_semantics_is_rejected(self):
+        """缺少功率语义标记时，不能进入正式输入构造。"""
         from dataclasses import replace
 
         configuration = self._configuration()

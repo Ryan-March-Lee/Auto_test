@@ -8,10 +8,11 @@
 
 - 频率、功率扫描、压缩点、衰减器与 DUT 输入限制优先复用 domain 值对象
   （``Frequency`` / ``PowerSweep`` / ``Decibels`` / ``PowerDbm``），单位由类型表达；
-- 起止功率表示**主功放输入功率**：``power_reference`` 只接受 ``None``（旧配置）或
-  ``"dut_input"``，写出时统一写新语义；``driver_gain_estimate`` 是驱动功放全局预估
-  增益（``Decibels | None``），``driver_max_input_power`` 是驱放最大输入功率
-  （``PowerDbm | None``），缺失都不折叠成 0；
+- 起止功率表示**主功放输入功率**：``power_reference`` 必须是 ``"dut_input"``，
+  文档缺少标记时读取直接报错（``None`` 只表示当前读取没有该字段，不是可保存状态）；
+  ``driver_gain_estimate`` 是驱动功放全局预估增益（``Decibels | None``），
+  ``driver_max_input_power`` 是驱放最大输入功率（``PowerDbm | None``），缺失都不折叠
+  成 0；
 - 集合字段使用 ``tuple``，设备绑定按“角色 + 名称到记录的键值对”保存受控副本，
   外部不能通过属性随意改写内部状态；
 - 缺失值用 ``None`` / 空元组明确表示，非法类型与无法解析的文本由
@@ -49,6 +50,7 @@ from application.dto.amplifier_inputs import (
 from domain.configuration.models import (
     DRIVER_MAX_INPUT_POWER_FIELD,
     LEGACY_POWER_SCAN_FIELDS,
+    POWER_REFERENCE_REQUIRED_MESSAGE,
 )
 from domain.instruments.models import INSTRUMENT_ROLES
 from domain.measurement.values import Decibels, Frequency, PowerDbm
@@ -398,7 +400,8 @@ class ConfigurationDraft:
     sweep: PowerSweep | None = None
     # 1.2 的功率扫描计划集合：顺序即执行顺序；空元组表示文档没有计划。
     sweeps: tuple[PowerSweep, ...] = ()
-    # 起止功率的语义标记；None 表示来源文档没有声明（旧配置），写回时固定写新语义。
+    # 起止功率的语义标记；当前配置必须为 ``dut_input``。None 表示来源文档没有声明，
+    # 读取会报错，写回时仍按新语义写出。
     power_reference: str | None = None
     compression_target: Decibels | None = None
     attenuator: Decibels | None = None
@@ -909,14 +912,22 @@ def _read_power_reference(
 ) -> tuple[str | None, bool]:
     """读取起止功率的语义标记，返回 ``(标记, 是否合法)``。
 
-    缺失表示旧配置（标记为 ``None``，视为可继续读取）；出现但无法识别时返回
-    ``(None, False)``，调用方必须丢弃扫描参数，不能把历史数值按新语义重写。
+    当前配置必须声明 ``"dut_input"``；缺少标记按错误报告，扫描参数仍保留供用户查看，
+    但该草稿不能保存或创建运行。出现无法识别的标记时返回 ``(None, False)``，调用方
+    必须丢弃扫描参数，不能把历史数值按新语义重写。
     """
     if value is None:
         return None, True
     section = _mapping(value, "signal_source", issues)
     raw = section.get("power_reference")
     if raw is None:
+        issues.append(
+            _issue(
+                "signal_source.power_reference",
+                _CODE_INVALID_SWEEP,
+                POWER_REFERENCE_REQUIRED_MESSAGE,
+            )
+        )
         return None, True
     if not isinstance(raw, str):
         issues.append(

@@ -62,7 +62,12 @@ def _document():
     return {
         "schema_version": "1.0",
         "test_frequencies": [2.4, 5.8],
-        "signal_source": {"start_power": -38.0, "stop_power": -16.0, "step": 1.0},
+        "signal_source": {
+            "start_power": -38.0,
+            "stop_power": -16.0,
+            "step": 1.0,
+            "power_reference": "dut_input",
+        },
         "compression_point": {"type": "5dB"},
         "attenuator": {"type": "40dB"},
         "driver_mode": {"enabled": True},
@@ -295,7 +300,10 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
             {"start_power": -38.0, "step": 1.0, "stop_power": -10.0},
             {"start_power": -10.0, "step": 0.25, "stop_power": -2.0},
         ]
-        document["signal_source"] = {"power_scan_plans": plans}
+        document["signal_source"] = {
+            "power_scan_plans": plans,
+            "power_reference": "dut_input",
+        }
 
         result = ConfigurationDraft.from_document(document)
 
@@ -943,6 +951,19 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
         self.assertEqual(written["signal_source"]["power_reference"], "dut_input")
         self.assertEqual(written["driver_mode"]["estimated_gain_db"], 20.5)
         self.assertEqual(written["driver_mode"]["max_input_power"], 10.0)
+
+    def test_missing_power_reference_is_reported_and_keeps_the_plan(self):
+        document = _document()
+        document["signal_source"].pop("power_reference")
+
+        result = ConfigurationDraft.from_document(document)
+
+        self.assertFalse(result.valid)
+        self.assertIn(
+            "signal_source.power_reference",
+            {issue.path for issue in result.errors},
+        )
+        self.assertIsNotNone(result.draft.sweep)
 
     def test_unknown_power_reference_is_reported_and_not_reinterpreted(self):
         document = _document()

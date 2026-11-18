@@ -119,7 +119,11 @@ class DriverMappingInputTests(unittest.TestCase):
             driver_input.target_mapping(), {"2.4": {12.0: (-17.5, 12.0)}}
         )
         self.assertEqual(
-            driver_input.raw_mapping(), {"2.4": {"-20.0": 10.0, "-15.0": 14.5}}
+            [
+                (point.source_power_dbm, point.driver_output_power_dbm)
+                for point in driver_input.raw_points
+            ],
+            [(-20.0, 10.0), (-15.0, 14.5)],
         )
 
     def test_empty_target_grid_cannot_be_a_formal_input(self):
@@ -297,19 +301,6 @@ class DriverMappingResultRejectionTests(unittest.TestCase):
 
 
 class ServicePayloadConversionTests(unittest.TestCase):
-    def test_legacy_service_mapping_only_becomes_raw_audit_points(self):
-        result = DriverPowerMappingMeasurementResult.from_service_payload(
-            {"power_mapping": {"2.4": {"-20.0": 10.0}}},
-            run_id="driver-run",
-        )
-
-        self.assertEqual(len(result.raw_points), 1)
-        self.assertEqual(result.raw_points[0].source_power_dbm, -20.0)
-        self.assertEqual(result.raw_points[0].driver_output_power_dbm, 10.0)
-        self.assertEqual(result.raw_points[0].gain_db, 30.0)
-        self.assertEqual(result.target_points, ())
-        self.assertNotIn("power_mapping", result.to_dict())
-
     def test_new_service_payload_reads_both_layers(self):
         result = DriverPowerMappingMeasurementResult.from_service_payload(
             {
@@ -323,27 +314,11 @@ class ServicePayloadConversionTests(unittest.TestCase):
         self.assertEqual(len(result.target_points), 1)
         self.assertEqual(result.target_points[0].target_input_power_dbm, 12.0)
 
-    def test_service_payload_cannot_mix_legacy_and_new_raw_shapes(self):
-        with self.assertRaisesRegex(ValueError, "power_mapping"):
-            DriverPowerMappingMeasurementResult.from_service_payload(
-                {
-                    "raw_points": _document()["raw_points"],
-                    "power_mapping": {"2.4": {"-20.0": 10.0}},
-                },
-                run_id="driver-run",
-            )
-
     def test_service_payload_must_carry_raw_points(self):
         with self.assertRaisesRegex(ValueError, "原始映射点"):
             DriverPowerMappingMeasurementResult.from_service_payload(
                 {"target_mapping": _document()["target_mapping"]},
                 run_id="driver-run",
-            )
-
-    def test_null_legacy_service_mapping_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, "power_mapping"):
-            DriverPowerMappingMeasurementResult.from_service_payload(
-                {"power_mapping": None}, run_id="driver-run"
             )
 
     def test_target_point_type_is_explicit(self):

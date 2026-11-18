@@ -22,7 +22,6 @@ from domain.measurement.values import (
     CompressionPoint,
     CompressionResult,
     Decibels,
-    DriverOutputTable,
     Frequency,
     Percent,
     PowerDbm,
@@ -32,8 +31,8 @@ from domain.measurement.values import (
 
 __all__ = [
     "calculate_cable_losses", "compensate_amplifier_output_power",
-    "compensate_driver_output_power", "interpolate_driver_output_power",
-    "calculate_dut_input_power", "calculate_gain", "calculate_efficiency",
+    "compensate_driver_output_power",
+    "calculate_gain", "calculate_efficiency",
     "calculate_compression_result",
 ]
 
@@ -145,67 +144,6 @@ def compensate_driver_output_power(measured_power: PowerDbm,
         _require(frequency, Frequency, "frequency")
     ).driver_output_path_loss(_require(attenuator_value, Decibels, "attenuator_value"))
     return PowerDbm(measured.dbm + loss.db)
-
-
-# ---------------------------------------------------------------------------
-# 阶段 2：驱动插值和 DUT 输入功率
-# ---------------------------------------------------------------------------
-
-def interpolate_driver_output_power(frequency: Frequency,
-                                    sg_power: PowerDbm,
-                                    driver_mapping: DriverOutputTable) -> PowerDbm:
-    """按驱动映射执行线性插值，保持 ``np.interp`` 端点行为。
-
-    映射点已在 :class:`DriverOutputTable` 构造时规范化为浮点数并按输入功率升序排序。
-
-    保留现有行为：
-        - 乱序键自动排序。
-        - 范围外输入采用端点值（``np.interp`` 默认行为）。
-        - 重复输入点保留 NumPy 当前行为。
-
-    Args:
-        frequency: 测试频率。
-        sg_power: 信号源输出功率。
-        driver_mapping: 驱动映射表。
-
-    Returns:
-        插值后的驱动功放输出功率。
-    """
-    return _require(driver_mapping, DriverOutputTable, "driver_mapping").interpolate(
-        _require(frequency, Frequency, "frequency"),
-        _require(sg_power, PowerDbm, "sg_power"),
-    )
-
-
-def calculate_dut_input_power(sg_power: PowerDbm,
-                              frequency: Frequency,
-                              loss_table: CableLossTable,
-                              driver_mapping: DriverOutputTable | None) -> PowerDbm:
-    """统一有驱动和无驱动两条 DUT 输入功率路径。
-
-    - 有驱动时：通过插值计算驱动功放输出功率，即 DUT 输入功率。
-    - 无驱动时：DUT 输入功率 = sg_power - cable1。
-
-    Args:
-        sg_power: 信号源输出功率。
-        frequency: 测试频率。
-        loss_table: 按频率索引的线损表。
-        driver_mapping: 驱动映射表；无驱动（``None`` 或空表）时走无驱动路径。
-
-    Returns:
-        DUT 输入功率。
-    """
-    source_power = _require(sg_power, PowerDbm, "sg_power")
-    if driver_mapping is not None:
-        table = _require(driver_mapping, DriverOutputTable, "driver_mapping")
-        if not table.is_empty():
-            return table.interpolate(
-                _require(frequency, Frequency, "frequency"), source_power
-            )
-    cable_loss_1 = _require(loss_table, CableLossTable, "loss_table").profile_at(
-        _require(frequency, Frequency, "frequency")
-    ).dut_input_path_loss()
-    return PowerDbm(source_power.dbm - cable_loss_1.db)
 
 
 # ---------------------------------------------------------------------------

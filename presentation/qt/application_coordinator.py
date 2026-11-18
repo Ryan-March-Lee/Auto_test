@@ -480,7 +480,7 @@ class ApplicationCoordinator:
     def editing_read_only_reason(self) -> str | None:
         """当前编辑文档为何只读；可编辑时返回 ``None``。
 
-        版本门禁归 application 的 authoring 服务（1.0 只能经迁移器升级）；窗口与两个
+        版本门禁归 application 的 authoring 服务（1.0 只读）；窗口与两个
         配置页只消费这个结论，不各自识别 ``schema_version`` 或复制迁移规则。
         """
         service = ConfigurationAuthoringService()

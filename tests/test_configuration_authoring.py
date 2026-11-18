@@ -376,17 +376,20 @@ class ConfigurationAuthoringTests(unittest.TestCase):
         )
 
         self.assertFalse(result.valid)
-        self.assertIn(
-            "test_plan.driver_mode.max_input_power",
-            {issue.path for issue in result.errors},
+        self.assertTrue(
+            any(
+                issue.path.endswith("driver_mode.max_input_power")
+                for issue in result.errors
+            ),
+            result.errors,
         )
         self.assertTrue(
             any("驱放最大输入功率" in issue.message for issue in result.errors)
         )
 
-    def test_old_formal_sections_without_the_new_fields_are_not_stale(self):
+    def test_old_formal_sections_without_power_semantics_are_rejected(self):
         document = author_official_configuration(_flat_config())
-        # 模拟步骤 2 之前保存的 1.1 文档：编辑段与正式段都没有新语义字段。
+        # 旧版本保存的正式段没有新语义字段：不再允许再次保存。
         for section in (
             document,
             document["test_plan"],
@@ -395,11 +398,12 @@ class ConfigurationAuthoringTests(unittest.TestCase):
             section.get("driver_mode", {}).pop("estimated_gain_db", None)
             section.get("driver_mode", {}).pop("max_input_power", None)
 
-        stale = ConfigurationAuthoringService().stale_formal_sections(
-            ConfigurationEditingDocument.from_mapping(document)
-        )
+        with self.assertRaises(ConfigurationAuthoringError) as raised:
+            ConfigurationAuthoringService().author_document(
+                ConfigurationEditingDocument.from_mapping(document)
+            )
 
-        self.assertEqual(stale, ())
+        self.assertIn("功率范围语义", str(raised.exception))
 
     def test_authoring_does_not_mutate_the_input(self):
         flat = _flat_config()
@@ -762,7 +766,7 @@ class ConfigurationAuthoringServiceTests(unittest.TestCase):
         current["schema_version"] = "1.2"
 
         self.assertIn(
-            "迁移器", service.save_block_reason(
+            "重新创建", service.save_block_reason(
                 ConfigurationEditingDocument.from_mapping(legacy)
             )
         )
@@ -1052,7 +1056,11 @@ class ConfigurationAuthoringServiceTests(unittest.TestCase):
     def test_stale_formal_sections_are_reported(self):
         flat = _flat_config()
         flat["schema_version"] = "1.2"
-        flat["test_plan"] = {"schema_version": "1.2", "template": False}
+        flat["test_plan"] = {
+            "schema_version": "1.2",
+            "template": False,
+            "signal_source": {"power_reference": "dut_input"},
+        }
         issues = ConfigurationAuthoringService().stale_formal_sections(
             ConfigurationEditingDocument.from_mapping(flat)
         )
@@ -1081,7 +1089,11 @@ class ConfigurationAuthoringServiceTests(unittest.TestCase):
     def test_stale_sections_do_not_block_saving_current_edits(self):
         """页面编辑后派生段必然过期；保存时整段重写，不把 stale 当成本次编辑错误。"""
         flat = _flat_config()
-        flat["test_plan"] = {"schema_version": "1.1", "template": False}
+        flat["test_plan"] = {
+            "schema_version": "1.1",
+            "template": False,
+            "signal_source": {"power_reference": "dut_input"},
+        }
         result = ConfigurationAuthoringService().validate_document(
             ConfigurationEditingDocument.from_mapping(flat)
         )

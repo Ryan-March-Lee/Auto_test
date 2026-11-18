@@ -245,7 +245,17 @@ class ResultInputReaderTests(unittest.TestCase):
         self.assertIsInstance(result, DriverMappingInput)
         # 正式输入的主视图是目标网格，不是原始“源功率 -> 输出”审计表。
         self.assertEqual(result.target_mapping(), {"1.0": {2.0: (-20.0, 2.0)}})
-        self.assertEqual(result.raw_mapping(), {"1.0": {"-20.0": 2.0}})
+        self.assertEqual(
+            [
+                (
+                    point.frequency_ghz,
+                    point.source_power_dbm,
+                    point.driver_output_power_dbm,
+                )
+                for point in result.raw_points
+            ],
+            [("1.0", -20.0, 2.0)],
+        )
         self.assertEqual(result.target_points[0].target_input_power_dbm, 2.0)
         repository.load.assert_called_once_with((Path("provided/mapping.json")).resolve())
 

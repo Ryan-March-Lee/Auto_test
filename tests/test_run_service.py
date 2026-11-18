@@ -292,25 +292,24 @@ class CreateRunSnapshotTests(unittest.TestCase):
         self.assertFalse((self.repository.root / RUN_ID).exists())
         self.assertEqual(self.repository.list_run_ids(), ())
 
-    def test_unconfirmed_power_range_semantics_cannot_create_a_run(self):
-        """旧功率语义可读取，但用户确认并重新保存前不能创建运行。"""
+    def test_missing_power_range_semantics_cannot_create_a_run(self):
+        """缺少功率语义标记的配置在校验阶段就失败，不能创建运行。"""
         configuration = _valid_configuration()
         configuration = RunConfiguration(
             test_plan=replace(configuration.test_plan, power_reference=None),
             run_mapping=configuration.run_mapping,
         )
         loaded = _loaded(configuration)
-        # 读取层仍然有效，只给兼容提示；门禁在创建运行这一层。
-        self.assertTrue(loaded.valid, loaded.validation.errors)
+        self.assertFalse(loaded.valid)
         self.assertTrue(
             any(
-                issue.path == "signal_source.power_reference"
-                for issue in loaded.validation.warnings
+                issue.path.endswith("signal_source.power_reference")
+                for issue in loaded.validation.errors
             ),
             loaded.validation.messages(),
         )
 
-        with self.assertRaisesRegex(ValueError, "功率范围语义"):
+        with self.assertRaisesRegex(ValueError, "运行配置校验失败"):
             create_run_snapshot(
                 loaded,
                 run_repository=self.repository,

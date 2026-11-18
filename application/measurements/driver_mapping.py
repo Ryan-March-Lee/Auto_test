@@ -99,7 +99,6 @@ class DriverPowerMappingUseCase:
             settle_delay_s=3.0,
             owns_measurement_port=self.owns_measurement_port,
         )
-        self.power_mapping: dict[str, dict[str, float]] = {}
         self.last_result: MeasurementResult | None = None
         self.last_partial_result: MeasurementResult | None = None
         self._partial_saved = False
@@ -121,7 +120,6 @@ class DriverPowerMappingUseCase:
                 payload,
                 run_id=self.run_id,
             )
-            self.power_mapping = result.raw_mapping()
             result = self._save(result)
             self.last_result = result
             return result

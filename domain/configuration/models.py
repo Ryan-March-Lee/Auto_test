@@ -26,17 +26,17 @@ READABLE_SCHEMA_VERSIONS = ("1.0", "1.1", "1.2")
 # 可以由 authoring 在用户明确保存时**重写**为当前版本的旧版本。这里必须显式列出，
 # 不能从 READABLE_SCHEMA_VERSIONS 推导：将来新增的更高版本默认不可重写，否则
 # ``authoring`` 会悄悄接受并降级比它更新的文档。1.0 是角色化电源段的只读历史形状，
-# 只能走迁移器，也不在这个集合里。
+# 不能重写，也不在这个集合里。
 REWRITABLE_SCHEMA_VERSIONS = ("1.1",)
 # 旧角色化电源段的最后版本；1.0 只读，不能保存或创建新运行。
 LEGACY_SCHEMA_VERSION = READABLE_SCHEMA_VERSIONS[0]
 SUPPORTED_COMPRESSION_POINTS = {"1dB", "3dB", "5dB"}
 PLACEHOLDER_VALUES = {"", "无", "待填写", "<channel_name>", "<gate_or_drain_or_other>"}
-# 起止功率的语义标记（v1.1 新保存的配置）：``signal_source.start_power`` /
-# ``stop_power`` / ``step`` 表示**主功放（DUT）输入功率**，不再是信号源输出功率。
-# 旧配置没有这个标记，加载时只提示用户确认并按新语义重新保存；不根据历史数值猜测
-# 原功率范围是源功率还是 DUT 输入功率。``driver_mode.estimated_gain_db`` 是同一套
-# 新语义的一部分：驱动功放预估增益，单位 dB，单一全局值。
+# 起止功率的语义标记：``signal_source.start_power`` / ``stop_power`` / ``step``
+# 表示**主功放（DUT）输入功率**，不再是信号源输出功率。该标记是必填项，缺少或写成
+# 其它值都按配置错误拒绝，不根据历史数值猜测原功率范围。
+# ``driver_mode.estimated_gain_db`` 是同一套语义的一部分：驱动功放预估增益，单位 dB，
+# 单一全局值。
 INPUT_POWER_REFERENCE = "dut_input"
 SIGNAL_SOURCE_REFERENCE_FIELD = "power_reference"
 DRIVER_GAIN_FIELD = "estimated_gain_db"
@@ -61,16 +61,11 @@ def power_scan_boundary_tolerance(left: float, right: float) -> float:
     """
     return max(abs(float(left)), abs(float(right)), 1.0) * POWER_SCAN_RELATIVE_TOLERANCE
 
-# 旧配置缺少语义标记时的加载提示：只提示，不阻断读取，用户可以在配置页核对后保存。
-POWER_REFERENCE_LEGACY_WARNING = (
-    "旧配置未声明功率范围语义：起止功率可能表示信号源输出功率；"
-    "请确认现在按“主功放输入功率”填写并重新保存配置（重新保存前不能连接仪器）"
-)
-# 未确认语义的配置不允许创建运行或构造正式输入：直接当作 DUT 输入功率可能改变
-# 实际驱动电平，属于“根据历史数值猜测”，必须由用户显式保存确认。
-POWER_REFERENCE_UNCONFIRMED_MESSAGE = (
-    "配置未确认功率范围语义：旧配置的起止功率可能表示信号源输出功率；"
-    "请按“主功放输入功率”核对并重新保存配置后再运行"
+# 缺少语义标记的文档不能再作为当前配置使用：直接当作 DUT 输入功率会改变实际驱动
+# 电平，属于“根据历史数值猜测”。旧文件需要按当前模板重新创建。
+POWER_REFERENCE_REQUIRED_MESSAGE = (
+    "配置缺少功率范围语义：signal_source.power_reference 必须为 "
+    f"{INPUT_POWER_REFERENCE!r}（主功放输入功率）；旧配置请按当前模板重新创建"
 )
 # 组内相邻两次通道开启之间的最大等待秒数（单位秒）。放在 domain 是因为它既是
 # 编辑文档的字段范围（v1.1 §6.8），也要被 domain 的 ``validate_power_plan`` 使用；
@@ -194,13 +189,11 @@ class TestPlan:
     （无论数值是否一致）都由 :func:`validate_test_plan` 拒绝，不选一个来源继续。
 
     正式语义仍是**主功放输入功率**范围与目标输入功率网格间隔，不是信号源输出功率。
-    新保存的配置在 ``signal_source.power_reference`` 写入
-    :data:`INPUT_POWER_REFERENCE`；缺少该标记的旧配置仍可读取，但校验只给出兼容
-    提示，不按历史数值猜测或换算。``driver_gain_estimate_db`` 是驱动功放的全局预估
-    增益（dB），用于驱动映射的起点推算；驱动关闭时允许为空。
-    ``driver_max_input_power`` 是驱放最大输入功率（dBm），有驱放链路的信号源输出
-    设定值不得超过它；旧配置缺失时保持 ``None``，读取不失败，但新的保存与驱动测量
-    前必须补齐。
+    当前配置必须在 ``signal_source.power_reference`` 写入
+    :data:`INPUT_POWER_REFERENCE`；缺少或写成其它值都是配置错误，不按历史数值猜测
+    或换算。``driver_gain_estimate_db`` 是驱动功放的全局预估增益（dB），用于驱动映射
+    的起点推算；驱动关闭时允许为空。``driver_max_input_power`` 是驱放最大输入功率
+    （dBm），有驱放链路的信号源输出设定值不得超过它，驱动启用时必须填写。
     """
 
     schema_version: str = SUPPORTED_SCHEMA_VERSION
@@ -739,7 +732,7 @@ def validate_test_plan(plan: Union[TestPlan, Mapping[str, Any]]) -> ConfigValida
         error("template", "模板不能直接作为正式运行方案")
     if not isinstance(plan.driver_enabled, bool):
         error("driver_mode.enabled", "必须是布尔值")
-    _validate_power_reference(plan, error, warnings.append)
+    _validate_power_reference(plan, error)
     if plan.driver_gain_estimate_db is not None:
         _number(
             plan.driver_gain_estimate_db,
@@ -751,6 +744,15 @@ def validate_test_plan(plan: Union[TestPlan, Mapping[str, Any]]) -> ConfigValida
             plan.driver_max_input_power,
             f"driver_mode.{DRIVER_MAX_INPUT_POWER_FIELD}",
             error,
+        )
+    elif (
+        plan.schema_version != LEGACY_SCHEMA_VERSION
+        and plan.driver_enabled is True
+    ):
+        # 驱动模式必须有源功率硬上限，保存与创建运行都按同一个判据拒绝。
+        error(
+            f"driver_mode.{DRIVER_MAX_INPUT_POWER_FIELD}",
+            "驱动模式启用时必须配置驱放最大输入功率，以限制信号源输出设定值",
         )
     _finite_list(plan.frequencies, "frequencies.values", error, positive=True)
     if not plan.frequencies:
@@ -890,8 +892,8 @@ def validate_run_configuration(
             ConfigIssue(
                 "warning",
                 "schema_version",
-                "旧版电源计划：可查看，不能创建新运行；请先用迁移器升级到 "
-                f"{SUPPORTED_SCHEMA_VERSION}",
+                "旧版电源计划：可查看，不能创建新运行；请按当前模板重新创建配置（写入版本 "
+                f"{SUPPORTED_SCHEMA_VERSION}）",
             )
         )
     elif require_runnable:
@@ -906,7 +908,7 @@ def require_current_schema_version(
 
     读取/查看/导出按 :data:`READABLE_SCHEMA_VERSIONS` 处理，1.0 与 1.1 的历史配置
     因此仍能打开；本判据只在“要基于它创建或继续运行”时使用（v1.1 §6.12 规则 16）。
-    1.0 只能经迁移器升级；:data:`REWRITABLE_SCHEMA_VERSIONS` 里的版本（当前只有
+    1.0 只读，不能升级或运行；:data:`REWRITABLE_SCHEMA_VERSIONS` 里的版本（当前只有
     1.1）可以在配置页核对后重新保存为当前版本；两者都不允许直接把旧配置送进硬件。
     """
     issues: List[ConfigIssue] = []
@@ -917,7 +919,10 @@ def require_current_schema_version(
         if version == SUPPORTED_SCHEMA_VERSION:
             continue
         if version == LEGACY_SCHEMA_VERSION:
-            instruction = f"请先用迁移器升级到 {SUPPORTED_SCHEMA_VERSION}"
+            instruction = (
+                "1.0 只读，不能升级或运行；"
+                f"请按当前模板重新创建配置（写入版本 {SUPPORTED_SCHEMA_VERSION}）"
+            )
         elif version in REWRITABLE_SCHEMA_VERSIONS:
             instruction = (
                 "请在配置页核对功率语义并重新保存为 "
@@ -1319,20 +1324,17 @@ def _validate_power_scan_plans(plan: TestPlan, error: Any) -> None:
             )
 
 
-def _validate_power_reference(
-    plan: TestPlan, error: Any, warning: Any
-) -> None:
-    """校验起止功率的语义标记，并给旧配置一条可识别的兼容提示。
+def _validate_power_reference(plan: TestPlan, error: Any) -> None:
+    """校验起止功率的语义标记。
 
-    v1.1 新保存的配置必须声明 ``signal_source.power_reference == "dut_input"``。
-    旧配置缺少该键时只提示，不按历史数值猜测或换算；用户确认后重新保存即写入新语义。
-    1.0 文档已有迁移提示，这里不重复。
+    当前配置必须声明 ``signal_source.power_reference == "dut_input"``；缺少标记是
+    错误，不再提供兼容提示。1.0 是只读历史形状，缺标记由版本门禁负责，不重复报错。
     """
     reference = plan.power_reference
     path = f"signal_source.{SIGNAL_SOURCE_REFERENCE_FIELD}"
     if reference is None:
         if plan.schema_version != LEGACY_SCHEMA_VERSION:
-            warning(ConfigIssue("warning", path, POWER_REFERENCE_LEGACY_WARNING))
+            error(path, POWER_REFERENCE_REQUIRED_MESSAGE)
         return
     if reference != INPUT_POWER_REFERENCE:
         error(
@@ -1340,29 +1342,6 @@ def _validate_power_reference(
             f"功率范围语义必须是 {INPUT_POWER_REFERENCE!r}（主功放输入功率），"
             f"收到 {reference!r}",
         )
-
-
-def power_reference_confirmation_error(plan: Any) -> Optional[str]:
-    """执行前门禁：返回“功率范围语义尚未确认”的说明，已确认时返回 ``None``。
-
-    读取可以容忍缺少标记（旧配置只给兼容提示），但**创建运行**和**构造主功放正式
-    输入**不能：起止功率可能是信号源输出功率，直接当成 DUT 输入功率会改变实际驱动
-    电平。由于版本号无法区分“旧 1.1 文档”和“新写出但缺字段的 1.1 文档”，这里只按
-    标记本身判定——两者都必须由用户重新保存确认，保存时 authoring 会写入
-    :data:`INPUT_POWER_REFERENCE`。
-
-    参数只要求带 ``power_reference`` 属性；调用方传入非测试方案对象时按“未确认”
-    处理，不在这里抛类型错误。
-    """
-    reference = getattr(plan, "power_reference", None)
-    if reference == INPUT_POWER_REFERENCE:
-        return None
-    if reference is None:
-        return POWER_REFERENCE_UNCONFIRMED_MESSAGE
-    return (
-        f"功率范围语义无效：只支持 {INPUT_POWER_REFERENCE!r}（主功放输入功率），"
-        f"收到 {reference!r}；请重新保存配置后再运行"
-    )
 
 
 def _is_legacy_plan(plan: TestPlan) -> bool:

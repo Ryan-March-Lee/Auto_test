@@ -70,7 +70,12 @@ def _config():
     return {
         "schema_version": "1.1",
         "test_frequencies": [2.4],
-        "signal_source": {"start_power": -10.0, "stop_power": 0.0, "step": 1.0},
+        "signal_source": {
+            "start_power": -10.0,
+            "stop_power": 0.0,
+            "step": 1.0,
+            "power_reference": "dut_input",
+        },
         "compression_point": {"type": "5dB"},
         "driver_mode": {"enabled": False},
         "attenuator": {"type": "30dB"},
@@ -258,7 +263,12 @@ class ConfigurationTestParametersTests(unittest.TestCase):
         parameters, issues = ConfigurationTestParameters.from_document(
             {
                 "test_frequencies": [1.0, 2.0],
-                "signal_source": {"start_power": -5, "stop_power": 5, "step": 1},
+                "signal_source": {
+                    "start_power": -5,
+                    "stop_power": 5,
+                    "step": 1,
+                    "power_reference": "dut_input",
+                },
                 "compression_point": {"type": "3dB"},
                 "attenuator": {"type": "40dB"},
                 "dut_config": {"max_input_power": 20},

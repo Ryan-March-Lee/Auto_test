@@ -33,15 +33,15 @@
   （无序集合）。
 - 起止功率是新语义**主功放输入功率**：保存时在编辑段与正式段同时写入
   ``signal_source.power_reference = "dut_input"``，并保留/补齐
-  ``driver_mode.estimated_gain_db``。旧配置缺少该标记时不会被自动换算，读取只给
-  兼容提示；保存即表示用户确认新语义。
+  ``driver_mode.estimated_gain_db``。已带正式段却缺少该标记的旧配置直接拒绝保存，
+  不会再被自动换算；需要按当前模板重新创建。
 - 当前版本（1.2）的功率扫描只写 ``signal_source.power_scan_plans`` 列表（每段
   ``start_power`` / ``step`` / ``stop_power``），不再写旧的三个标量。1.1 的单段标量
   在保存边界被包装成一段计划；计划与标量同时出现时拒绝，不选其中一个来源。
 - authoring 同时是**版本门禁**：输入缺失版本（新建草稿）、等于当前版本，或属于可显式
   重写的 1.1 才允许保存；1.0、更高版本，以及“无版本但含 1.0 遗留电源字段”的文档一律
-  拒绝。1.1 在保存时由 authoring 重写为当前版本，但不会隐式修改文件；1.0 只能先经
-  迁移器升级（§6.11.3、§6.14），authoring 不做隐式升级。
+  拒绝。1.1 在保存时由 authoring 重写为当前版本，但不会隐式修改文件；1.0 只读，
+  只能按当前模板重新创建配置，authoring 不做隐式升级。
 - 正式 ``run_mapping`` 的电源段是**集合** ``instruments.power_supplies.<supply_id>``：
   每台在上电计划里**实际使用**的电源各占一条，条目自带 ``label`` / ``model`` /
   ``full_code`` / ``device_key`` / ``visa_address``。快照只登记计划引用的电源，绑定了
@@ -73,6 +73,7 @@ from domain.configuration.models import (
     INPUT_POWER_REFERENCE,
     LEGACY_POWER_SCAN_FIELDS,
     LEGACY_SCHEMA_VERSION,
+    POWER_REFERENCE_REQUIRED_MESSAGE,
     REWRITABLE_SCHEMA_VERSIONS,
     RunConfiguration,
     RunResourceMapping,
@@ -247,6 +248,7 @@ class ConfigurationAuthoringService:
             )
         values = document.to_mapping()
         _require_saveable_document(values)
+        _reject_unmarked_legacy_document(values)
         _normalize_signal_source(values)
         _strip_legacy_editing_fields(values)
         _stamp_power_semantics(values)
@@ -330,25 +332,7 @@ class ConfigurationAuthoringService:
         # 注意：stale 检查不属于“当前编辑是否合法”。页面在保存前本来就持有上一版
         # 派生段，编辑段一旦变化它就必然过期；把 stale 当成本次校验错误会让正常编辑
         # 无法保存。需要 stale 的读取/创建运行边界显式调用 :meth:`stale_formal_sections`。
-        # 驱放最大输入是运行安全参数，不是历史读取判据：旧配置仍可打开，但新的
-        # 保存/创建运行必须在驱动开启时显式填写，不能把“缺失”当成“不限制”。
-        driver_mode = _mapping(_mapping(authored.get("test_plan")).get("driver_mode"))
-        required_issues: tuple[ValidationIssue, ...] = ()
-        if (
-            driver_mode.get("enabled") is True
-            and driver_mode.get(DRIVER_MAX_INPUT_POWER_FIELD) is None
-        ):
-            required_issues = (
-                ValidationIssue(
-                    path=f"test_plan.driver_mode.{DRIVER_MAX_INPUT_POWER_FIELD}",
-                    code=_CODE_RUN_VALIDATION,
-                    message=(
-                        "驱放测试模式开启时必须填写驱放最大输入功率"
-                        f"（driver_mode.{DRIVER_MAX_INPUT_POWER_FIELD}）"
-                    ),
-                    severity="error",
-                ),
-            )
+        # 驱放最大输入、功率语义标记等当前必填项都由正式校验统一报告。
         source_issues = (
             (
                 validate_power_plan(authored),
@@ -363,8 +347,7 @@ class ConfigurationAuthoringService:
         )
         connection_issues = validate_hardware_connections(authored)
         issues = (
-            required_issues
-            + tuple(
+            tuple(
                 _validation_issue(issue, code)
                 for result, code in source_issues
                 for issue in (*result.errors, *result.warnings)
@@ -463,7 +446,7 @@ def _require_saveable_document(document: Mapping[str, Any]) -> None:
 
     只有“缺失版本的新草稿”、“版本等于当前写入版本”或“可直接重写的 1.1 文档”允许
     进入 authoring。1.1 的字段形状由 authoring 重写为当前版本（保存即用户确认），
-    不会隐式修改原文件；1.0 与更高版本都拒绝，1.0 的唯一升级路径是迁移器。无版本但
+    不会隐式修改原文件；1.0 与更高版本都拒绝，1.0 只能按当前模板重新创建。无版本但
     含 1.0 遗留电源字段的文档同样按 1.0 处理，避免一份旧文件被“打开→保存”悄悄写成
     半新半旧。
     """
@@ -479,8 +462,8 @@ def _require_saveable_document(document: Mapping[str, Any]) -> None:
             return
         if version == LEGACY_SCHEMA_VERSION:
             raise ConfigurationAuthoringError(
-                "1.0 配置只能查看，不能保存；请先运行迁移器升级到 "
-                f"{OFFICIAL_SCHEMA_VERSION}",
+                "1.0 配置只能查看，不能保存；请按当前模板重新创建配置（当前写入版本 "
+                f"{OFFICIAL_SCHEMA_VERSION}）",
                 path="schema_version",
             )
         raise ConfigurationAuthoringError(
@@ -492,7 +475,8 @@ def _require_saveable_document(document: Mapping[str, Any]) -> None:
     if retired_field_path is not None:
         raise ConfigurationAuthoringError(
             "配置没有 schema_version，但包含 1.0 遗留电源字段；"
-            f"请先运行迁移器升级到 {OFFICIAL_SCHEMA_VERSION}（问题字段: {retired_field_path}）",
+            f"请按当前模板重新创建配置（写入版本 {OFFICIAL_SCHEMA_VERSION}，"
+            f"问题字段: {retired_field_path}）",
             path=retired_field_path,
         )
 
@@ -538,12 +522,30 @@ def _legacy_power_field_path(document: Mapping[str, Any]) -> str | None:
     return None
 
 
+def _reject_unmarked_legacy_document(document: Mapping[str, Any]) -> None:
+    """拒绝已带正式段、却没有功率语义标记的旧配置。
+
+    新草稿只有编辑段，缺少标记是正常状态，保存时由 :func:`_stamp_power_semantics`
+    补齐；已带 ``test_plan`` 的文档说明它来自一份已保存的配置，此时缺少标记只能是
+    旧配置。继续保存会把含义不明的历史功率静默当成 DUT 输入功率，因此在写盘前拒绝。
+    """
+    test_plan = document.get("test_plan")
+    if not isinstance(test_plan, Mapping):
+        return
+    signal_source = _mapping(test_plan.get("signal_source"))
+    if signal_source.get(SIGNAL_SOURCE_REFERENCE_FIELD) == INPUT_POWER_REFERENCE:
+        return
+    raise ConfigurationAuthoringError(
+        POWER_REFERENCE_REQUIRED_MESSAGE,
+        path=f"test_plan.signal_source.{SIGNAL_SOURCE_REFERENCE_FIELD}",
+    )
+
+
 def _stamp_power_semantics(document: dict[str, Any]) -> None:
     """给新保存的编辑段写上新功率语义标记与驱放参数占位键。
 
-    - ``signal_source.power_reference`` 固定写成 :data:`INPUT_POWER_REFERENCE`：从这一
-      次保存起，起止功率表示主功放输入功率；旧配置不会被读取时自动换算，保存是用户
-      确认新语义的动作。
+    - ``signal_source.power_reference`` 固定写成 :data:`INPUT_POWER_REFERENCE`：
+      新草稿保存后，起止功率表示主功放输入功率。
     - ``driver_mode.estimated_gain_db`` 与 ``driver_mode.max_input_power`` 缺失时补
       ``None``。驱动关闭时它们不是必填项，但显式写键让“这份配置已按新语义保存”有
       稳定形状；用户填写的数值原样保留。

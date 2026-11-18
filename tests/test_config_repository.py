@@ -24,9 +24,9 @@ class ConfigurationRepositoryTests(unittest.TestCase):
         # 单数电源条目只读兼容：新配置不再写它。
         self.assertNotIn("power_supply", result.configuration.run_mapping.instruments)
 
-    def test_old_power_range_semantics_is_read_with_a_compatibility_warning(self):
+    def test_old_power_range_semantics_is_rejected(self):
         config = complete_combined_config()
-        # 模拟步骤 2 之前保存的 1.1 组合文档：只缺少新语义标记与驱动增益键。
+        # 旧组合文档缺少新语义标记与驱动增益键：不再提供兼容读取。
         for section in (config, config["test_plan"]):
             section.get("signal_source", {}).pop("power_reference", None)
             section.get("driver_mode", {}).pop("estimated_gain_db", None)
@@ -36,20 +36,13 @@ class ConfigurationRepositoryTests(unittest.TestCase):
 
             result = ConfigurationRepository().load(path)
 
-        self.assertTrue(result.valid, result.validation.errors)
+        self.assertFalse(result.valid)
         self.assertTrue(
             any(
-                issue.level == "warning"
-                and issue.path == "signal_source.power_reference"
-                for issue in result.validation.warnings
+                issue.path.endswith("signal_source.power_reference")
+                for issue in result.validation.errors
             ),
             result.validation.messages(),
-        )
-        self.assertFalse(
-            any(
-                "正式段与编辑段不一致" in issue.message
-                for issue in result.validation.errors
-            )
         )
 
     def test_flat_legacy_config_is_rejected_instead_of_converted(self):

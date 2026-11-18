@@ -6,7 +6,8 @@
     "signal_source": {
         "start_power": -40.0,
         "stop_power": -28.0,
-        "step": 0.5
+        "step": 0.5,
+        "power_reference": "dut_input"
     },
     "compression_point": {
         "type": "5dB"

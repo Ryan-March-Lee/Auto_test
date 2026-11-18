@@ -16,8 +16,9 @@ from domain.configuration.models import (
     DRIVER_MAX_INPUT_POWER_FIELD,
     INPUT_POWER_REFERENCE,
     LEGACY_POWER_SCAN_FIELDS,
+    LEGACY_SCHEMA_VERSION,
     MAX_INTER_CHANNEL_DELAY_S,
-    POWER_REFERENCE_LEGACY_WARNING,
+    POWER_REFERENCE_REQUIRED_MESSAGE,
     POWER_SCAN_PLAN_FIELDS,
     SIGNAL_SOURCE_REFERENCE_FIELD,
     power_scan_boundary_tolerance,
@@ -37,7 +38,7 @@ ASSIGNMENT_GROUPS = ("driver_amplifier", "dut_amplifier")
 def assignment_supply_id(entry: Any) -> Optional[str]:
     """返回一条旧供电分配记录引用的电源 ``supply_id``；未绑定或无法识别时返回 ``None``。
 
-    这是“旧分配怎样指向一台电源”的唯一实现：迁移器读取旧配置时调用这里，不另写一套。
+    这是“旧分配怎样指向一台电源”的唯一实现：读取旧配置的调用方复用它，不另写一套。
     1.1 的器件电源由 ``power_plan`` 路由决定，新保存路径不再写分配记录。
 
     新配置只认 ``supply_id``：记录里出现该字段就以它为准（``null`` / 空白表示“引用
@@ -184,7 +185,9 @@ def validate_config(config: Dict[str, Any]) -> ConfigValidationResult:
         reference = signal_source.get(SIGNAL_SOURCE_REFERENCE_FIELD)
         reference_path = f"signal_source.{SIGNAL_SOURCE_REFERENCE_FIELD}"
         if reference is None:
-            warning(reference_path, POWER_REFERENCE_LEGACY_WARNING)
+            # 1.0 是只读历史形状，缺标记由版本门禁负责；1.1/1.2 必须显式声明。
+            if root.get("schema_version") != LEGACY_SCHEMA_VERSION:
+                error(reference_path, POWER_REFERENCE_REQUIRED_MESSAGE)
         elif reference != INPUT_POWER_REFERENCE:
             error(
                 reference_path,

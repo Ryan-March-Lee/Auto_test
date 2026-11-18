@@ -122,7 +122,13 @@ def complete_current_plan():
         "template": False,
         "plan_id": "plan-1",
         "frequencies": {"values": [1.0, 1.2], "unit": "GHz"},
-        "signal_source": {"start_power": 0, "stop_power": 10, "step": 1, "unit": "dBm"},
+        "signal_source": {
+            "start_power": 0,
+            "stop_power": 10,
+            "step": 1,
+            "unit": "dBm",
+            "power_reference": "dut_input",
+        },
         "compression_point": {"type": "3dB"},
         "attenuator": {"value": 30, "unit": "dB"},
         "dut": {
@@ -411,7 +417,7 @@ class SchemaVersionGateTests(unittest.TestCase):
         )
         self.assertTrue(all("重新保存" in issue.message for issue in issues))
 
-    def test_1_0_still_points_at_the_migrator(self):
+    def test_1_0_points_at_recreating_the_configuration(self):
         legacy = RunConfiguration(
             TestPlan.from_dict(complete_plan()),
             RunResourceMapping(schema_version="1.0"),
@@ -420,7 +426,7 @@ class SchemaVersionGateTests(unittest.TestCase):
         issues = require_current_schema_version(legacy)
 
         self.assertTrue(issues)
-        self.assertTrue(all("迁移器" in issue.message for issue in issues))
+        self.assertTrue(all("重新创建" in issue.message for issue in issues))
 
     def test_rewritable_versions_are_explicit_not_derived_from_readable_ones(self):
         """将来新增更高可读版本时不能自动获得重写权限。"""
@@ -439,6 +445,7 @@ def _current_plan_with_plans(*plans):
             for start, step, stop in plans
         ],
         "unit": "dBm",
+        "power_reference": "dut_input",
     }
     return plan
 
@@ -800,29 +807,26 @@ class PowerScanStageGateTests(unittest.TestCase):
 
 
 class PowerSemanticsTests(unittest.TestCase):
-    """步骤 2：起止功率表示主功放输入功率，驱动增益是全局 dB 值。"""
+    """起止功率表示主功放输入功率，驱动增益是全局 dB 值。"""
 
-    def test_old_plan_without_the_marker_is_readable_with_a_compatibility_warning(self):
+    def test_plan_without_the_marker_is_rejected(self):
         plan = complete_current_plan()
+        plan["signal_source"].pop("power_reference")
 
         result = validate_test_plan(plan)
 
-        self.assertTrue(result.valid, result.errors)
+        self.assertFalse(result.valid)
         self.assertTrue(
             any(
-                issue.level == "warning"
-                and issue.path == "signal_source.power_reference"
+                issue.path == "signal_source.power_reference"
                 and "主功放输入功率" in issue.message
-                for issue in result.warnings
+                for issue in result.errors
             ),
-            result.warnings,
+            result.errors,
         )
 
-    def test_new_power_reference_is_accepted_without_the_compatibility_warning(self):
-        plan = complete_current_plan()
-        plan["signal_source"]["power_reference"] = "dut_input"
-
-        result = validate_test_plan(plan)
+    def test_current_power_reference_is_accepted(self):
+        result = validate_test_plan(complete_current_plan())
 
         self.assertTrue(result.valid, result.errors)
         self.assertFalse(

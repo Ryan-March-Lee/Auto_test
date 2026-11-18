@@ -79,9 +79,9 @@ from instrument.ports import (
 )
 
 
-# 驱动映射扫描的收敛与安全边界（重构步骤 6）。
+# 驱动映射扫描的收敛与安全边界。
 #
-# 起点公式来自重构决定：最低目标输入 - 驱动功放预估增益 - 安全余量。扫描在
+# 起点公式：最低目标输入 - 驱动功放预估增益 - 安全余量。扫描在
 # 该起点向上自适应推进；源功率无论起点推算结果如何都不得越过硬件可设范围。
 DRIVER_MAPPING_SAFETY_MARGIN_DB = 10.0
 DRIVER_MAPPING_HIT_TOLERANCE_DB = 0.2
@@ -529,7 +529,7 @@ class CableLossService(_Service):
 class DriverPowerMappingService(_Service):
     """自适应测量驱放曲线，为每个目标输入功率找到独立实测命中点。
 
-    起点与推进规则（重构步骤 6）：
+    起点与推进规则：
 
     - 每个频点从 ``最低目标输入 - 预估增益 - 10 dB`` 起步（源功率始终限制在
       -100 dBm 与“驱放最大输入功率/信号源硬件上限”的较小值之间）；
@@ -575,8 +575,8 @@ class DriverPowerMappingService(_Service):
         self.source_power_max_dbm = min(
             DRIVER_MAPPING_SOURCE_MAX_DBM, self.driver_max_input_power.dbm
         )
-        # 目标网格与主功放正式测试共用同一个纯计算入口（步骤 1）：扫描结束与 DUT
-        # 最大输入取较小值，非整步上限补入最后一点。
+        # 目标网格与主功放正式测试共用同一个纯计算入口：扫描结束与 DUT 最大输入取
+        # 较小值，非整步上限补入最后一点。
         self.target_powers = self._target_powers(config)
         # 每个完整频点的原始映射点；停止时只保存已经完整扫完的频点。
         self._mapping: dict[str, list[dict[str, float]]] = {}

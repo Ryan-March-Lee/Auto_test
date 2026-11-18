@@ -80,6 +80,16 @@ CABLE_LOSSES = {"1.0": {"cable1": 0.0, "cable2": 0.0, "cable3": 0.0, "cable4": 0
 # 目标表必须与配置生成的目标点逐点相同（4.4）。
 POWER_MAPPING = {"1.0": {"-20.0": -20.0}}
 
+
+def _raw_mapping_view(driver_input):
+    """按频点/源功率展示原始实测点；正式目标表仍由 ``target_mapping()`` 提供。"""
+    return {
+        point.frequency_ghz: {
+            str(point.source_power_dbm): point.driver_output_power_dbm
+        }
+        for point in driver_input.raw_points
+    }
+
 # 步骤 17：新测量链路只消费显式选择的阶段结果或组合入口预检对象。用例测试用
 # 预检对象代替真实文件读取，阶段目录边界另由显式输入用例覆盖。
 _UNSET = object()
@@ -506,7 +516,7 @@ class AmplifierRunStageTests(unittest.TestCase):
             sleep_fn=lambda _: None,
         )
         # 驱动映射输入来自当前运行；正式对象携带目标网格，原始点只作审计。
-        self.assertEqual(use_case.driver_mapping.raw_mapping(), POWER_MAPPING)
+        self.assertEqual(_raw_mapping_view(use_case.driver_mapping), POWER_MAPPING)
         self.assertEqual(
             use_case.driver_mapping.target_mapping(), {"1.0": {-20.0: (-20.0, -20.0)}}
         )
@@ -549,7 +559,7 @@ class AmplifierRunStageTests(unittest.TestCase):
         self.assertLessEqual(max(instrument.powers), -45.0)
 
     def test_driver_mode_rejects_mapping_with_wrong_target_power_before_hardware(self):
-        """步骤 4.4：目标表功率与配置生成的 DUT 目标点不同时不得开始扫描。"""
+        """目标表功率与配置生成的 DUT 目标点不同时不得开始扫描。"""
 
         self._create_run()
         self._complete_cable_loss()
@@ -566,7 +576,7 @@ class AmplifierRunStageTests(unittest.TestCase):
         self.assertFalse((self._run_directory() / AMPLIFIER_RESULT_PATH).exists())
 
     def test_driver_mode_rejects_mapping_with_missing_target_points(self):
-        """步骤 4.4：目标表缺点时不能把部分映射当作完整网格。"""
+        """目标表缺点时不能把部分映射当作完整网格。"""
 
         self._create_run()
         self._complete_cable_loss()
@@ -588,7 +598,7 @@ class AmplifierRunStageTests(unittest.TestCase):
         self.assertEqual(instrument.measured, 0)
 
     def test_driver_mode_rejects_mapping_with_out_of_order_targets(self):
-        """步骤 4.4：顺序不同的目标表不静默排序，必须拒绝。"""
+        """顺序不同的目标表不静默排序，必须拒绝。"""
 
         self._create_run()
         self._complete_cable_loss()
@@ -1174,7 +1184,7 @@ class AmplifierRunStageTests(unittest.TestCase):
         connect.assert_not_called()
 
     def test_composition_hands_preflighted_calibration_inputs_to_the_use_case(self):
-        """步骤 4.4：入口预检与正式测量消费同一份线损/驱动映射对象。"""
+        """入口预检与正式测量消费同一份线损/驱动映射对象。"""
 
         config_path = self.base / "config.json"
         config_path.write_text(
@@ -1202,10 +1212,10 @@ class AmplifierRunStageTests(unittest.TestCase):
         self.assertIsNotNone(calibration_inputs)
         self.assertIs(use_case.driver_mapping, calibration_inputs.driver_mapping)
         self.assertIs(use_case.loss_data, calibration_inputs.loss_data)
-        self.assertEqual(use_case.driver_mapping.raw_mapping(), POWER_MAPPING)
+        self.assertEqual(_raw_mapping_view(use_case.driver_mapping), POWER_MAPPING)
 
     def test_composition_rejects_inconsistent_driver_target_grid_before_connecting(self):
-        """步骤 4.4：目标表与配置网格不一致时，组合入口在连接仪器前失败。"""
+        """目标表与配置网格不一致时，组合入口在连接仪器前失败。"""
 
         config_path = self.base / "config.json"
         config_path.write_text(

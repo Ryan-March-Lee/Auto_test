@@ -91,7 +91,6 @@ from domain.configuration.models import (
     MAX_INTER_CHANNEL_DELAY_S,
     PLACEHOLDER_VALUES,
     SUPPORTED_COMPRESSION_POINTS,
-    power_reference_confirmation_error,
     power_scan_boundary_tolerance,
 )
 from domain.measurement.values import Decibels, Frequency, PowerDbm
@@ -1068,7 +1067,7 @@ class AmplifierMeasurementInputs:
         配置改动影响，也不会因为服务自己补点/截断而与预览漂移。
 
         无驱动测量循环直接把这些点作为 DUT 输入功率，并按线①反算出实际下发的信号源
-        设定；驱动模式经映射目标表间接使用同一份网格，4.4 还会显式校验两者一致。
+        设定；驱动模式经映射目标表间接使用同一份网格，目标表校验会显式核对两者一致。
         """
         return self._target_input_powers
 
@@ -1095,11 +1094,14 @@ class AmplifierMeasurementInputs:
             raise AmplifierInputError(
                 "主功放正式输入必须来自运行配置：缺少 test_plan 或 run_mapping"
             )
-        # 未确认功率范围语义的配置不能进入正式测量：旧数值可能是信号源输出功率，
-        # 直接当作 DUT 输入功率会改变实际驱动电平，必须在硬件动作前失败。
-        unconfirmed = power_reference_confirmation_error(plan)
-        if unconfirmed is not None:
-            raise AmplifierInputError(unconfirmed)
+        # 功率范围语义是当前配置的硬性要求：缺少或写成其它值时，起止功率可能还是
+        # 信号源输出功率，不能当作 DUT 输入功率进入硬件动作。
+        reference = getattr(plan, "power_reference", None)
+        if reference != INPUT_POWER_REFERENCE:
+            raise AmplifierInputError(
+                "功率范围语义必须是 "
+                f"{INPUT_POWER_REFERENCE!r}（主功放输入功率），收到 {reference!r}"
+            )
         plans = tuple(getattr(plan, "power_scan_plans", ()) or ())
         if not plans:
             raise AmplifierInputError(

@@ -1,15 +1,15 @@
 # 正式配置编写基线（1.2）
 
-`official_configuration_golden.json` 是电源配置独立化步骤 6 的**行为回归基准**：
+`official_configuration_golden.json` 是正式配置编写的**行为回归基准**：
 每一条 `expected` 都是当前 `application/configuration_authoring.py` 对同一条 `input`
 生成的完整文档，按 Python 对象逐项比较（含 `test_plan` / `run_mapping` 与顶层编辑段的
 透传）。`input` 以 1.1 标量扫描为主，用来冻结“旧标量在保存边界包装成一段计划”的迁移
 行为；`multi_plan_scan_1_2` 另用 1.2 多段计划输入，冻结列表顺序原样透传、不合并、
 不排序的行为。
 
-步骤 6 的业务变更（相对步骤 4 的 1.0 基线）：
+当前契约相对 1.0 基线的主要变更：
 
-- 正式段版本改为 `1.1`；阶段二步骤 2.1 起写出版本为 `1.2`，输入仍可用 1.1；
+- 正式段写入版本为 `1.2`，输入仍可用 1.1；
 - 1.2 的功率扫描只写 `signal_source.power_scan_plans` 列表：1.1 的
   `start_power` / `stop_power` / `step` 在保存边界包装成一段计划，编辑段与正式段
   同时升级，不再保留旧标量来源；
@@ -21,7 +21,7 @@
   `dut_power_channels` / `driver_mode.power_channels`；
 - 编辑段的通道 `role` 与旧槽位 `name` 引用不再进入当前版本文档；1.0 输入由 authoring
   版本门禁拒绝（见 `tests/test_configuration_authoring.py` 的门禁用例）。
-- 步骤 2 起，保存时在编辑段与正式段同时写入主功放输入功率语义标记
+- 保存时在编辑段与正式段同时写入主功放输入功率语义标记
   `signal_source.power_reference = "dut_input"`；`driver_mode.estimated_gain_db`
   缺失时补 `null`，已填写数值原样保留。
 

@@ -35,7 +35,17 @@ class _CableService:
 
 class _DriverMappingService:
     def __init__(self):
-        self.last_result = {"power_mapping": {"2.4": {"-10": 1.0}}}
+        self.last_result = {
+            "raw_points": {
+                "2.4": [
+                    {
+                        "source_power_dbm": -10.0,
+                        "driver_output_power_dbm": 1.0,
+                        "gain_db": 11.0,
+                    }
+                ]
+            }
+        }
         self.stop_called = threading.Event()
         self.measure_called = threading.Event()
 

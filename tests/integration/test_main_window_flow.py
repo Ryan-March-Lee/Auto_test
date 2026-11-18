@@ -668,7 +668,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertTrue((repository.root / newer.run_id).is_dir())
 
     def test_a_10_configuration_opens_both_pages_read_only(self):
-        """步骤 13：1.0 编辑文档只读并提示迁移；两条编辑入口都不能写盘。"""
+        """步骤 13：1.0 编辑文档只读并提示重新创建；两条编辑入口都不能写盘。"""
         self._silence_dialogs()
         config = _fully_valid_gui_config()
         config["schema_version"] = "1.0"
@@ -676,14 +676,14 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         window = self._window()
 
         # 构造即同步：不经过欢迎页也必须已经只读，避免出现可编辑窗口。
-        self.assertIn("迁移器", window.test_config_page.read_only_reason)
-        self.assertIn("迁移器", window.power_page.read_only_reason)
+        self.assertIn("重新创建", window.test_config_page.read_only_reason)
+        self.assertIn("重新创建", window.power_page.read_only_reason)
 
         window._enter_test_mode(False)
         window._open_test_configuration_page()
 
-        self.assertIn("迁移器", window.test_config_page.read_only_reason)
-        self.assertIn("迁移器", window.power_page.read_only_reason)
+        self.assertIn("重新创建", window.test_config_page.read_only_reason)
+        self.assertIn("重新创建", window.power_page.read_only_reason)
         self.assertFalse(window.test_config_page.read_only_notice.isHidden())
         self.assertFalse(window.power_page.read_only_notice.isHidden())
         self.assertFalse(window.test_config_page.save_config_btn.isEnabled())

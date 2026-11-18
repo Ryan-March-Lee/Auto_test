@@ -330,7 +330,7 @@ class DriverPowerMappingUseCaseTests(unittest.TestCase):
         result = use_case.measure_all_frequencies()
 
         self.assertEqual(result, use_case.last_result)
-        self.assertIn("1.0", use_case.power_mapping)
+        self.assertIn("1.0", use_case.last_result.result_document()["raw_points"])
         # 正式结果先写入独立阶段目录：带测量身份，运行目录只登记引用。
         [(stage, saved)] = stage_repository.calls
         self.assertIs(stage, MeasurementStage.DRIVER_MAPPING)

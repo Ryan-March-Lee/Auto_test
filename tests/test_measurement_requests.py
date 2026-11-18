@@ -37,6 +37,7 @@ def _valid_domain_snapshot(run_id: str) -> dict:
         start_power=-10.0,
         stop_power=0.0,
         power_step=1.0,
+        power_reference="dut_input",
         compression_point="5dB",
         attenuator_value=30.0,
         max_input_power=30.0,
@@ -286,7 +287,13 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
 
     def test_result_dto_has_explicit_fields_without_mapping_view(self):
         result = DriverPowerMappingMeasurementResult.from_service_payload(
-            {"power_mapping": {"900.0": {"-40.0": 10.0}}},
+            {
+                "raw_points": {
+                    "900.0": [
+                        {"source_power_dbm": -40.0, "driver_output_power_dbm": 10.0}
+                    ]
+                }
+            },
             run_id="run-result",
         )
         self.assertIs(result.measurement_type, MeasurementType.DRIVER_POWER_MAPPING)
@@ -301,11 +308,17 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
             result["power_mapping"]
 
     def test_result_dto_freezes_nested_values_and_validates_status(self):
-        source = {"power_mapping": {"900.0": {"-40.0": 1.0}}}
+        source = {
+            "raw_points": {
+                "900.0": [
+                    {"source_power_dbm": -40.0, "driver_output_power_dbm": 1.0}
+                ]
+            }
+        }
         result = DriverPowerMappingMeasurementResult.from_service_payload(
             source, run_id="run-result"
         )
-        source["power_mapping"]["900.0"]["-40.0"] = 2.0
+        source["raw_points"]["900.0"][0]["driver_output_power_dbm"] = 2.0
         self.assertEqual(result.raw_points[0].driver_output_power_dbm, 1.0)
         with self.assertRaises(TypeError):
             result.configuration_snapshot["new"] = True

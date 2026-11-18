@@ -43,7 +43,6 @@ __all__ = [
     "Percent",
     "CableLossProfile",
     "CableLossTable",
-    "DriverOutputTable",
     "DRIVER_OUTPUT_TOLERANCE_DB",
     "DriverCurve",
     "DriverCurveTarget",
@@ -512,107 +511,6 @@ class CableLossTable:
 
     def __len__(self) -> int:
         return len(self.profiles)
-
-
-@dataclass(frozen=True)
-class DriverOutputTable:
-    """按频率索引的驱动映射表：信号源输入功率 -> 补偿后输出功率。"""
-
-    points: Mapping[Frequency, tuple[tuple[PowerDbm, PowerDbm], ...]] = field(
-        default_factory=dict
-    )
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.points, Mapping):
-            raise TypeError("驱动映射表必须是频率到映射点的映射")
-        validated: dict[Frequency, tuple[tuple[PowerDbm, PowerDbm], ...]] = {}
-        for frequency, pairs in self.points.items():
-            _require(frequency, Frequency, "驱动映射频率键")
-            validated[frequency] = self._require_pairs(frequency, pairs)
-        object.__setattr__(self, "points", MappingProxyType(validated))
-
-    @staticmethod
-    def _require_pairs(
-        frequency: Frequency, pairs: Any
-    ) -> tuple[tuple[PowerDbm, PowerDbm], ...]:
-        return _power_pair_sequence(frequency, pairs, "驱动映射")
-
-    @classmethod
-    def from_mapping(
-        cls, mapping: Any, *, source: str = "driver_mapping"
-    ) -> "DriverOutputTable":
-        """读取 ``{频率键: {输入功率键: 输出功率}}`` 驱动映射文档。
-
-        频率键与线损表一样只接受字符串；输入功率键是 dBm 数值文本，字符串键与
-        数值键都按 dBm 读取，布尔值和无法解析的文本一律拒绝。
-        """
-        if not isinstance(mapping, Mapping):
-            raise TypeError(f"{source} 必须是映射，收到 {type(mapping).__name__}")
-        points = {}
-        for frequency_key, bucket in mapping.items():
-            frequency = Frequency.from_document_key(frequency_key)
-            if frequency in points:
-                raise MeasurementValueError(f"{source} 含重复频率 {frequency.key}")
-            if not isinstance(bucket, Mapping):
-                raise TypeError(
-                    f"{source}[{frequency_key}] 必须是输入功率到输出功率的映射"
-                )
-            pairs = []
-            for input_key, output in bucket.items():
-                label = f"{source}[{frequency_key}] 的输入功率键"
-                try:
-                    input_dbm = _power_key(input_key, label)
-                except MeasurementUnitError as error:
-                    raise MeasurementUnitError(
-                        f"{source}[{frequency_key}] 含无法解析的输入功率键 {input_key!r}"
-                    ) from error
-                pairs.append(
-                    (
-                        PowerDbm(input_dbm),
-                        PowerDbm(
-                            _number(output, f"{source}[{frequency_key}][{input_key}]")
-                        ),
-                    )
-                )
-            points[frequency] = tuple(pairs)
-        return cls(points)
-
-    def is_empty(self) -> bool:
-        return not self.points
-
-    def has_points(self, frequency: Frequency) -> bool:
-        """指定频率是否有可用映射点；缺频率与空映射点都返回 ``False``。"""
-        _require(frequency, Frequency, "频率")
-        return bool(self.points.get(frequency))
-
-    def interpolate(self, frequency: Frequency, sg_power: PowerDbm) -> PowerDbm:
-        """按输入功率升序线性插值；端点与重复点沿用 ``np.interp`` 行为。"""
-        _require(frequency, Frequency, "频率")
-        _require(sg_power, PowerDbm, "信号源功率")
-        pairs = self.points.get(frequency)
-        if pairs is None:
-            raise MeasurementValueError(
-                f"驱动映射缺少测试频率 {frequency.key} GHz 的记录"
-            )
-        if not pairs:
-            raise MeasurementValueError(
-                f"驱动映射在 {frequency.key} GHz 没有有效映射点"
-            )
-        input_powers = np.array([pair[0].dbm for pair in pairs])
-        output_powers = np.array([pair[1].dbm for pair in pairs])
-        sorted_indices = np.argsort(input_powers)
-        return PowerDbm(
-            float(
-                np.interp(
-                    sg_power.dbm,
-                    input_powers[sorted_indices],
-                    output_powers[sorted_indices],
-                )
-            )
-        )
-
-    def __len__(self) -> int:
-        return len(self.points)
 
 
 @dataclass(frozen=True)

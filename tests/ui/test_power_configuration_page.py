@@ -763,10 +763,10 @@ class PowerConfigurationPageTests(unittest.TestCase):
     def test_a_read_only_document_disables_the_power_form_and_shows_the_reason(self):
         page = self.make_page()
 
-        page.set_read_only("1.0 配置只能查看，不能保存；请先运行迁移器升级到 1.1")
+        page.set_read_only("1.0 配置只能查看，不能保存；请按当前模板重新创建配置")
 
         self.assertTrue(page.read_only_notice.isVisibleTo(page))
-        self.assertIn("迁移器", page.read_only_notice.text())
+        self.assertIn("重新创建", page.read_only_notice.text())
         self.assertFalse(page.power_section.isEnabled())
 
         page.set_read_only(None)

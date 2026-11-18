@@ -404,7 +404,15 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            use_case.driver_mapping.raw_mapping(), {"1.0": {"-20.0": -20.0}}
+            [
+                (
+                    point.frequency_ghz,
+                    point.source_power_dbm,
+                    point.driver_output_power_dbm,
+                )
+                for point in use_case.driver_mapping.raw_points
+            ],
+            [("1.0", -20.0, -20.0)],
         )
         self.assertEqual(reader.paths, [])
         self.assertEqual(

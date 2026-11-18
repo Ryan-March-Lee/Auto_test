@@ -634,12 +634,13 @@ class PowerScanPlanValidationTests(unittest.TestCase):
             "power_scan_plans": [
                 {"start_power": start, "step": step, "stop_power": stop}
                 for start, step, stop in plans
-            ]
+            ],
+            "power_reference": "dut_input",
         }
         return config
 
-    def test_1_1_scalar_scan_remains_readable(self):
-        """旧文件仍按标量形状打开：升级只发生在显式保存，不改写只读输入。
+    def test_1_1_scalar_scan_is_parsed_but_requires_power_semantics(self):
+        """1.1 标量形状仍按只读输入解析，但缺少功率语义标记时按错误拒绝。
 
         这里把整份文档降到 1.1（编辑段、``test_plan``、``run_mapping`` 三处版本与两处
         扫描形状），并用文件级校验入口验证：只改编辑段会得到一份“编辑段 1.1、正式段
@@ -663,22 +664,13 @@ class PowerScanPlanValidationTests(unittest.TestCase):
 
         result = validate_official_config(legacy)
 
-        self.assertTrue(result.valid, result.errors)
-        self.assertFalse(
+        self.assertFalse(result.valid)
+        self.assertTrue(
             any(
-                issue.path.startswith("signal_source")
+                issue.path.endswith("signal_source.power_reference")
                 for issue in result.errors
             ),
             result.errors,
-        )
-        # 缺少语义标记只提示确认，不能按历史数值猜测功率含义。
-        self.assertTrue(
-            any(
-                issue.level == "warning"
-                and issue.path == "signal_source.power_reference"
-                for issue in result.warnings
-            ),
-            result.warnings,
         )
         # 只读校验不重写输入：调用方拿到的仍是 1.1 标量形状。
         self.assertEqual(
@@ -694,18 +686,18 @@ class PowerScanPlanValidationTests(unittest.TestCase):
 
         self.assertTrue(result.valid, result.errors)
 
-    def test_power_reference_marker_warns_when_missing_and_rejects_unknown_values(self):
-        """缺少语义标记只提示确认；填了无法识别的标记必须按字段报错。"""
+    def test_power_reference_marker_is_required_and_must_be_known(self):
+        """缺少语义标记按字段报错；填了无法识别的标记同样报错。"""
         missing = self._with_plans((-10.0, 1.0, 0.0))
-        missing_warnings = validate_config(missing).warnings
+        del missing["signal_source"]["power_reference"]
+        missing_errors = validate_config(missing).errors
 
         self.assertTrue(
             any(
-                issue.level == "warning"
-                and issue.path == "signal_source.power_reference"
-                for issue in missing_warnings
+                issue.path == "signal_source.power_reference"
+                for issue in missing_errors
             ),
-            missing_warnings,
+            missing_errors,
         )
 
         for value in ("source_output", "", 1):

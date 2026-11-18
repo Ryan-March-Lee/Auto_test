@@ -717,21 +717,9 @@ class DriverPowerMappingMeasurementResult(MeasurementResult):
         if not isinstance(payload, Mapping):
             raise ValueError("驱动映射结果载荷必须是映射")
         raw_value = payload.get("raw_points")
-        if raw_value is not None and "power_mapping" in payload:
-            raise ValueError(
-                "驱动映射服务载荷不能同时包含 raw_points 与旧 power_mapping"
-            )
-        if raw_value is not None:
-            raw_points = _raw_mapping_points(raw_value, require_gain=False)
-        elif "power_mapping" in payload:
-            # 服务层的 ``power_mapping`` 是原始实测表（源功率 -> 补偿后输出）。
-            # 这个适配入口只服务尚未迁移的驱动扫描服务，转换结果仍是审计点，
-            # 不会成为目标输入表；正式文档读取路径不接受该字段。
-            raw_points = _raw_points_from_power_mapping(payload["power_mapping"])
-        else:
-            raise ValueError(
-                "驱动映射服务载荷缺少原始映射点（raw_points 或 power_mapping）"
-            )
+        if raw_value is None:
+            raise ValueError("驱动映射服务载荷缺少原始映射点（raw_points）")
+        raw_points = _raw_mapping_points(raw_value, require_gain=False)
         return cls(
             run_id=run_id,
             measurement_id=measurement_id,
@@ -826,9 +814,8 @@ class DriverMappingInput:
 
     - :attr:`target_points` 是正式测试唯一消费的数据：目标 DUT 输入功率、反查源功率
       和插值驱放输出；它不能为空，否则映射还没有生成可执行的目标网格。
-    - :attr:`raw_points` 是原始实测审计数据。``raw_mapping()`` 只为仍在迁移中的
-      主功放扫描实现保留，不得把它的键当作目标输入功率；目标网格的正式消费切换
-      属于重构步骤 9。
+    - :attr:`raw_points` 是原始实测审计数据，只用于追溯；不得把它的键当作目标输入
+      功率。
 
     本对象只在**输入读取边界**构造：正式文档已经通过
     :func:`measurement_result_from_document` 的 schema、版本和字段校验，这里再补上
@@ -878,20 +865,6 @@ class DriverMappingInput:
                 point.target_input_power_dbm
             ] = (point.source_power_dbm, point.driver_output_power_dbm)
         return mapping
-
-    def raw_mapping(self) -> dict[str, dict[str, float]]:
-        """按频点组织的原始实测审计视图：源功率 -> 补偿后驱放输出。
-
-        只用于兼容尚未切换的主功放扫描实现（重构步骤 9 会改为消费
-        :meth:`target_mapping`）；它不是目标输入功率表。
-        """
-        mapping: dict[str, dict[str, float]] = {}
-        for point in self.raw_points:
-            mapping.setdefault(point.frequency_ghz, {})[
-                str(point.source_power_dbm)
-            ] = point.driver_output_power_dbm
-        return mapping
-
 
 @dataclass(frozen=True, kw_only=True)
 class AmplifierMeasurementResult(MeasurementResult):
@@ -1368,32 +1341,6 @@ _RAW_MAPPING_POINT_KEYS = frozenset(
 _TARGET_MAPPING_POINT_KEYS = frozenset(
     {"target_input_power_dbm", "source_power_dbm", "driver_output_power_dbm"}
 )
-
-
-def _raw_points_from_power_mapping(value: Any) -> tuple[DriverMappingRawPoint, ...]:
-    """把服务层的原始 ``power_mapping`` 载荷转换为审计点。
-
-    这个入口只用于**服务载荷**；正式结果文档没有这个字段。服务载荷的含义就是
-    “源功率 -> 补偿后驱放输出”，转换后仍是原始点，不会成为目标输入表。
-    ``None`` 不是“没有原始点”，而是缺值，直接拒绝。
-    """
-    if value is None:
-        raise ValueError("power_mapping 不能为空值")
-    if not isinstance(value, Mapping):
-        raise ValueError("power_mapping 必须是映射")
-    points = []
-    for frequency, bucket in value.items():
-        if not isinstance(bucket, Mapping):
-            raise ValueError(f"驱动映射结果 {frequency!r} 必须是映射")
-        for source_power, output_power in bucket.items():
-            points.append(
-                DriverMappingRawPoint(
-                    frequency_ghz=str(frequency),
-                    source_power_dbm=source_power,
-                    driver_output_power_dbm=output_power,
-                )
-            )
-    return tuple(points)
 
 
 def _raw_mapping_points(

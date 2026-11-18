@@ -619,7 +619,7 @@ class CoordinatorConfigSaveTests(unittest.TestCase):
 
         self.assertFalse(coordinator.save_configuration())
 
-        self.assertIn("迁移器", str(coordinator.last_save_error))
+        self.assertIn("重新创建", str(coordinator.last_save_error))
         self.assertEqual(coordinator.config, legacy)
         self.assertEqual(coordinator.config["schema_version"], "1.0")
         self.service.configuration.save.assert_not_called()
@@ -660,9 +660,18 @@ class CoordinatorConfigSaveTests(unittest.TestCase):
         self.coordinator.config = {
             "schema_version": "1.1",
             "test_frequencies": [2.4],
-            "signal_source": {"start_power": -10.0, "stop_power": 0.0, "step": 1.0},
+            "signal_source": {
+                "start_power": -10.0,
+                "stop_power": 0.0,
+                "step": 1.0,
+                "power_reference": "dut_input",
+            },
             "compression_point": {"type": "5dB"},
-            "driver_mode": {"enabled": True},
+            "driver_mode": {
+                "enabled": True,
+                "estimated_gain_db": 20.0,
+                "max_input_power": 10.0,
+            },
             "attenuator": {"type": "30dB"},
             "dut_config": {
                 "max_input_power": 30.0,

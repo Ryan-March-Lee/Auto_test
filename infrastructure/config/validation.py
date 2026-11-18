@@ -53,9 +53,9 @@ def validate_saveable_configuration(document: Mapping[str, Any]) -> ConfigValida
     """校验一份**可以保存**的组合配置，但不要求它已经可以运行。
 
     与 :func:`validate_official_config` 的区别只有一处：跳过 v1.1 的“运行就绪”电源
-    规则（空计划、未确认漏极等）。迁移器把旧配置升级成 1.1 时，上电顺序必须由用户
-    在电源页确认，因此迁移结果天然是“结构完整、尚不可运行”的一份文档（§6.6、
-    §6.14 规则 4）。保存门槛用它，创建运行仍走 :func:`validate_official_config`。
+    规则（空计划、未确认漏极等）。把旧配置编写成 1.1 时，上电顺序必须由用户在电源页
+    确认，因此结果天然是“结构完整、尚不可运行”的一份文档（§6.6、§6.14 规则 4）。
+    保存门槛用它，创建运行仍走 :func:`validate_official_config`。
     """
     data = dict(document)
     formal = load_combined_configuration(data, require_runnable=False).validation

@@ -23,8 +23,6 @@ from domain.measurement.calculations import (
     calculate_cable_losses,
     compensate_amplifier_output_power,
     compensate_driver_output_power,
-    interpolate_driver_output_power,
-    calculate_dut_input_power,
     calculate_gain,
     calculate_efficiency,
     calculate_compression_result,
@@ -35,7 +33,6 @@ from domain.measurement.values import (
     CompressionPoint,
     CompressionResult,
     Decibels,
-    DriverOutputTable,
     Frequency,
     MeasurementUnitError,
     MeasurementValueError,
@@ -526,177 +523,6 @@ class MeasurementEntryPointDelegationTestsRemoved(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 # 一个有序的驱动映射样例（频率 1.0 GHz）
-SAMPLE_DRIVER_MAPPING = {
-    "1.0": {
-        "-50.0": 10.0,
-        "-45.0": 15.0,
-        "-40.0": 20.0,
-        "-35.0": 25.0,
-        "-30.0": 30.0,
-    }
-}
-
-# 一个乱序的驱动映射样例
-SAMPLE_DRIVER_MAPPING_UNORDERED = {
-    "1.0": {
-        "-30.0": 30.0,
-        "-50.0": 10.0,
-        "-40.0": 20.0,
-        "-45.0": 15.0,
-        "-35.0": 25.0,
-    }
-}
-
-
-class InterpolateDriverOutputPowerTests(unittest.TestCase):
-    """测试 interpolate_driver_output_power()。"""
-
-    def _table(self, mapping):
-        return DriverOutputTable.from_mapping(mapping, source="驱动映射输入")
-
-    def test_in_range_interpolation(self):
-        """范围内插值应与线性插值一致。"""
-        result = interpolate_driver_output_power(
-            frequency=ghz(1.0), sg_power=dbm(-42.5),
-            driver_mapping=self._table(SAMPLE_DRIVER_MAPPING))
-        # -42.5 在 -45(15) 和 -40(20) 之间，中间值为 17.5
-        self.assertAlmostEqual(result.dbm, 17.5)
-
-    def test_exact_key_match(self):
-        """精确匹配某个键时返回对应值。"""
-        result = interpolate_driver_output_power(
-            frequency=ghz(1.0), sg_power=dbm(-40.0),
-            driver_mapping=self._table(SAMPLE_DRIVER_MAPPING))
-        self.assertAlmostEqual(result.dbm, 20.0)
-
-    def test_below_range_uses_endpoint(self):
-        """低于最小输入功率时返回端点值（np.interp 默认行为）。"""
-        result = interpolate_driver_output_power(
-            frequency=ghz(1.0), sg_power=dbm(-60.0),
-            driver_mapping=self._table(SAMPLE_DRIVER_MAPPING))
-        self.assertAlmostEqual(result.dbm, 10.0)
-
-    def test_above_range_uses_endpoint(self):
-        """高于最大输入功率时返回端点值。"""
-        result = interpolate_driver_output_power(
-            frequency=ghz(1.0), sg_power=dbm(-20.0),
-            driver_mapping=self._table(SAMPLE_DRIVER_MAPPING))
-        self.assertAlmostEqual(result.dbm, 30.0)
-
-    def test_unordered_keys_are_sorted(self):
-        """乱序键应自动排序，结果与有序映射一致。"""
-        result_ordered = interpolate_driver_output_power(
-            frequency=ghz(1.0), sg_power=dbm(-42.5),
-            driver_mapping=self._table(SAMPLE_DRIVER_MAPPING))
-        result_unordered = interpolate_driver_output_power(
-            frequency=ghz(1.0), sg_power=dbm(-42.5),
-            driver_mapping=self._table(SAMPLE_DRIVER_MAPPING_UNORDERED))
-        self.assertAlmostEqual(result_ordered.dbm, result_unordered.dbm)
-
-    def test_string_frequency_key_lookup(self):
-        """频率以字符串存储，Frequency 也能查到。"""
-        result = interpolate_driver_output_power(
-            frequency=ghz(1.0), sg_power=dbm(-40.0),
-            driver_mapping=self._table(SAMPLE_DRIVER_MAPPING))
-        self.assertAlmostEqual(result.dbm, 20.0)
-
-    def test_missing_frequency_and_empty_bucket_are_rejected(self):
-        table = self._table(SAMPLE_DRIVER_MAPPING)
-        with self.assertRaises(MeasurementValueError):
-            interpolate_driver_output_power(
-                frequency=ghz(2.4), sg_power=dbm(-40.0), driver_mapping=table)
-        empty = self._table({"1.0": {}})
-        with self.assertRaises(MeasurementValueError):
-            interpolate_driver_output_power(
-                frequency=ghz(1.0), sg_power=dbm(-40.0), driver_mapping=empty)
-
-    def test_unparsable_input_power_key_is_rejected(self):
-        with self.assertRaises(MeasurementUnitError):
-            self._table({"1.0": {"abc": 10.0}})
-
-    def test_non_string_frequency_key_is_rejected(self):
-        with self.assertRaises(TypeError):
-            self._table({1.0: {"-40.0": 20.0}})  # type: ignore[dict-item]
-
-    def test_numeric_input_power_keys_are_read_as_dbm(self):
-        table = self._table({"1.0": {-40.0: 20.0}})  # type: ignore[dict-item]
-        self.assertEqual(
-            interpolate_driver_output_power(
-                frequency=ghz(1.0), sg_power=dbm(-40.0), driver_mapping=table
-            ).dbm,
-            20.0,
-        )
-
-    def test_boolean_input_power_key_is_rejected(self):
-        with self.assertRaises(MeasurementUnitError):
-            self._table({"1.0": {True: 20.0}})  # type: ignore[dict-item]
-
-    def test_has_points_separates_missing_and_empty_frequencies(self):
-        table = self._table(SAMPLE_DRIVER_MAPPING)
-        self.assertTrue(table.has_points(ghz(1.0)))
-        self.assertFalse(table.has_points(ghz(2.4)))
-        self.assertFalse(self._table({"1.0": {}}).has_points(ghz(1.0)))
-
-    def test_raw_mapping_is_not_accepted_by_the_pure_function(self):
-        with self.assertRaises(TypeError):
-            interpolate_driver_output_power(
-                frequency=ghz(1.0), sg_power=dbm(-40.0),
-                driver_mapping=SAMPLE_DRIVER_MAPPING)  # type: ignore[arg-type]
-
-
-class CalculateDutInputPowerTests(unittest.TestCase):
-    """测试 calculate_dut_input_power()。"""
-
-    def _table(self, mapping):
-        return DriverOutputTable.from_mapping(mapping, source="驱动映射输入")
-
-    def test_with_driver_mapping(self):
-        """有驱动时走插值路径。"""
-        result = calculate_dut_input_power(
-            sg_power=dbm(-40.0), frequency=ghz(1.0),
-            loss_table=SAMPLE_LOSS_TABLE,
-            driver_mapping=self._table(SAMPLE_DRIVER_MAPPING))
-        self.assertAlmostEqual(result.dbm, 20.0)
-
-    def test_without_driver_mapping(self):
-        """无驱动时走 sg_power - cable1 路径。"""
-        result = calculate_dut_input_power(
-            sg_power=dbm(-10.0), frequency=ghz(1.0),
-            loss_table=SAMPLE_LOSS_TABLE,
-            driver_mapping=None)
-        expected = -10.0 - SAMPLE_LOSS_DATA["1.0"]["cable1"]
-        self.assertAlmostEqual(result.dbm, expected)
-
-    def test_none_and_empty_driver_mapping_take_the_no_driver_path(self):
-        """driver_mapping=None 和空表都按当前行为走无驱动路径。"""
-        result_none = calculate_dut_input_power(
-            sg_power=dbm(-10.0), frequency=ghz(1.0),
-            loss_table=SAMPLE_LOSS_TABLE,
-            driver_mapping=None)
-        result_empty = calculate_dut_input_power(
-            sg_power=dbm(-10.0), frequency=ghz(1.0),
-            loss_table=SAMPLE_LOSS_TABLE,
-            driver_mapping=DriverOutputTable())
-        self.assertAlmostEqual(result_none.dbm, -10.0 - 1.625)
-        self.assertAlmostEqual(result_empty.dbm, -10.0 - 1.625)
-
-    def test_driver_mode_with_range_outside(self):
-        """驱动模式下超出范围时使用端点值。"""
-        result = calculate_dut_input_power(
-            sg_power=dbm(0.0), frequency=ghz(1.0),
-            loss_table=SAMPLE_LOSS_TABLE,
-            driver_mapping=self._table(SAMPLE_DRIVER_MAPPING))
-        self.assertAlmostEqual(result.dbm, 30.0)
-
-    def test_missing_cable1_names_the_field(self):
-        loss_table = CableLossTable.from_mapping({"1.0": {"cable2": 1.0}})
-        with self.assertRaises(MeasurementValueError) as raised:
-            calculate_dut_input_power(
-                sg_power=dbm(-10.0), frequency=ghz(1.0),
-                loss_table=loss_table, driver_mapping=None)
-        self.assertIn("cable1", str(raised.exception))
-
-
 # ---------------------------------------------------------------------------
 # 阶段 3 测试：增益、效率和压缩点
 # ---------------------------------------------------------------------------

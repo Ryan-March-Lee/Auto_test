@@ -4,11 +4,11 @@
 
 - 读取：文档读取原语只有 ``infrastructure.config.json_io`` 一处（``load_json_object`` /
   ``load_config_file``），本模块的 ``load()`` 只在其上解析正式 schema，不自己打开文件。
-  支持单文件组合配置（根节点包含 ``schema_version``（``"1.0"``）、``test_plan`` 和
+  支持单文件组合配置（根节点包含 ``schema_version``（``"1.2"``）、``test_plan`` 和
   ``run_mapping``，与配置页面保存出的文件一致），或拆分配置（一个正式测试方案文件加
   一个正式运行映射文件）；
 - 写入：只有 :meth:`JsonConfigurationRepository.save_document`。配置页面保存、旧电源
-  配置迁移器等生产写入点都只委托它，因此正式配置的序列化格式（缩进、UTF-8、非 ASCII
+  配置编写服务等生产写入点都只委托它，因此正式配置的序列化格式（缩进、UTF-8、非 ASCII
   字符策略）与原子替换策略只在这里定义一次（重构计划步骤 3）。
 
 边界分工（刻意不合并）：

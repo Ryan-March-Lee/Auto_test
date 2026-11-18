@@ -1,0 +1,127 @@
+{
+  "schema_version": 1,
+  "kind": "simulation_readings",
+  "measurement_type": "cable_loss",
+  "source": {
+    "scenario": "scenario.json",
+    "scenario_sha256": "227caa4294521b761bb00d4a5fc2ef20fdc01ca927316c7d42ae8570fa26e579",
+    "cable_loss_result": null,
+    "cable_loss_sha256": null,
+    "driver_mapping_result": null,
+    "driver_mapping_sha256": null
+  },
+  "payload": {
+    "measurements": [
+      {
+        "frequency_ghz": 1.0,
+        "path": 1,
+        "raw_dbm": -41.842
+      },
+      {
+        "frequency_ghz": 1.1,
+        "path": 1,
+        "raw_dbm": -41.888
+      },
+      {
+        "frequency_ghz": 1.2,
+        "path": 1,
+        "raw_dbm": -41.936
+      },
+      {
+        "frequency_ghz": 1.3,
+        "path": 1,
+        "raw_dbm": -41.986
+      },
+      {
+        "frequency_ghz": 1.4,
+        "path": 1,
+        "raw_dbm": -42.038
+      },
+      {
+        "frequency_ghz": 1.5,
+        "path": 1,
+        "raw_dbm": -42.092
+      },
+      {
+        "frequency_ghz": 1.6,
+        "path": 1,
+        "raw_dbm": -42.148
+      },
+      {
+        "frequency_ghz": 1.7,
+        "path": 1,
+        "raw_dbm": -42.206
+      },
+      {
+        "frequency_ghz": 1.8,
+        "path": 1,
+        "raw_dbm": -42.266
+      },
+      {
+        "frequency_ghz": 1.9,
+        "path": 1,
+        "raw_dbm": -42.328
+      },
+      {
+        "frequency_ghz": 2.0,
+        "path": 1,
+        "raw_dbm": -42.392
+      },
+      {
+        "frequency_ghz": 1.0,
+        "path": 2,
+        "raw_dbm": -43.418
+      },
+      {
+        "frequency_ghz": 1.1,
+        "path": 2,
+        "raw_dbm": -43.49
+      },
+      {
+        "frequency_ghz": 1.2,
+        "path": 2,
+        "raw_dbm": -43.566
+      },
+      {
+        "frequency_ghz": 1.3,
+        "path": 2,
+        "raw_dbm": -43.644
+      },
+      {
+        "frequency_ghz": 1.4,
+        "path": 2,
+        "raw_dbm": -43.726
+      },
+      {
+        "frequency_ghz": 1.5,
+        "path": 2,
+        "raw_dbm": -43.81
+      },
+      {
+        "frequency_ghz": 1.6,
+        "path": 2,
+        "raw_dbm": -43.898
+      },
+      {
+        "frequency_ghz": 1.7,
+        "path": 2,
+        "raw_dbm": -43.988
+      },
+      {
+        "frequency_ghz": 1.8,
+        "path": 2,
+        "raw_dbm": -44.082
+      },
+      {
+        "frequency_ghz": 1.9,
+        "path": 2,
+        "raw_dbm": -44.178
+      },
+      {
+        "frequency_ghz": 2.0,
+        "path": 2,
+        "raw_dbm": -44.278
+      }
+    ]
+  }
+}

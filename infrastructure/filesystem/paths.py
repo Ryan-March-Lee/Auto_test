@@ -87,10 +87,46 @@ class PathService:
     def logs_dir(self) -> Path:
         return self.root / "logs"
 
+    @property
+    def simulation_root(self) -> Path:
+        """仿真运行的数据根：与真实 ``runs/``、``test_results/`` 完全隔离。
+
+        派生关系固定为 ``temp/simulation_runs``；整目录可删，运行与结果都在其下，
+        因此仿真运行既不会读真实结果，也不会污染正式结果。
+        """
+        return self.temp_dir / SIMULATION_ROOT_DIRNAME
+
+    @property
+    def simulation_runs_root(self) -> Path:
+        """仿真运行目录根。
+
+        必须显式传给 ``RunRepository(root=...)``；传 ``paths=`` 会让 ``runs/`` 落到
+        ``test_results/runs``，与 4.2 的目录布局不一致。
+        """
+        return self.simulation_root / SIMULATION_RUNS_DIRNAME
+
+    @property
+    def simulation_configs_dir(self) -> Path:
+        """仿真输入草稿目录（规范化后的编辑文档，唯一名原子写入）。"""
+        return self.simulation_root / SIMULATION_CONFIGS_DIRNAME
+
+    @property
+    def simulation_paths(self) -> "PathService":
+        """仿真作用域的路径服务：``test_results/<stage>`` 等全部从仿真根派生。"""
+        return PathService(root=self.simulation_root)
+
 
 MOCK_DATA_DIRNAME = "mock_data"
 MOCK_CONFIG_FILENAME = "config.mock.json"
 MOCK_SCENARIO_FILENAME = "scenario.json"
+#: 由 ``tools/build_simulation_readings.py`` 生成的原始读数包；与场景/正式结果同目录。
+MOCK_READINGS_FILENAME = "readings.json"
+
+# 仿真运行的数据根：``temp/simulation_runs/`` 下再分出 configs/、runs/ 与 test_results/。
+# 真实 ``runs/`` 与 ``test_results/`` 从不参与，仿真结果也不会进入全局历史/可视化。
+SIMULATION_ROOT_DIRNAME = "simulation_runs"
+SIMULATION_RUNS_DIRNAME = "runs"
+SIMULATION_CONFIGS_DIRNAME = "configs"
 
 
 class MockDataPathError(ConfigurationError):
@@ -394,6 +430,10 @@ class MockDataPathService:
         """返回 ``mock_data/<stage>/scenario.json``，不检查文件是否存在。"""
         return self.stage_dir(stage) / MOCK_SCENARIO_FILENAME
 
+    def readings_path(self, stage: Union[MockStage, str]) -> Path:
+        """返回 ``mock_data/<stage>/readings.json``，不检查文件是否存在。"""
+        return self.stage_dir(stage) / MOCK_READINGS_FILENAME
+
     def result_path(
         self, stage: Union[MockStage, str], filename: str
     ) -> Path:
@@ -442,6 +482,20 @@ class MockDataPathService:
             _require_plain_file_name(filename, stage=target_stage),
             description=f"Mock {target_stage.value} 正式结果文件",
         )
+
+    def require_readings_path(self, stage: Union[MockStage, str]) -> Path:
+        """返回已存在的原始读数文件；越界或缺失时以可读错误失败。"""
+        target_stage = coerce_mock_stage(stage)
+        return self._require_stage_file(
+            target_stage,
+            MOCK_READINGS_FILENAME,
+            description=f"Mock {target_stage.value} 原始读数文件",
+        )
+
+    def require_readings_path_for(self, measurement_type: str) -> Path:
+        """按正式测量类型返回已存在的原始读数文件。"""
+        stage = mock_stage_for_measurement_type(measurement_type)
+        return self.require_readings_path(stage)
 
     def require_result_path_for(
         self, measurement_type: str, filename: str
@@ -526,10 +580,13 @@ def unique_directory_name(prefix: str) -> str:
 __all__ = [
     "ASSETS_DIR", "CABLE_LOSS_FILE",
     "CONFIG_FILE", "DEFAULT_MOCK_DATA_PATHS", "ICONS_DIR", "IMAGES_DIR", "LOGS_DIR",
-    "MOCK_CONFIG_FILENAME", "MOCK_DATA_DIRNAME", "MOCK_SCENARIO_FILENAME",
+    "MOCK_CONFIG_FILENAME", "MOCK_DATA_DIRNAME", "MOCK_READINGS_FILENAME",
+    "MOCK_SCENARIO_FILENAME",
     "MOCK_STAGE_INDEX", "MockDataPathError", "MockDataPathService",
     "MockStage", "MockStageEntry", "PathLike",
     "DEFAULT_PATHS", "PathService", "PROJECT_ROOT",
+    "SIMULATION_CONFIGS_DIRNAME", "SIMULATION_ROOT_DIRNAME",
+    "SIMULATION_RUNS_DIRNAME",
     "TEMP_DIR", "TEST_RESULTS_DIR",
     "coerce_mock_stage", "ensure_directory", "mock_measurement_type_for_stage",
     "mock_stage_entry", "mock_stage_for_measurement_type", "resolve_path",

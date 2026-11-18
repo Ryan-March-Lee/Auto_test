@@ -1,0 +1,5053 @@
+{
+  "schema_version": 1,
+  "kind": "simulation_readings",
+  "measurement_type": "amplifier",
+  "source": {
+    "scenario": "scenario.json",
+    "scenario_sha256": "d8f78dd63219889022c4de8909af632280e996900098827c154e273a4b645d90",
+    "cable_loss_result": "20261117T060245Z_9b2e7d10.json",
+    "cable_loss_sha256": "3782ff35df9d0092076ca7f0f88917e6f6b7263660ab637ada567a17c77cec31",
+    "driver_mapping_result": "20261117T060600Z_5c1d9e42.json",
+    "driver_mapping_sha256": "1206d6d8df78d69e5c89c93e3820c25c6e4e7fc76d8ea928490f76aa7a99b46d"
+  },
+  "payload": {
+    "frequencies": {
+      "1.0": {
+        "points": [
+          {
+            "sg_power_dbm": -60.0,
+            "raw_output_dbm": -26.709,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.2
+            }
+          },
+          {
+            "sg_power_dbm": -58.988,
+            "raw_output_dbm": -25.709,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.222
+            }
+          },
+          {
+            "sg_power_dbm": -57.976,
+            "raw_output_dbm": -24.709,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.244
+            }
+          },
+          {
+            "sg_power_dbm": -56.964,
+            "raw_output_dbm": -23.709,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.266
+            }
+          },
+          {
+            "sg_power_dbm": -55.952,
+            "raw_output_dbm": -22.709,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.288
+            }
+          },
+          {
+            "sg_power_dbm": -54.94,
+            "raw_output_dbm": -21.709,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.31
+            }
+          },
+          {
+            "sg_power_dbm": -53.928,
+            "raw_output_dbm": -20.709,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.332
+            }
+          },
+          {
+            "sg_power_dbm": -52.916,
+            "raw_output_dbm": -19.709,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.354
+            }
+          },
+          {
+            "sg_power_dbm": -51.904,
+            "raw_output_dbm": -18.709,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.376
+            }
+          },
+          {
+            "sg_power_dbm": -50.892,
+            "raw_output_dbm": -17.709,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.398
+            }
+          },
+          {
+            "sg_power_dbm": -49.88,
+            "raw_output_dbm": -16.709,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.42
+            }
+          },
+          {
+            "sg_power_dbm": -48.868,
+            "raw_output_dbm": -15.709,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.442
+            }
+          },
+          {
+            "sg_power_dbm": -47.856,
+            "raw_output_dbm": -14.709,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.464
+            }
+          },
+          {
+            "sg_power_dbm": -46.844,
+            "raw_output_dbm": -13.709,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.486
+            }
+          },
+          {
+            "sg_power_dbm": -45.832,
+            "raw_output_dbm": -12.709,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.508
+            }
+          },
+          {
+            "sg_power_dbm": -44.82,
+            "raw_output_dbm": -11.76,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.53
+            }
+          },
+          {
+            "sg_power_dbm": -43.808,
+            "raw_output_dbm": -10.913,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.552
+            }
+          },
+          {
+            "sg_power_dbm": -42.796,
+            "raw_output_dbm": -10.168,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.574
+            }
+          },
+          {
+            "sg_power_dbm": -41.784,
+            "raw_output_dbm": -9.525,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.596
+            }
+          },
+          {
+            "sg_power_dbm": -40.772,
+            "raw_output_dbm": -8.984,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.618
+            }
+          },
+          {
+            "sg_power_dbm": -39.76,
+            "raw_output_dbm": -8.545,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.64
+            }
+          },
+          {
+            "sg_power_dbm": -39.254,
+            "raw_output_dbm": -8.364,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.651
+            }
+          },
+          {
+            "sg_power_dbm": -38.748,
+            "raw_output_dbm": -8.208,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.662
+            }
+          },
+          {
+            "sg_power_dbm": -38.242,
+            "raw_output_dbm": -8.078,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.673
+            }
+          },
+          {
+            "sg_power_dbm": -37.736,
+            "raw_output_dbm": -7.973,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.684
+            }
+          },
+          {
+            "sg_power_dbm": -37.23,
+            "raw_output_dbm": -7.894,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.695
+            }
+          },
+          {
+            "sg_power_dbm": -36.724,
+            "raw_output_dbm": -7.84,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.706
+            }
+          },
+          {
+            "sg_power_dbm": -36.218,
+            "raw_output_dbm": -7.812,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.717
+            }
+          },
+          {
+            "sg_power_dbm": -35.712,
+            "raw_output_dbm": -7.809,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.728
+            }
+          }
+        ]
+      },
+      "1.1": {
+        "points": [
+          {
+            "sg_power_dbm": -59.955,
+            "raw_output_dbm": -26.845,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.2
+            }
+          },
+          {
+            "sg_power_dbm": -58.942,
+            "raw_output_dbm": -25.845,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.222
+            }
+          },
+          {
+            "sg_power_dbm": -57.929,
+            "raw_output_dbm": -24.845,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.244
+            }
+          },
+          {
+            "sg_power_dbm": -56.915,
+            "raw_output_dbm": -23.845,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.266
+            }
+          },
+          {
+            "sg_power_dbm": -55.902,
+            "raw_output_dbm": -22.845,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.288
+            }
+          },
+          {
+            "sg_power_dbm": -54.889,
+            "raw_output_dbm": -21.845,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.31
+            }
+          },
+          {
+            "sg_power_dbm": -53.876,
+            "raw_output_dbm": -20.845,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.332
+            }
+          },
+          {
+            "sg_power_dbm": -52.863,
+            "raw_output_dbm": -19.845,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.354
+            }
+          },
+          {
+            "sg_power_dbm": -51.849,
+            "raw_output_dbm": -18.845,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.376
+            }
+          },
+          {
+            "sg_power_dbm": -50.836,
+            "raw_output_dbm": -17.845,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.398
+            }
+          },
+          {
+            "sg_power_dbm": -49.823,
+            "raw_output_dbm": -16.845,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.42
+            }
+          },
+          {
+            "sg_power_dbm": -48.81,
+            "raw_output_dbm": -15.845,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.442
+            }
+          },
+          {
+            "sg_power_dbm": -47.797,
+            "raw_output_dbm": -14.845,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.464
+            }
+          },
+          {
+            "sg_power_dbm": -46.783,
+            "raw_output_dbm": -13.845,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.486
+            }
+          },
+          {
+            "sg_power_dbm": -45.77,
+            "raw_output_dbm": -12.846,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.508
+            }
+          },
+          {
+            "sg_power_dbm": -44.757,
+            "raw_output_dbm": -11.907,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.53
+            }
+          },
+          {
+            "sg_power_dbm": -43.744,
+            "raw_output_dbm": -11.07,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.552
+            }
+          },
+          {
+            "sg_power_dbm": -42.731,
+            "raw_output_dbm": -10.335,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.574
+            }
+          },
+          {
+            "sg_power_dbm": -41.717,
+            "raw_output_dbm": -9.702,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.596
+            }
+          },
+          {
+            "sg_power_dbm": -40.704,
+            "raw_output_dbm": -9.172,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.618
+            }
+          },
+          {
+            "sg_power_dbm": -39.691,
+            "raw_output_dbm": -8.743,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.64
+            }
+          },
+          {
+            "sg_power_dbm": -39.184,
+            "raw_output_dbm": -8.567,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.651
+            }
+          },
+          {
+            "sg_power_dbm": -38.678,
+            "raw_output_dbm": -8.416,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.662
+            }
+          },
+          {
+            "sg_power_dbm": -38.171,
+            "raw_output_dbm": -8.291,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.673
+            }
+          },
+          {
+            "sg_power_dbm": -37.665,
+            "raw_output_dbm": -8.191,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.684
+            }
+          },
+          {
+            "sg_power_dbm": -37.158,
+            "raw_output_dbm": -8.117,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.695
+            }
+          },
+          {
+            "sg_power_dbm": -36.651,
+            "raw_output_dbm": -8.068,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.706
+            }
+          },
+          {
+            "sg_power_dbm": -36.145,
+            "raw_output_dbm": -8.045,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.717
+            }
+          },
+          {
+            "sg_power_dbm": -35.638,
+            "raw_output_dbm": -8.048,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.728
+            }
+          }
+        ]
+      },
+      "1.2": {
+        "points": [
+          {
+            "sg_power_dbm": -59.91,
+            "raw_output_dbm": -26.983,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.2
+            }
+          },
+          {
+            "sg_power_dbm": -58.896,
+            "raw_output_dbm": -25.983,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.222
+            }
+          },
+          {
+            "sg_power_dbm": -57.881,
+            "raw_output_dbm": -24.983,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.244
+            }
+          },
+          {
+            "sg_power_dbm": -56.867,
+            "raw_output_dbm": -23.983,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.266
+            }
+          },
+          {
+            "sg_power_dbm": -55.852,
+            "raw_output_dbm": -22.983,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.288
+            }
+          },
+          {
+            "sg_power_dbm": -54.838,
+            "raw_output_dbm": -21.983,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.31
+            }
+          },
+          {
+            "sg_power_dbm": -53.824,
+            "raw_output_dbm": -20.983,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.332
+            }
+          },
+          {
+            "sg_power_dbm": -52.809,
+            "raw_output_dbm": -19.983,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.354
+            }
+          },
+          {
+            "sg_power_dbm": -51.795,
+            "raw_output_dbm": -18.983,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.376
+            }
+          },
+          {
+            "sg_power_dbm": -50.78,
+            "raw_output_dbm": -17.983,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.398
+            }
+          },
+          {
+            "sg_power_dbm": -49.766,
+            "raw_output_dbm": -16.983,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.42
+            }
+          },
+          {
+            "sg_power_dbm": -48.752,
+            "raw_output_dbm": -15.983,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.442
+            }
+          },
+          {
+            "sg_power_dbm": -47.737,
+            "raw_output_dbm": -14.983,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.464
+            }
+          },
+          {
+            "sg_power_dbm": -46.723,
+            "raw_output_dbm": -13.983,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.486
+            }
+          },
+          {
+            "sg_power_dbm": -45.708,
+            "raw_output_dbm": -12.985,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.508
+            }
+          },
+          {
+            "sg_power_dbm": -44.694,
+            "raw_output_dbm": -12.056,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.53
+            }
+          },
+          {
+            "sg_power_dbm": -43.68,
+            "raw_output_dbm": -11.23,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.552
+            }
+          },
+          {
+            "sg_power_dbm": -42.665,
+            "raw_output_dbm": -10.505,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.574
+            }
+          },
+          {
+            "sg_power_dbm": -41.651,
+            "raw_output_dbm": -9.883,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.596
+            }
+          },
+          {
+            "sg_power_dbm": -40.636,
+            "raw_output_dbm": -9.362,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.618
+            }
+          },
+          {
+            "sg_power_dbm": -39.622,
+            "raw_output_dbm": -8.943,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.64
+            }
+          },
+          {
+            "sg_power_dbm": -39.115,
+            "raw_output_dbm": -8.772,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.651
+            }
+          },
+          {
+            "sg_power_dbm": -38.608,
+            "raw_output_dbm": -8.627,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.662
+            }
+          },
+          {
+            "sg_power_dbm": -38.1,
+            "raw_output_dbm": -8.507,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.673
+            }
+          },
+          {
+            "sg_power_dbm": -37.593,
+            "raw_output_dbm": -8.412,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.684
+            }
+          },
+          {
+            "sg_power_dbm": -37.086,
+            "raw_output_dbm": -8.343,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.695
+            }
+          },
+          {
+            "sg_power_dbm": -36.579,
+            "raw_output_dbm": -8.3,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.706
+            }
+          },
+          {
+            "sg_power_dbm": -36.072,
+            "raw_output_dbm": -8.282,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.717
+            }
+          },
+          {
+            "sg_power_dbm": -35.564,
+            "raw_output_dbm": -8.289,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.728
+            }
+          }
+        ]
+      },
+      "1.3": {
+        "points": [
+          {
+            "sg_power_dbm": -59.865,
+            "raw_output_dbm": -27.122,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.2
+            }
+          },
+          {
+            "sg_power_dbm": -58.849,
+            "raw_output_dbm": -26.122,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.222
+            }
+          },
+          {
+            "sg_power_dbm": -57.834,
+            "raw_output_dbm": -25.122,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.244
+            }
+          },
+          {
+            "sg_power_dbm": -56.818,
+            "raw_output_dbm": -24.122,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.266
+            }
+          },
+          {
+            "sg_power_dbm": -55.803,
+            "raw_output_dbm": -23.122,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.288
+            }
+          },
+          {
+            "sg_power_dbm": -54.787,
+            "raw_output_dbm": -22.122,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.31
+            }
+          },
+          {
+            "sg_power_dbm": -53.771,
+            "raw_output_dbm": -21.122,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.332
+            }
+          },
+          {
+            "sg_power_dbm": -52.756,
+            "raw_output_dbm": -20.122,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.354
+            }
+          },
+          {
+            "sg_power_dbm": -51.74,
+            "raw_output_dbm": -19.122,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.376
+            }
+          },
+          {
+            "sg_power_dbm": -50.725,
+            "raw_output_dbm": -18.122,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.398
+            }
+          },
+          {
+            "sg_power_dbm": -49.709,
+            "raw_output_dbm": -17.122,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.42
+            }
+          },
+          {
+            "sg_power_dbm": -48.693,
+            "raw_output_dbm": -16.122,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.442
+            }
+          },
+          {
+            "sg_power_dbm": -47.678,
+            "raw_output_dbm": -15.122,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.464
+            }
+          },
+          {
+            "sg_power_dbm": -46.662,
+            "raw_output_dbm": -14.122,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.486
+            }
+          },
+          {
+            "sg_power_dbm": -45.647,
+            "raw_output_dbm": -13.127,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.508
+            }
+          },
+          {
+            "sg_power_dbm": -44.631,
+            "raw_output_dbm": -12.208,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.53
+            }
+          },
+          {
+            "sg_power_dbm": -43.615,
+            "raw_output_dbm": -11.392,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.552
+            }
+          },
+          {
+            "sg_power_dbm": -42.6,
+            "raw_output_dbm": -10.677,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.574
+            }
+          },
+          {
+            "sg_power_dbm": -41.584,
+            "raw_output_dbm": -10.065,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.596
+            }
+          },
+          {
+            "sg_power_dbm": -40.569,
+            "raw_output_dbm": -9.555,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.618
+            }
+          },
+          {
+            "sg_power_dbm": -39.553,
+            "raw_output_dbm": -9.146,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.64
+            }
+          },
+          {
+            "sg_power_dbm": -39.045,
+            "raw_output_dbm": -8.98,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.651
+            }
+          },
+          {
+            "sg_power_dbm": -38.537,
+            "raw_output_dbm": -8.84,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.662
+            }
+          },
+          {
+            "sg_power_dbm": -38.03,
+            "raw_output_dbm": -8.725,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.673
+            }
+          },
+          {
+            "sg_power_dbm": -37.522,
+            "raw_output_dbm": -8.635,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.684
+            }
+          },
+          {
+            "sg_power_dbm": -37.014,
+            "raw_output_dbm": -8.571,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.695
+            }
+          },
+          {
+            "sg_power_dbm": -36.506,
+            "raw_output_dbm": -8.533,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.706
+            }
+          },
+          {
+            "sg_power_dbm": -35.998,
+            "raw_output_dbm": -8.52,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.717
+            }
+          },
+          {
+            "sg_power_dbm": -35.491,
+            "raw_output_dbm": -8.533,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.728
+            }
+          }
+        ]
+      },
+      "1.4": {
+        "points": [
+          {
+            "sg_power_dbm": -59.82,
+            "raw_output_dbm": -27.263,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.2
+            }
+          },
+          {
+            "sg_power_dbm": -58.803,
+            "raw_output_dbm": -26.263,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.222
+            }
+          },
+          {
+            "sg_power_dbm": -57.786,
+            "raw_output_dbm": -25.263,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.244
+            }
+          },
+          {
+            "sg_power_dbm": -56.77,
+            "raw_output_dbm": -24.263,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.266
+            }
+          },
+          {
+            "sg_power_dbm": -55.753,
+            "raw_output_dbm": -23.263,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.288
+            }
+          },
+          {
+            "sg_power_dbm": -54.736,
+            "raw_output_dbm": -22.263,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.31
+            }
+          },
+          {
+            "sg_power_dbm": -53.719,
+            "raw_output_dbm": -21.263,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.332
+            }
+          },
+          {
+            "sg_power_dbm": -52.702,
+            "raw_output_dbm": -20.263,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.354
+            }
+          },
+          {
+            "sg_power_dbm": -51.686,
+            "raw_output_dbm": -19.263,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.376
+            }
+          },
+          {
+            "sg_power_dbm": -50.669,
+            "raw_output_dbm": -18.263,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.398
+            }
+          },
+          {
+            "sg_power_dbm": -49.652,
+            "raw_output_dbm": -17.263,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.42
+            }
+          },
+          {
+            "sg_power_dbm": -48.635,
+            "raw_output_dbm": -16.263,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.442
+            }
+          },
+          {
+            "sg_power_dbm": -47.618,
+            "raw_output_dbm": -15.263,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.464
+            }
+          },
+          {
+            "sg_power_dbm": -46.602,
+            "raw_output_dbm": -14.263,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.486
+            }
+          },
+          {
+            "sg_power_dbm": -45.585,
+            "raw_output_dbm": -13.271,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.508
+            }
+          },
+          {
+            "sg_power_dbm": -44.568,
+            "raw_output_dbm": -12.363,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.53
+            }
+          },
+          {
+            "sg_power_dbm": -43.551,
+            "raw_output_dbm": -11.557,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.552
+            }
+          },
+          {
+            "sg_power_dbm": -42.534,
+            "raw_output_dbm": -10.853,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.574
+            }
+          },
+          {
+            "sg_power_dbm": -41.518,
+            "raw_output_dbm": -10.25,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.596
+            }
+          },
+          {
+            "sg_power_dbm": -40.501,
+            "raw_output_dbm": -9.75,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.618
+            }
+          },
+          {
+            "sg_power_dbm": -39.484,
+            "raw_output_dbm": -9.352,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.64
+            }
+          },
+          {
+            "sg_power_dbm": -38.976,
+            "raw_output_dbm": -9.191,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.651
+            }
+          },
+          {
+            "sg_power_dbm": -38.467,
+            "raw_output_dbm": -9.056,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.662
+            }
+          },
+          {
+            "sg_power_dbm": -37.959,
+            "raw_output_dbm": -8.946,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.673
+            }
+          },
+          {
+            "sg_power_dbm": -37.45,
+            "raw_output_dbm": -8.862,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.684
+            }
+          },
+          {
+            "sg_power_dbm": -36.942,
+            "raw_output_dbm": -8.803,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.695
+            }
+          },
+          {
+            "sg_power_dbm": -36.434,
+            "raw_output_dbm": -8.769,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.706
+            }
+          },
+          {
+            "sg_power_dbm": -35.925,
+            "raw_output_dbm": -8.762,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.717
+            }
+          },
+          {
+            "sg_power_dbm": -35.417,
+            "raw_output_dbm": -8.779,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.728
+            }
+          }
+        ]
+      },
+      "1.5": {
+        "points": [
+          {
+            "sg_power_dbm": -59.775,
+            "raw_output_dbm": -27.405,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.2
+            }
+          },
+          {
+            "sg_power_dbm": -58.757,
+            "raw_output_dbm": -26.405,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.222
+            }
+          },
+          {
+            "sg_power_dbm": -57.739,
+            "raw_output_dbm": -25.405,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.244
+            }
+          },
+          {
+            "sg_power_dbm": -56.721,
+            "raw_output_dbm": -24.405,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.266
+            }
+          },
+          {
+            "sg_power_dbm": -55.703,
+            "raw_output_dbm": -23.405,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.288
+            }
+          },
+          {
+            "sg_power_dbm": -54.685,
+            "raw_output_dbm": -22.405,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.31
+            }
+          },
+          {
+            "sg_power_dbm": -53.667,
+            "raw_output_dbm": -21.405,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.332
+            }
+          },
+          {
+            "sg_power_dbm": -52.649,
+            "raw_output_dbm": -20.405,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.354
+            }
+          },
+          {
+            "sg_power_dbm": -51.631,
+            "raw_output_dbm": -19.405,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.376
+            }
+          },
+          {
+            "sg_power_dbm": -50.613,
+            "raw_output_dbm": -18.405,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.398
+            }
+          },
+          {
+            "sg_power_dbm": -49.595,
+            "raw_output_dbm": -17.405,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.42
+            }
+          },
+          {
+            "sg_power_dbm": -48.577,
+            "raw_output_dbm": -16.405,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.442
+            }
+          },
+          {
+            "sg_power_dbm": -47.559,
+            "raw_output_dbm": -15.405,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.464
+            }
+          },
+          {
+            "sg_power_dbm": -46.541,
+            "raw_output_dbm": -14.405,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.486
+            }
+          },
+          {
+            "sg_power_dbm": -45.523,
+            "raw_output_dbm": -13.418,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.508
+            }
+          },
+          {
+            "sg_power_dbm": -44.505,
+            "raw_output_dbm": -12.52,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.53
+            }
+          },
+          {
+            "sg_power_dbm": -43.487,
+            "raw_output_dbm": -11.724,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.552
+            }
+          },
+          {
+            "sg_power_dbm": -42.469,
+            "raw_output_dbm": -11.03,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.574
+            }
+          },
+          {
+            "sg_power_dbm": -41.451,
+            "raw_output_dbm": -10.438,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.596
+            }
+          },
+          {
+            "sg_power_dbm": -40.433,
+            "raw_output_dbm": -9.948,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.618
+            }
+          },
+          {
+            "sg_power_dbm": -39.415,
+            "raw_output_dbm": -9.56,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.64
+            }
+          },
+          {
+            "sg_power_dbm": -38.906,
+            "raw_output_dbm": -9.404,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.651
+            }
+          },
+          {
+            "sg_power_dbm": -38.397,
+            "raw_output_dbm": -9.274,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.662
+            }
+          },
+          {
+            "sg_power_dbm": -37.888,
+            "raw_output_dbm": -9.169,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.673
+            }
+          },
+          {
+            "sg_power_dbm": -37.379,
+            "raw_output_dbm": -9.09,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.684
+            }
+          },
+          {
+            "sg_power_dbm": -36.87,
+            "raw_output_dbm": -9.036,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.695
+            }
+          },
+          {
+            "sg_power_dbm": -36.361,
+            "raw_output_dbm": -9.008,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.706
+            }
+          },
+          {
+            "sg_power_dbm": -35.852,
+            "raw_output_dbm": -9.005,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.717
+            }
+          }
+        ]
+      },
+      "1.6": {
+        "points": [
+          {
+            "sg_power_dbm": -59.748,
+            "raw_output_dbm": -27.567,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.2
+            }
+          },
+          {
+            "sg_power_dbm": -58.711,
+            "raw_output_dbm": -26.549,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.222
+            }
+          },
+          {
+            "sg_power_dbm": -57.692,
+            "raw_output_dbm": -25.549,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.244
+            }
+          },
+          {
+            "sg_power_dbm": -56.672,
+            "raw_output_dbm": -24.549,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.266
+            }
+          },
+          {
+            "sg_power_dbm": -55.653,
+            "raw_output_dbm": -23.549,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.288
+            }
+          },
+          {
+            "sg_power_dbm": -54.634,
+            "raw_output_dbm": -22.549,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.31
+            }
+          },
+          {
+            "sg_power_dbm": -53.615,
+            "raw_output_dbm": -21.549,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.332
+            }
+          },
+          {
+            "sg_power_dbm": -52.596,
+            "raw_output_dbm": -20.549,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.354
+            }
+          },
+          {
+            "sg_power_dbm": -51.576,
+            "raw_output_dbm": -19.549,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.376
+            }
+          },
+          {
+            "sg_power_dbm": -50.557,
+            "raw_output_dbm": -18.549,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.398
+            }
+          },
+          {
+            "sg_power_dbm": -49.538,
+            "raw_output_dbm": -17.549,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.42
+            }
+          },
+          {
+            "sg_power_dbm": -48.519,
+            "raw_output_dbm": -16.549,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.442
+            }
+          },
+          {
+            "sg_power_dbm": -47.5,
+            "raw_output_dbm": -15.549,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.464
+            }
+          },
+          {
+            "sg_power_dbm": -46.48,
+            "raw_output_dbm": -14.549,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.486
+            }
+          },
+          {
+            "sg_power_dbm": -45.461,
+            "raw_output_dbm": -13.567,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.508
+            }
+          },
+          {
+            "sg_power_dbm": -44.442,
+            "raw_output_dbm": -12.68,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.53
+            }
+          },
+          {
+            "sg_power_dbm": -43.423,
+            "raw_output_dbm": -11.894,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.552
+            }
+          },
+          {
+            "sg_power_dbm": -42.404,
+            "raw_output_dbm": -11.21,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.574
+            }
+          },
+          {
+            "sg_power_dbm": -41.384,
+            "raw_output_dbm": -10.628,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.596
+            }
+          },
+          {
+            "sg_power_dbm": -40.365,
+            "raw_output_dbm": -10.148,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.618
+            }
+          },
+          {
+            "sg_power_dbm": -39.346,
+            "raw_output_dbm": -9.771,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.64
+            }
+          },
+          {
+            "sg_power_dbm": -38.836,
+            "raw_output_dbm": -9.62,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.651
+            }
+          },
+          {
+            "sg_power_dbm": -38.327,
+            "raw_output_dbm": -9.495,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.662
+            }
+          },
+          {
+            "sg_power_dbm": -37.817,
+            "raw_output_dbm": -9.395,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.673
+            }
+          },
+          {
+            "sg_power_dbm": -37.308,
+            "raw_output_dbm": -9.321,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.684
+            }
+          },
+          {
+            "sg_power_dbm": -36.798,
+            "raw_output_dbm": -9.272,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.695
+            }
+          },
+          {
+            "sg_power_dbm": -36.288,
+            "raw_output_dbm": -9.249,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.706
+            }
+          },
+          {
+            "sg_power_dbm": -35.779,
+            "raw_output_dbm": -9.252,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.717
+            }
+          }
+        ]
+      },
+      "1.7": {
+        "points": [
+          {
+            "sg_power_dbm": -59.747,
+            "raw_output_dbm": -27.755,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.199
+            }
+          },
+          {
+            "sg_power_dbm": -58.665,
+            "raw_output_dbm": -26.694,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.222
+            }
+          },
+          {
+            "sg_power_dbm": -57.644,
+            "raw_output_dbm": -25.694,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.244
+            }
+          },
+          {
+            "sg_power_dbm": -56.624,
+            "raw_output_dbm": -24.694,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.266
+            }
+          },
+          {
+            "sg_power_dbm": -55.603,
+            "raw_output_dbm": -23.694,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.288
+            }
+          },
+          {
+            "sg_power_dbm": -54.583,
+            "raw_output_dbm": -22.694,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.31
+            }
+          },
+          {
+            "sg_power_dbm": -53.563,
+            "raw_output_dbm": -21.694,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.332
+            }
+          },
+          {
+            "sg_power_dbm": -52.542,
+            "raw_output_dbm": -20.694,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.354
+            }
+          },
+          {
+            "sg_power_dbm": -51.522,
+            "raw_output_dbm": -19.694,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.376
+            }
+          },
+          {
+            "sg_power_dbm": -50.501,
+            "raw_output_dbm": -18.694,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.398
+            }
+          },
+          {
+            "sg_power_dbm": -49.481,
+            "raw_output_dbm": -17.694,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.42
+            }
+          },
+          {
+            "sg_power_dbm": -48.461,
+            "raw_output_dbm": -16.694,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.442
+            }
+          },
+          {
+            "sg_power_dbm": -47.44,
+            "raw_output_dbm": -15.694,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.464
+            }
+          },
+          {
+            "sg_power_dbm": -46.42,
+            "raw_output_dbm": -14.694,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.486
+            }
+          },
+          {
+            "sg_power_dbm": -45.399,
+            "raw_output_dbm": -13.719,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.508
+            }
+          },
+          {
+            "sg_power_dbm": -44.379,
+            "raw_output_dbm": -12.841,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.53
+            }
+          },
+          {
+            "sg_power_dbm": -43.359,
+            "raw_output_dbm": -12.066,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.552
+            }
+          },
+          {
+            "sg_power_dbm": -42.338,
+            "raw_output_dbm": -11.392,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.574
+            }
+          },
+          {
+            "sg_power_dbm": -41.318,
+            "raw_output_dbm": -10.821,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.596
+            }
+          },
+          {
+            "sg_power_dbm": -40.297,
+            "raw_output_dbm": -10.351,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.618
+            }
+          },
+          {
+            "sg_power_dbm": -39.277,
+            "raw_output_dbm": -9.983,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.64
+            }
+          },
+          {
+            "sg_power_dbm": -38.767,
+            "raw_output_dbm": -9.838,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.651
+            }
+          },
+          {
+            "sg_power_dbm": -38.257,
+            "raw_output_dbm": -9.718,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.662
+            }
+          },
+          {
+            "sg_power_dbm": -37.746,
+            "raw_output_dbm": -9.623,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.673
+            }
+          },
+          {
+            "sg_power_dbm": -37.236,
+            "raw_output_dbm": -9.554,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.684
+            }
+          },
+          {
+            "sg_power_dbm": -36.726,
+            "raw_output_dbm": -9.511,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.695
+            }
+          },
+          {
+            "sg_power_dbm": -36.216,
+            "raw_output_dbm": -9.493,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.706
+            }
+          },
+          {
+            "sg_power_dbm": -35.706,
+            "raw_output_dbm": -9.5,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.717
+            }
+          }
+        ]
+      },
+      "1.8": {
+        "points": [
+          {
+            "sg_power_dbm": -59.746,
+            "raw_output_dbm": -27.945,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.198
+            }
+          },
+          {
+            "sg_power_dbm": -58.618,
+            "raw_output_dbm": -26.841,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.222
+            }
+          },
+          {
+            "sg_power_dbm": -57.597,
+            "raw_output_dbm": -25.841,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.244
+            }
+          },
+          {
+            "sg_power_dbm": -56.575,
+            "raw_output_dbm": -24.841,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.266
+            }
+          },
+          {
+            "sg_power_dbm": -55.554,
+            "raw_output_dbm": -23.841,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.288
+            }
+          },
+          {
+            "sg_power_dbm": -54.532,
+            "raw_output_dbm": -22.841,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.31
+            }
+          },
+          {
+            "sg_power_dbm": -53.51,
+            "raw_output_dbm": -21.841,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.332
+            }
+          },
+          {
+            "sg_power_dbm": -52.489,
+            "raw_output_dbm": -20.841,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.354
+            }
+          },
+          {
+            "sg_power_dbm": -51.467,
+            "raw_output_dbm": -19.841,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.376
+            }
+          },
+          {
+            "sg_power_dbm": -50.446,
+            "raw_output_dbm": -18.841,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.398
+            }
+          },
+          {
+            "sg_power_dbm": -49.424,
+            "raw_output_dbm": -17.841,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.42
+            }
+          },
+          {
+            "sg_power_dbm": -48.402,
+            "raw_output_dbm": -16.841,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.442
+            }
+          },
+          {
+            "sg_power_dbm": -47.381,
+            "raw_output_dbm": -15.841,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.464
+            }
+          },
+          {
+            "sg_power_dbm": -46.359,
+            "raw_output_dbm": -14.841,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.486
+            }
+          },
+          {
+            "sg_power_dbm": -45.338,
+            "raw_output_dbm": -13.874,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.508
+            }
+          },
+          {
+            "sg_power_dbm": -44.316,
+            "raw_output_dbm": -13.006,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.53
+            }
+          },
+          {
+            "sg_power_dbm": -43.294,
+            "raw_output_dbm": -12.241,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.552
+            }
+          },
+          {
+            "sg_power_dbm": -42.273,
+            "raw_output_dbm": -11.577,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.574
+            }
+          },
+          {
+            "sg_power_dbm": -41.251,
+            "raw_output_dbm": -11.016,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.596
+            }
+          },
+          {
+            "sg_power_dbm": -40.23,
+            "raw_output_dbm": -10.557,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.618
+            }
+          },
+          {
+            "sg_power_dbm": -39.208,
+            "raw_output_dbm": -10.199,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.64
+            }
+          },
+          {
+            "sg_power_dbm": -38.697,
+            "raw_output_dbm": -10.059,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.651
+            }
+          },
+          {
+            "sg_power_dbm": -38.186,
+            "raw_output_dbm": -9.944,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.662
+            }
+          },
+          {
+            "sg_power_dbm": -37.676,
+            "raw_output_dbm": -9.854,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.673
+            }
+          },
+          {
+            "sg_power_dbm": -37.165,
+            "raw_output_dbm": -9.79,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.684
+            }
+          },
+          {
+            "sg_power_dbm": -36.654,
+            "raw_output_dbm": -9.752,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.695
+            }
+          },
+          {
+            "sg_power_dbm": -36.143,
+            "raw_output_dbm": -9.739,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.706
+            }
+          },
+          {
+            "sg_power_dbm": -35.632,
+            "raw_output_dbm": -9.752,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.717
+            }
+          }
+        ]
+      },
+      "1.9": {
+        "points": [
+          {
+            "sg_power_dbm": -59.746,
+            "raw_output_dbm": -28.136,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.197
+            }
+          },
+          {
+            "sg_power_dbm": -58.572,
+            "raw_output_dbm": -26.989,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.222
+            }
+          },
+          {
+            "sg_power_dbm": -57.549,
+            "raw_output_dbm": -25.989,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.244
+            }
+          },
+          {
+            "sg_power_dbm": -56.527,
+            "raw_output_dbm": -24.989,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.266
+            }
+          },
+          {
+            "sg_power_dbm": -55.504,
+            "raw_output_dbm": -23.989,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.288
+            }
+          },
+          {
+            "sg_power_dbm": -54.481,
+            "raw_output_dbm": -22.989,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.31
+            }
+          },
+          {
+            "sg_power_dbm": -53.458,
+            "raw_output_dbm": -21.989,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.332
+            }
+          },
+          {
+            "sg_power_dbm": -52.435,
+            "raw_output_dbm": -20.989,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.354
+            }
+          },
+          {
+            "sg_power_dbm": -51.413,
+            "raw_output_dbm": -19.989,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.376
+            }
+          },
+          {
+            "sg_power_dbm": -50.39,
+            "raw_output_dbm": -18.989,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.398
+            }
+          },
+          {
+            "sg_power_dbm": -49.367,
+            "raw_output_dbm": -17.989,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.42
+            }
+          },
+          {
+            "sg_power_dbm": -48.344,
+            "raw_output_dbm": -16.989,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.442
+            }
+          },
+          {
+            "sg_power_dbm": -47.321,
+            "raw_output_dbm": -15.989,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.464
+            }
+          },
+          {
+            "sg_power_dbm": -46.299,
+            "raw_output_dbm": -14.989,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.486
+            }
+          },
+          {
+            "sg_power_dbm": -45.276,
+            "raw_output_dbm": -14.03,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.508
+            }
+          },
+          {
+            "sg_power_dbm": -44.253,
+            "raw_output_dbm": -13.173,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.53
+            }
+          },
+          {
+            "sg_power_dbm": -43.23,
+            "raw_output_dbm": -12.418,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.552
+            }
+          },
+          {
+            "sg_power_dbm": -42.207,
+            "raw_output_dbm": -11.765,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.574
+            }
+          },
+          {
+            "sg_power_dbm": -41.185,
+            "raw_output_dbm": -11.214,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.596
+            }
+          },
+          {
+            "sg_power_dbm": -40.162,
+            "raw_output_dbm": -10.764,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.618
+            }
+          },
+          {
+            "sg_power_dbm": -39.139,
+            "raw_output_dbm": -10.417,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.64
+            }
+          },
+          {
+            "sg_power_dbm": -38.628,
+            "raw_output_dbm": -10.282,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.651
+            }
+          },
+          {
+            "sg_power_dbm": -38.116,
+            "raw_output_dbm": -10.172,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.662
+            }
+          },
+          {
+            "sg_power_dbm": -37.605,
+            "raw_output_dbm": -10.088,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.673
+            }
+          },
+          {
+            "sg_power_dbm": -37.093,
+            "raw_output_dbm": -10.029,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.684
+            }
+          },
+          {
+            "sg_power_dbm": -36.582,
+            "raw_output_dbm": -9.995,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.695
+            }
+          },
+          {
+            "sg_power_dbm": -36.071,
+            "raw_output_dbm": -9.988,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.706
+            }
+          },
+          {
+            "sg_power_dbm": -35.559,
+            "raw_output_dbm": -10.005,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.717
+            }
+          }
+        ]
+      },
+      "2.0": {
+        "points": [
+          {
+            "sg_power_dbm": -59.745,
+            "raw_output_dbm": -28.329,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.196
+            }
+          },
+          {
+            "sg_power_dbm": -58.526,
+            "raw_output_dbm": -27.139,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.222
+            }
+          },
+          {
+            "sg_power_dbm": -57.502,
+            "raw_output_dbm": -26.139,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.244
+            }
+          },
+          {
+            "sg_power_dbm": -56.478,
+            "raw_output_dbm": -25.139,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 5.0
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.266
+            }
+          },
+          {
+            "sg_power_dbm": -55.454,
+            "raw_output_dbm": -24.139,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.288
+            }
+          },
+          {
+            "sg_power_dbm": -54.43,
+            "raw_output_dbm": -23.139,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.31
+            }
+          },
+          {
+            "sg_power_dbm": -53.406,
+            "raw_output_dbm": -22.139,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.332
+            }
+          },
+          {
+            "sg_power_dbm": -52.382,
+            "raw_output_dbm": -21.139,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.354
+            }
+          },
+          {
+            "sg_power_dbm": -51.358,
+            "raw_output_dbm": -20.139,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.376
+            }
+          },
+          {
+            "sg_power_dbm": -50.334,
+            "raw_output_dbm": -19.139,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.398
+            }
+          },
+          {
+            "sg_power_dbm": -49.31,
+            "raw_output_dbm": -18.139,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.42
+            }
+          },
+          {
+            "sg_power_dbm": -48.286,
+            "raw_output_dbm": -17.139,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.999
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.442
+            }
+          },
+          {
+            "sg_power_dbm": -47.262,
+            "raw_output_dbm": -16.139,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.464
+            }
+          },
+          {
+            "sg_power_dbm": -46.238,
+            "raw_output_dbm": -15.139,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.486
+            }
+          },
+          {
+            "sg_power_dbm": -45.214,
+            "raw_output_dbm": -14.19,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.508
+            }
+          },
+          {
+            "sg_power_dbm": -44.19,
+            "raw_output_dbm": -13.343,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.53
+            }
+          },
+          {
+            "sg_power_dbm": -43.166,
+            "raw_output_dbm": -12.598,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.552
+            }
+          },
+          {
+            "sg_power_dbm": -42.142,
+            "raw_output_dbm": -11.955,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.574
+            }
+          },
+          {
+            "sg_power_dbm": -41.118,
+            "raw_output_dbm": -11.414,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.998
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.596
+            }
+          },
+          {
+            "sg_power_dbm": -40.094,
+            "raw_output_dbm": -10.975,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.618
+            }
+          },
+          {
+            "sg_power_dbm": -39.07,
+            "raw_output_dbm": -10.638,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.64
+            }
+          },
+          {
+            "sg_power_dbm": -38.558,
+            "raw_output_dbm": -10.508,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.651
+            }
+          },
+          {
+            "sg_power_dbm": -38.046,
+            "raw_output_dbm": -10.403,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.662
+            }
+          },
+          {
+            "sg_power_dbm": -37.534,
+            "raw_output_dbm": -10.324,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.673
+            }
+          },
+          {
+            "sg_power_dbm": -37.022,
+            "raw_output_dbm": -10.27,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.684
+            }
+          },
+          {
+            "sg_power_dbm": -36.51,
+            "raw_output_dbm": -10.242,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.695
+            }
+          },
+          {
+            "sg_power_dbm": -35.998,
+            "raw_output_dbm": -10.239,
+            "voltages": {
+              "DP8B0885_CH1": 1.001,
+              "DP8B0885_CH2": 2.002,
+              "DP8B1519_CH1": 3.998,
+              "DP8B1519_CH2": 4.997
+            },
+            "currents": {
+              "DP8B0885_CH1": 0.12,
+              "DP8B0885_CH2": 0.08,
+              "DP8B1519_CH1": 0.25,
+              "DP8B1519_CH2": 2.706
+            }
+          }
+        ]
+      }
+    }
+  }
+}

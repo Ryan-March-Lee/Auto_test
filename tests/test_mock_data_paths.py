@@ -245,6 +245,10 @@ class MockDataPathServiceTests(unittest.TestCase):
                     self.root / "mock_data" / stage.value / "scenario.json",
                 )
                 self.assertEqual(
+                    self.paths.readings_path(stage),
+                    self.root / "mock_data" / stage.value / "readings.json",
+                )
+                self.assertEqual(
                     self.paths.result_path(stage, MOCK_RESULT_FILES[stage]),
                     self.root
                     / "mock_data"
@@ -317,6 +321,47 @@ class MockDataPathServiceTests(unittest.TestCase):
         with self.assertRaises(MockDataPathError):
             self.paths.require_result_path(MockStage.DRIVER_MAPPING, filename)
         self.assertFalse(self.paths.mock_data_dir.exists())
+
+    def test_missing_readings_has_a_readable_error(self):
+        with self.assertRaises(MockDataPathError) as raised:
+            self.paths.require_readings_path(MockStage.AMPLIFIER)
+        message = str(raised.exception)
+        self.assertIn("Mock amplifier 原始读数文件", message)
+        self.assertIn("不存在或不是普通文件", message)
+        self.assertIn("readings.json", message)
+        self.assertFalse(self.paths.mock_data_dir.exists())
+
+    def test_repository_mock_data_provides_three_readings_packages(self):
+        repository_paths = MockDataPathService(PROJECT_ROOT)
+        for stage in MockStage:
+            with self.subTest(stage=stage.value):
+                readings = repository_paths.require_readings_path(stage)
+                self.assertTrue(readings.is_file())
+                self.assertEqual(
+                    readings.parent, repository_paths.stage_dir(stage)
+                )
+                self.assertEqual(readings.name, "readings.json")
+
+    def test_readings_directory_target_is_rejected(self):
+        target = self.paths.readings_path(MockStage.CABLE_LOSS)
+        target.mkdir(parents=True)
+
+        with self.assertRaises(MockDataPathError) as raised:
+            self.paths.require_readings_path(MockStage.CABLE_LOSS)
+        self.assertIn("不存在或不是普通文件", str(raised.exception))
+
+    def test_readings_file_link_outside_stage_directory_is_rejected(self):
+        outside = self._outside_directory()
+        external_readings = self._create_file(outside / "readings.json")
+        stage = self.paths.stage_dir(MockStage.DRIVER_MAPPING)
+        stage.mkdir(parents=True)
+        link = stage / "readings.json"
+        _create_file_link(self, external_readings, link)
+        self.addCleanup(_remove_link, link)
+
+        with self.assertRaises(MockDataPathError) as raised:
+            self.paths.require_readings_path(MockStage.DRIVER_MAPPING)
+        self.assertIn("必须直接位于", str(raised.exception))
 
     def test_result_filename_cannot_escape_the_stage_directory(self):
         invalid_names = (
@@ -503,6 +548,25 @@ class MockMeasurementTypePathTests(unittest.TestCase):
     def test_unknown_measurement_type_has_a_readable_error(self):
         with self.assertRaises(MockDataPathError):
             self.paths.require_scenario_path_for("not_a_measurement")
+
+    def test_readings_paths_resolve_by_formal_measurement_type(self):
+        for measurement_type in (
+            MeasurementType.CABLE_LOSS.value,
+            MeasurementType.DRIVER_POWER_MAPPING.value,
+            MeasurementType.AMPLIFIER.value,
+        ):
+            with self.subTest(measurement_type=measurement_type):
+                readings = self.paths.require_readings_path_for(measurement_type)
+                self.assertTrue(readings.is_file())
+                self.assertEqual(readings.name, "readings.json")
+        self.assertEqual(
+            self.paths.require_readings_path_for(
+                "driver_power_mapping"
+            ).parent.name,
+            "driver_mapping",
+        )
+        with self.assertRaises(MockDataPathError):
+            self.paths.require_readings_path_for("not_a_measurement")
 
     def test_calibration_reference_resolves_inside_its_stage(self):
         reference = (

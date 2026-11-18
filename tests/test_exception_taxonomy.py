@@ -32,6 +32,7 @@ from application.errors import (
 from application.export_service import ExportRequestError
 from application.dto import AmplifierInputError
 from application.dto.mock_scenario import MockScenarioError
+from application.dto.simulation_readings import SimulationReadingsError
 from application.measurements import AmplifierCalibrationError
 from application.measurements.services import DriverMappingError
 from application.mock_configuration_matcher import MockConfigurationError
@@ -112,6 +113,7 @@ class ExistingErrorClassificationTests(unittest.TestCase):
             AmplifierInputError,
             MockScenarioError,
             MockConfigurationError,
+            SimulationReadingsError,
             StageInputUnavailable,
             StageResultNotRecorded,
             RunNotResumable,

@@ -71,6 +71,64 @@ class ProjectPathsTests(unittest.TestCase):
             self.assertFalse(paths.driver_mapping_results_dir.exists())
             self.assertFalse(paths.amplifier_results_dir.exists())
 
+    def test_simulation_root_derives_from_temp_dir_without_creating_it(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            paths = PathService(temporary_directory)
+            simulation_root = (
+                Path(temporary_directory) / "temp" / "simulation_runs"
+            )
+
+            self.assertEqual(paths.simulation_root, simulation_root)
+            self.assertEqual(
+                paths.simulation_runs_root, simulation_root / "runs"
+            )
+            self.assertEqual(
+                paths.simulation_configs_dir, simulation_root / "configs"
+            )
+            self.assertFalse(paths.simulation_root.exists())
+
+    def test_simulation_paths_scope_every_result_directory_to_the_simulation_root(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            paths = PathService(temporary_directory)
+            scoped = paths.simulation_paths
+
+            self.assertEqual(scoped.root, paths.simulation_root.resolve())
+            self.assertEqual(
+                scoped.test_results_dir, paths.simulation_root / "test_results"
+            )
+            self.assertEqual(
+                scoped.cable_loss_results_dir,
+                paths.simulation_root / "test_results" / "cable_loss",
+            )
+            self.assertEqual(
+                scoped.configuration_snapshots_dir,
+                paths.simulation_root / "test_results" / "configurations",
+            )
+            self.assertNotEqual(scoped.test_results_dir, paths.test_results_dir)
+
+    def test_simulation_run_repository_lands_beside_simulation_test_results(self):
+        """``RunRepository(root=...)`` 让 ``runs/`` 与 ``test_results/`` 平级。"""
+        from infrastructure.persistence.run_repository import RunRepository
+
+        run_id = "20261117T060200Z_c3d9a1f4"
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            paths = PathService(temporary_directory)
+            repository = RunRepository(root=paths.simulation_runs_root)
+            self.assertEqual(
+                repository.layout(run_id).run_directory,
+                paths.simulation_root / "runs" / run_id,
+            )
+            self.assertEqual(
+                repository.layout(run_id).manifest_path,
+                paths.simulation_root / "runs" / run_id / "manifest.json",
+            )
+            # 传 paths= 会落到 test_results/runs，这是仿真运行必须避免的布局。
+            defaulted = RunRepository(paths=paths)
+            self.assertEqual(
+                defaulted.layout(run_id).run_directory,
+                paths.test_results_dir / "runs" / run_id,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

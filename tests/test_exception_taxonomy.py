@@ -50,6 +50,7 @@ from instrument.flow.cleanup import cleanup_measurement
 from instrument.ports import InstrumentCapabilityError
 from instrument.power_control import PowerControlError, PowerOnControlError
 from instrument.session import InstrumentSessionError, ManagedInstrumentSession
+from instrument.simulation_port import SimulationPortError, SimulationPortStateError
 from instrument.simulation import (
     CommandRecorder,
     SimulatedPowerSupply,
@@ -114,6 +115,8 @@ class ExistingErrorClassificationTests(unittest.TestCase):
             MockScenarioError,
             MockConfigurationError,
             SimulationReadingsError,
+            SimulationPortError,
+            SimulationPortStateError,
             StageInputUnavailable,
             StageResultNotRecorded,
             RunNotResumable,
@@ -149,6 +152,11 @@ class ExistingErrorClassificationTests(unittest.TestCase):
         self.assertTrue(issubclass(AmplifierCalibrationError, ValueError))
         self.assertTrue(issubclass(RunNotResumable, ValueError))
         self.assertTrue(issubclass(ConfigBackfillError, ValueError))
+        # 仿真端口：读数不匹配按配置失败处理；生命周期误用是可诊断的运行时错误，
+        # 但同样属于“本次装配/调用方式不满足契约”，因此归入配置类并保留 RuntimeError。
+        self.assertTrue(issubclass(SimulationPortError, ValueError))
+        self.assertTrue(issubclass(SimulationPortStateError, ValueError))
+        self.assertTrue(issubclass(SimulationPortStateError, RuntimeError))
         self.assertFalse(issubclass(ExportRequestError, AutoTestError), "导出请求错误不属于六类")
 
 

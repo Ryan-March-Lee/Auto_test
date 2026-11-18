@@ -15,6 +15,7 @@ r"""工具契约：``tools/build_simulation_readings.py``（重构计划步骤 3
 ```
 """
 
+import bisect
 import json
 import shutil
 import tempfile
@@ -43,7 +44,9 @@ from infrastructure.filesystem.paths import (
     MockStage,
 )
 from tools.build_simulation_readings import (
+    AMPLIFIER_COVERAGE_MARGIN_DB,
     READINGS_DECIMALS,
+    REPLAY_TOP_MARGIN_DB,
     ROUND_TRIP_TOLERANCE_DB,
     _lf_bytes,
     build_readings_bytes,
@@ -202,26 +205,47 @@ class RoundTripTests(unittest.TestCase):
             ),
             expected_measurement_type=MeasurementType.DRIVER_POWER_MAPPING,
         )
-        recorded = {
-            (_frequency(point.frequency_ghz), round(point.source_power_dbm, 9)): point
-            for point in result.raw_points
-        }
+        recorded: dict[Frequency, list[tuple[float, float]]] = {}
+        for point in result.raw_points:
+            recorded.setdefault(_frequency(point.frequency_ghz), []).append(
+                (point.source_power_dbm, point.driver_output_power_dbm)
+            )
+        for points in recorded.values():
+            points.sort()
         document = build_readings_document(MockStage.DRIVER_MAPPING)
         for key, bucket in document["payload"]["frequencies"].items():
             frequency = _frequency(key)
+            points = recorded[frequency]
+            sources = [item[0] for item in points]
             for probe in bucket["probes"]:
-                point = recorded[(frequency, round(probe["source_power_dbm"], 9))]
                 compensated = compensate_driver_output_power(
                     PowerDbm(probe["raw_output_dbm"]),
                     frequency,
                     table,
                     attenuator,
                 ).dbm
-                self.assertAlmostEqual(
-                    compensated,
-                    point.driver_output_power_dbm,
-                    delta=TOLERANCE,
-                )
+                source = probe["source_power_dbm"]
+                index = bisect.bisect_left(sources, source)
+                if index < len(sources) and abs(sources[index] - source) <= TOLERANCE:
+                    # 打包结果里的原始点：补偿后必须逐点回到记录值。
+                    self.assertAlmostEqual(
+                        compensated, points[index][1], delta=TOLERANCE
+                    )
+                    continue
+                # 当前搜索请求的补点：必须落在打包曲线的相邻记录点之间（或上界
+                # 余量内），原始读数与补偿后的曲线一致，不能凭空取值。
+                self.assertGreater(index, 0, f"{key} GHz 出现低于记录下界的补点")
+                if index == len(sources):
+                    self.assertLessEqual(
+                        source, sources[-1] + REPLAY_TOP_MARGIN_DB + TOLERANCE,
+                        f"{key} GHz 的补点超出允许的上界余量",
+                    )
+                    index = len(sources) - 1
+                lower, upper = points[index - 1], points[index]
+                expected = lower[1] + (source - lower[0]) * (
+                    upper[1] - lower[1]
+                ) / (upper[0] - lower[0])
+                self.assertAlmostEqual(compensated, expected, delta=TOLERANCE)
 
     def test_amplifier_raw_compensates_back_to_the_recorded_output(self):
         paths = DEFAULT_MOCK_DATA_PATHS
@@ -231,25 +255,54 @@ class RoundTripTests(unittest.TestCase):
             paths.require_result_path(MockStage.AMPLIFIER, scenario.result_filename),
             expected_measurement_type=MeasurementType.AMPLIFIER,
         )
-        recorded = {}
+        recorded: dict[Frequency, list[tuple[float, float]]] = {}
         for item in result.frequencies:
             sweep = item.sweep_data
+            points = recorded.setdefault(_frequency(item.frequency_ghz), [])
             for index, sg_power in enumerate(sweep["sg_power"]):
-                recorded[(_frequency(item.frequency_ghz), round(sg_power, 9))] = sweep[
-                    "output_power_dut"
-                ][index]
+                points.append((sg_power, sweep["output_power_dut"][index]))
+        for points in recorded.values():
+            points.sort()
         document = build_readings_document(MockStage.AMPLIFIER)
         for key, bucket in document["payload"]["frequencies"].items():
             frequency = _frequency(key)
-            for point in bucket["points"]:
-                output = recorded[(frequency, round(point["sg_power_dbm"], 9))]
+            points = recorded[frequency]
+            sources = [item[0] for item in points]
+            for probe in bucket["points"]:
                 compensated = compensate_amplifier_output_power(
-                    PowerDbm(point["raw_output_dbm"]),
+                    PowerDbm(probe["raw_output_dbm"]),
                     frequency,
                     table,
                     attenuator,
                 ).dbm
-                self.assertAlmostEqual(compensated, output, delta=TOLERANCE)
+                source = probe["sg_power_dbm"]
+                index = bisect.bisect_left(sources, source)
+                if index < len(sources) and abs(sources[index] - source) <= TOLERANCE:
+                    self.assertAlmostEqual(
+                        compensated, points[index][1], delta=TOLERANCE
+                    )
+                    continue
+                # 覆盖边界点：只能在打包扫描范围两端 ``AMPLIFIER_COVERAGE_MARGIN_DB``
+                # 内，并且按端点斜率延伸，不能凭空取值。
+                if index == 0:
+                    self.assertGreaterEqual(
+                        source,
+                        sources[0] - AMPLIFIER_COVERAGE_MARGIN_DB - TOLERANCE,
+                        f"{key} GHz 的边界点超出允许的覆盖余量",
+                    )
+                    index = 1
+                elif index == len(sources):
+                    self.assertLessEqual(
+                        source,
+                        sources[-1] + AMPLIFIER_COVERAGE_MARGIN_DB + TOLERANCE,
+                        f"{key} GHz 的边界点超出允许的覆盖余量",
+                    )
+                    index = len(sources) - 1
+                lower, upper = points[index - 1], points[index]
+                expected = lower[1] + (source - lower[0]) * (
+                    upper[1] - lower[1]
+                ) / (upper[0] - lower[0])
+                self.assertAlmostEqual(compensated, expected, delta=TOLERANCE)
 
     def test_raw_values_keep_the_declared_precision(self):
         for stage in MockStage:

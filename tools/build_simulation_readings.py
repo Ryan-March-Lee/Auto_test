@@ -14,6 +14,14 @@ r"""从 Mock 场景与打包正式结果反算原始读数，生成 ``mock_data/
 做往返断言，误差必须小于 ``1e-9 dB``。数据由命令生成而非手写，``--check`` 只生成到
 内存并逐字节比对，因此场景或正式结果一变化就会被发现。
 
+驱动映射还多做一步“按当前自适应搜索重放”：打包结果的原始点来自更早的等步进生成，
+当前搜索会在相同记录区间内请求一些 4～6 位小数的功率点（其中上界多要 0.1~1 mdb）。
+严格模式只接受记录点，因此生成器用冻结读数重放一次真实 ``DriverPowerMappingService``，
+把搜索实际请求的点补进 ``readings.json``。补点的原始输出来自读数曲线在相邻记录点之间
+的插值（仅上界补点用最后一段斜率外推不超过 ``REPLAY_TOP_MARGIN_DB``），不改变正式
+结果的期望值；生成后还会用严格模式再重放一次，确认每频点探测数与目标网格与打包结果
+一致。
+
 ```powershell
 # 重建三份读数包
 & "D:\Anaconda\envs\Auto_test\python.exe" tools/build_simulation_readings.py
@@ -54,6 +62,7 @@ from application.dto.simulation_readings import (  # noqa: E402
 from application.errors import ConfigurationError  # noqa: E402
 from application.inputs.mock_result import load_mock_result  # noqa: E402
 from application.inputs.mock_scenario import load_mock_scenario  # noqa: E402
+from application.measurements.services import DriverPowerMappingService  # noqa: E402
 from application.ports.stage_result_repository import (  # noqa: E402
     measurement_type_for_stage,
 )
@@ -74,6 +83,11 @@ from infrastructure.filesystem.paths import (  # noqa: E402
     MockStage,
     coerce_mock_stage,
 )
+from instrument.flow.cleanup import SafetyCleanupAdapter  # noqa: E402
+from instrument.simulation_port import (  # noqa: E402
+    SIMULATION_POWER_COMMAND_FORMAT,
+    SimulationRunPort,
+)
 
 
 #: 生成文件的缩进；``--check`` 与写入必须使用同一格式，才能逐字节比较。
@@ -84,6 +98,12 @@ ROUND_TRIP_TOLERANCE_DB = 1e-9
 READINGS_DECIMALS = 9
 #: 与场景记录比较时的容差（dB / dBm）。
 SCENARIO_TOLERANCE = 1e-9
+#: 驱动映射补点用于覆盖搜索上界时允许外推的最大距离（dB）。
+REPLAY_TOP_MARGIN_DB = 0.01
+#: 主功放读数在打包扫描范围两端额外覆盖的余量（dB）。全链路使用本次新产生的
+#: 驱动映射目标表，其源功率与打包目标表最多相差一个命中容差；两端各留 0.1 dB
+#: 保证搜索/目标网格落在记录区间内，运行期仍然禁止外推。
+AMPLIFIER_COVERAGE_MARGIN_DB = 0.1
 
 
 def _raw_reading(value: float) -> float:
@@ -244,10 +264,278 @@ def _cable_loss_payload(
     return {"measurements": measurements}
 
 
+def _driver_service_config(scenario: MockScenario) -> dict[str, Any]:
+    """把 Mock 场景的源配置收敛为驱动映射服务契约。"""
+    source = scenario.source_config
+    return {
+        "test_frequencies": list(source.test_frequencies_ghz),
+        "attenuator": {"type": f"{source.attenuator_db}dB"},
+        "signal_source": {
+            "power_scan_plans": [
+                {
+                    "start_power": plan.start_power_dbm,
+                    "step": plan.step_db,
+                    "stop_power": plan.stop_power_dbm,
+                }
+                for plan in source.power_scan_plans
+            ]
+        },
+        "max_dut_input_power": source.dut_max_input_power_dbm,
+        "driver_gain_estimate_db": source.driver_estimated_gain_db,
+        "driver_max_input_power": source.driver_max_input_power_dbm,
+    }
+
+
+def _driver_document(
+    payload: dict[str, Any],
+    scenario: MockScenario,
+    *,
+    scenario_path: Path,
+    mock_paths: MockDataPathService,
+) -> dict[str, Any]:
+    """把驱动映射 payload 包装成运行期契约能接受的读数文档。"""
+    return {
+        "schema_version": SIMULATION_READINGS_SCHEMA_VERSION,
+        "kind": SIMULATION_READINGS_KIND,
+        "measurement_type": MeasurementType.DRIVER_POWER_MAPPING.value,
+        "source": _source_document(
+            MockStage.DRIVER_MAPPING,
+            scenario,
+            scenario_path=scenario_path,
+            mock_paths=mock_paths,
+        ),
+        "payload": payload,
+    }
+
+
+class _RecordingSimulationPort(SimulationRunPort):
+    """离线生成器使用的端口：把每次读数请求与返回的原始值记录下来。
+
+    生成器需要“当前搜索实际会请求哪些功率点”。端口本身不暴露请求历史，因此在工具
+    侧包一层只读记录；控制方法与读数语义仍完全走 ``SimulationRunPort``，不会触达
+    真实设备。
+    """
+
+    def __init__(self, readings: SimulationReadings) -> None:
+        super().__init__(readings)
+        self.requests: dict[str, dict[float, float]] = {}
+        self._request_frequency_ghz: float | None = None
+        self._request_power_dbm: float | None = None
+
+    def set_frequency(self, frequency: float) -> None:
+        """记录生成器看到的频率请求，不依赖端口内部状态。"""
+        super().set_frequency(frequency)
+        self._request_frequency_ghz = float(frequency)
+
+    def set_power(self, power: float) -> None:
+        """记录端口实际查找的量化功率命令值，不读取端口私有字段。"""
+        super().set_power(power)
+        self._request_power_dbm = float(
+            f"{float(power):{SIMULATION_POWER_COMMAND_FORMAT}}"
+        )
+
+    def measure_power_with_average(self) -> float:
+        frequency_ghz = self._request_frequency_ghz
+        power_dbm = self._request_power_dbm
+        raw = super().measure_power_with_average()
+        if frequency_ghz is None or power_dbm is None:
+            raise ConfigurationError(
+                "驱动映射重放在设置频率/功率之前发起了读数请求"
+            )
+        key = Frequency.from_ghz(frequency_ghz).key
+        self.requests.setdefault(key, {})[power_dbm] = raw
+        return raw
+
+
+def _extended_driver_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """在每条频点曲线上端补一个余量点，供搜索上界外推使用。
+
+    当前自适应搜索可能向记录上界外多要 0.1~1 mdb 的点；运行期端口禁止外推，因此
+    生成器先把曲线延长 ``REPLAY_TOP_MARGIN_DB``（按最后一段斜率线性外推），重放后
+    只保留搜索真正请求的点。延长点不写入最终文件，除非搜索确实请求了它。
+    """
+    extended: dict[str, Any] = {}
+    for key, bucket in payload["frequencies"].items():
+        probes = [dict(item) for item in bucket["probes"]]
+        if len(probes) < 2:
+            raise ConfigurationError(
+                f"驱动映射 {key} GHz 的读数少于两个记录点，无法补上界余量"
+            )
+        first, last = probes[-2], probes[-1]
+        span = last["source_power_dbm"] - first["source_power_dbm"]
+        if span <= 0:
+            raise ConfigurationError(
+                f"驱动映射 {key} GHz 的最后两个记录点功率没有递增"
+            )
+        slope = (
+            last["raw_output_dbm"] - first["raw_output_dbm"]
+        ) / span
+        probes.append(
+            {
+                "source_power_dbm": _raw_reading(
+                    last["source_power_dbm"] + REPLAY_TOP_MARGIN_DB
+                ),
+                "raw_output_dbm": _raw_reading(
+                    last["raw_output_dbm"] + slope * REPLAY_TOP_MARGIN_DB
+                ),
+            }
+        )
+        extended[key] = {"probes": probes}
+    return {"frequencies": extended}
+
+
+def _run_driver_replay(
+    *,
+    payload: dict[str, Any],
+    scenario: MockScenario,
+    scenario_path: Path,
+    mock_paths: MockDataPathService,
+    strict: bool,
+) -> tuple[dict[str, dict[float, float]], dict[str, Any]]:
+    """用冻结读数重放一次真实驱动映射搜索。
+
+    返回 ``(请求点, 服务结果)``；``strict=True`` 时端口只接受记录点，用于生成后的
+    自检。任何失败都翻译为配置类错误，提示重新生成 ``readings.json``。
+    """
+    table, _attenuator = _loss_inputs(scenario, mock_paths=mock_paths)
+    # 第一次重放允许读取“上界余量点”，让搜索能越过原记录上界；严格自检直接使用
+    # 已补点的正式 payload，不再额外延长曲线。
+    replay_payload = payload if strict else _extended_driver_payload(payload)
+    document = _driver_document(
+        replay_payload,
+        scenario,
+        scenario_path=scenario_path,
+        mock_paths=mock_paths,
+    )
+    try:
+        readings = SimulationReadings.from_document(document)
+        port = _RecordingSimulationPort(readings)
+        port.strict = strict
+        port.begin_stage()
+        port.activate(MeasurementType.DRIVER_POWER_MAPPING)
+        service = DriverPowerMappingService(
+            _driver_service_config(scenario),
+            port,
+            {"cable_losses": table.to_document()},
+            run_id="simulation-readings-build",
+            sleep_fn=lambda _seconds: None,
+            settle_delay_s=0.0,
+            safety_cleanup=SafetyCleanupAdapter(port),
+            owns_measurement_port=False,
+        )
+        result = service.run()
+    except ConfigurationError:
+        raise
+    except Exception as error:
+        raise ConfigurationError(
+            "无法按当前自适应搜索重放驱动映射读数："
+            f"{error}；请重新生成 readings.json"
+        ) from error
+    return port.requests, result
+
+
+def _augmented_driver_payload(
+    payload: dict[str, Any],
+    requests: dict[str, dict[float, float]],
+) -> dict[str, Any]:
+    """把搜索请求但尚未记录的功率点补进对应频点，按功率严格递增。"""
+    augmented: dict[str, Any] = {}
+    for key, bucket in payload["frequencies"].items():
+        values = {
+            round(item["source_power_dbm"], 9): item["raw_output_dbm"]
+            for item in bucket["probes"]
+        }
+        for power, raw in requests.get(key, {}).items():
+            rounded = round(power, 9)
+            if any(abs(rounded - existing) <= 1e-9 for existing in values):
+                continue
+            values[rounded] = _raw_reading(raw)
+        augmented[key] = {
+            "probes": [
+                {"source_power_dbm": power, "raw_output_dbm": values[power]}
+                for power in sorted(values)
+            ]
+        }
+    return {"frequencies": augmented}
+
+
+def _assert_driver_replay_matches_packaged(
+    *,
+    payload: dict[str, Any],
+    scenario: MockScenario,
+    scenario_path: Path,
+    mock_paths: MockDataPathService,
+    expected_probe_counts: dict[str, int],
+) -> None:
+    """严格模式下重放补点后的读数，逐频点确认探测数与目标网格仍与打包结果一致。
+
+    总数量相等不能发现“某频点少点、另一频点多点”，因此这里按频率比较，并确认
+    目标表里的每个源功率都能在补点后的读数中找到记录（严格模式已经保证端口只会
+    返回记录点，这里再守住生成物的数据形状）。
+    """
+    _requests, result = _run_driver_replay(
+        payload=payload,
+        scenario=scenario,
+        scenario_path=scenario_path,
+        mock_paths=mock_paths,
+        strict=True,
+    )
+    expected_frequencies = {
+        Frequency.from_ghz(value).key
+        for value in scenario.source_config.test_frequencies_ghz
+    }
+    raw_points = result["raw_points"]
+    target_mapping = result["target_mapping"]
+    if set(raw_points) != expected_frequencies or set(target_mapping) != expected_frequencies:
+        raise ConfigurationError(
+            "驱动映射重放的频点与场景配置不一致："
+            f"raw={sorted(raw_points)}、target={sorted(target_mapping)}、"
+            f"期望={sorted(expected_frequencies)}；请重新生成 readings.json"
+        )
+    expected_targets = tuple(scenario.source_config.target_input_powers_dbm)
+    for key in sorted(expected_frequencies):
+        actual_count = len(raw_points[key])
+        expected_count = expected_probe_counts.get(key)
+        if expected_count is None or actual_count != expected_count:
+            raise ConfigurationError(
+                f"驱动映射重放 {key} GHz 的探测数与打包正式结果不一致："
+                f"{actual_count} != {expected_count}；请重新生成 readings.json"
+            )
+        actual_targets = tuple(
+            row["target_input_power_dbm"] for row in target_mapping[key]
+        )
+        if actual_targets != expected_targets:
+            raise ConfigurationError(
+                f"驱动映射重放 {key} GHz 的目标网格与场景配置不一致："
+                f"{actual_targets} != {expected_targets}；请重新生成 readings.json"
+            )
+        recorded_sources = {
+            round(probe["source_power_dbm"], 9)
+            for probe in payload["frequencies"][key]["probes"]
+        }
+        for row in target_mapping[key]:
+            # 服务记录的是未量化的源功率，端口按信号源实际下发的 6 位有效数字
+            # 查找记录；对照前先复现同一条命令量化。
+            source = round(
+                float(
+                    f"{row['source_power_dbm']:{SIMULATION_POWER_COMMAND_FORMAT}}"
+                ),
+                9,
+            )
+            if not any(
+                abs(source - existing) <= 1e-9 for existing in recorded_sources
+            ):
+                raise ConfigurationError(
+                    f"驱动映射重放 {key} GHz 的目标源功率 {source} dBm "
+                    "没有对应的读数记录；请重新生成 readings.json"
+                )
+
+
 def _driver_payload(
     scenario: MockScenario,
     result: Any,
     *,
+    scenario_path: Path,
     mock_paths: MockDataPathService,
 ) -> dict[str, Any]:
     table, attenuator = _loss_inputs(scenario, mock_paths=mock_paths)
@@ -334,7 +622,90 @@ def _driver_payload(
                     tolerance=SCENARIO_TOLERANCE,
                 )
         payload[frequency.key] = {"probes": probes}
-    return {"frequencies": payload}
+    baseline = {"frequencies": payload}
+    requests, _result = _run_driver_replay(
+        payload=baseline,
+        scenario=scenario,
+        scenario_path=scenario_path,
+        mock_paths=mock_paths,
+        strict=False,
+    )
+    augmented = _augmented_driver_payload(baseline, requests)
+    _assert_driver_replay_matches_packaged(
+        payload=augmented,
+        scenario=scenario,
+        scenario_path=scenario_path,
+        mock_paths=mock_paths,
+        expected_probe_counts={
+            key: len(bucket["probes"]) for key, bucket in payload.items()
+        },
+    )
+    return augmented
+
+
+def _amplifier_boundary_point(
+    points: list[dict[str, Any]], source_power_dbm: float, *, at_start: bool
+) -> dict[str, Any]:
+    """按端点两个记录点线性延伸出一个覆盖用的边界点。
+
+    主功放全链路使用本次新生成的驱动映射目标表，其源功率与打包目标表可能相差
+    一个命中容差。边界点只用于让端口区间覆盖这些请求，运行时不会外推；读数与
+    V/I 都按端点斜率延伸，保持曲线连续。
+    """
+    if len(points) < 2:
+        raise ConfigurationError(
+            "主功放读数少于两个记录点，无法补覆盖边界"
+        )
+    lower, upper = (points[0], points[1]) if at_start else (points[-2], points[-1])
+    span = upper["sg_power_dbm"] - lower["sg_power_dbm"]
+    if span <= 0:
+        raise ConfigurationError("主功放读数的记录点功率没有递增")
+    fraction = (source_power_dbm - lower["sg_power_dbm"]) / span
+
+    def extrapolate(left: float, right: float) -> float:
+        return left + fraction * (right - left)
+
+    return {
+        "sg_power_dbm": _raw_reading(source_power_dbm),
+        "raw_output_dbm": _raw_reading(
+            extrapolate(lower["raw_output_dbm"], upper["raw_output_dbm"])
+        ),
+        "voltages": {
+            channel: _raw_reading(
+                extrapolate(lower["voltages"][channel], upper["voltages"][channel])
+            )
+            for channel in lower["voltages"]
+        },
+        "currents": {
+            channel: _raw_reading(
+                extrapolate(lower["currents"][channel], upper["currents"][channel])
+            )
+            for channel in lower["currents"]
+        },
+    }
+
+
+def _cover_amplifier_range(
+    points: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """在打包扫描范围两端各补一个覆盖点，供全链路的新目标表使用。
+
+    全链路使用本次新生成的驱动映射目标表；其源功率与打包目标表最多相差一个命中
+    容差。两端各留 ``AMPLIFIER_COVERAGE_MARGIN_DB`` 让端口区间覆盖这些请求，运行期
+    仍然禁止外推；边界点按端点斜率延伸，不改变打包记录点本身。
+    """
+    if len(points) < 2:
+        return points
+    desired_min = points[0]["sg_power_dbm"] - AMPLIFIER_COVERAGE_MARGIN_DB
+    desired_max = points[-1]["sg_power_dbm"] + AMPLIFIER_COVERAGE_MARGIN_DB
+    points.insert(
+        0, _amplifier_boundary_point(points, desired_min, at_start=True)
+    )
+    points.append(
+        _amplifier_boundary_point(points, desired_max, at_start=False)
+    )
+    points.sort(key=lambda item: item["sg_power_dbm"])
+    return points
 
 
 def _amplifier_payload(
@@ -430,6 +801,7 @@ def _amplifier_payload(
                 raise ConfigurationError(
                     f"{frequency.key} GHz 场景 {name} 与正式结果不一致"
                 )
+        points = _cover_amplifier_range(points)
         payload[frequency.key] = {"points": points}
     return {"frequencies": payload}
 
@@ -494,7 +866,12 @@ def _build_document(
     if stage is MockStage.CABLE_LOSS:
         payload = _cable_loss_payload(scenario, result)
     elif stage is MockStage.DRIVER_MAPPING:
-        payload = _driver_payload(scenario, result, mock_paths=mock_paths)
+        payload = _driver_payload(
+            scenario,
+            result,
+            scenario_path=scenario_path,
+            mock_paths=mock_paths,
+        )
     else:
         payload = _amplifier_payload(scenario, result, mock_paths=mock_paths)
     document = {

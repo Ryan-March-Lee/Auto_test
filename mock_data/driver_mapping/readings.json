@@ -27,12 +27,24 @@
             "raw_output_dbm": -60.921
           },
           {
+            "source_power_dbm": -59.9965,
+            "raw_output_dbm": -60.917541502
+          },
+          {
             "source_power_dbm": -58.988,
             "raw_output_dbm": -59.921
           },
           {
             "source_power_dbm": -57.976,
             "raw_output_dbm": -58.921
+          },
+          {
+            "source_power_dbm": -57.9759,
+            "raw_output_dbm": -58.920901186
+          },
+          {
+            "source_power_dbm": -56.9641,
+            "raw_output_dbm": -57.921098814
           },
           {
             "source_power_dbm": -56.964,
@@ -47,6 +59,14 @@
             "raw_output_dbm": -55.921
           },
           {
+            "source_power_dbm": -54.9399,
+            "raw_output_dbm": -55.920901186
+          },
+          {
+            "source_power_dbm": -53.9281,
+            "raw_output_dbm": -54.921098814
+          },
+          {
             "source_power_dbm": -53.928,
             "raw_output_dbm": -54.921
           },
@@ -57,6 +77,14 @@
           {
             "source_power_dbm": -51.904,
             "raw_output_dbm": -52.921
+          },
+          {
+            "source_power_dbm": -51.9039,
+            "raw_output_dbm": -52.920901186
+          },
+          {
+            "source_power_dbm": -50.8921,
+            "raw_output_dbm": -51.921098814
           },
           {
             "source_power_dbm": -50.892,
@@ -71,6 +99,14 @@
             "raw_output_dbm": -49.921
           },
           {
+            "source_power_dbm": -48.8679,
+            "raw_output_dbm": -49.920901186
+          },
+          {
+            "source_power_dbm": -47.8561,
+            "raw_output_dbm": -48.921098814
+          },
+          {
             "source_power_dbm": -47.856,
             "raw_output_dbm": -48.921
           },
@@ -83,12 +119,28 @@
             "raw_output_dbm": -46.921
           },
           {
+            "source_power_dbm": -45.8319,
+            "raw_output_dbm": -46.920901186
+          },
+          {
+            "source_power_dbm": -44.8201,
+            "raw_output_dbm": -45.921098814
+          },
+          {
             "source_power_dbm": -44.82,
             "raw_output_dbm": -45.921
           },
           {
             "source_power_dbm": -43.808,
             "raw_output_dbm": -44.921
+          },
+          {
+            "source_power_dbm": -43.8079,
+            "raw_output_dbm": -44.920901186
+          },
+          {
+            "source_power_dbm": -42.7961,
+            "raw_output_dbm": -43.921098814
           },
           {
             "source_power_dbm": -42.796,
@@ -101,6 +153,14 @@
           {
             "source_power_dbm": -40.772,
             "raw_output_dbm": -41.921
+          },
+          {
+            "source_power_dbm": -40.7719,
+            "raw_output_dbm": -41.920901186
+          },
+          {
+            "source_power_dbm": -39.7601,
+            "raw_output_dbm": -40.921098814
           },
           {
             "source_power_dbm": -39.76,
@@ -121,6 +181,14 @@
           {
             "source_power_dbm": -37.736,
             "raw_output_dbm": -38.921
+          },
+          {
+            "source_power_dbm": -37.7359,
+            "raw_output_dbm": -38.920901186
+          },
+          {
+            "source_power_dbm": -37.2301,
+            "raw_output_dbm": -38.421098814
           },
           {
             "source_power_dbm": -37.23,
@@ -145,6 +213,10 @@
           {
             "source_power_dbm": -34.7,
             "raw_output_dbm": -35.921
+          },
+          {
+            "source_power_dbm": -34.6999,
+            "raw_output_dbm": -35.920901186
           }
         ]
       },
@@ -155,6 +227,10 @@
             "raw_output_dbm": -70.858
           },
           {
+            "source_power_dbm": -69.7522,
+            "raw_output_dbm": -70.614196774
+          },
+          {
             "source_power_dbm": -69.752,
             "raw_output_dbm": -70.614
           },
@@ -163,12 +239,24 @@
             "raw_output_dbm": -60.944
           },
           {
+            "source_power_dbm": -59.9214,
+            "raw_output_dbm": -60.910831194
+          },
+          {
             "source_power_dbm": -58.942,
             "raw_output_dbm": -59.944
           },
           {
+            "source_power_dbm": -58.9419,
+            "raw_output_dbm": -59.943901283
+          },
+          {
             "source_power_dbm": -57.929,
             "raw_output_dbm": -58.944
+          },
+          {
+            "source_power_dbm": -56.916,
+            "raw_output_dbm": -57.944986193
           },
           {
             "source_power_dbm": -56.915,
@@ -179,8 +267,20 @@
             "raw_output_dbm": -56.944
           },
           {
+            "source_power_dbm": -55.901,
+            "raw_output_dbm": -56.943012833
+          },
+          {
             "source_power_dbm": -54.889,
             "raw_output_dbm": -55.944
+          },
+          {
+            "source_power_dbm": -54.8889,
+            "raw_output_dbm": -55.943901283
+          },
+          {
+            "source_power_dbm": -53.8761,
+            "raw_output_dbm": -54.944098717
           },
           {
             "source_power_dbm": -53.876,
@@ -191,6 +291,10 @@
             "raw_output_dbm": -53.944
           },
           {
+            "source_power_dbm": -51.85,
+            "raw_output_dbm": -52.944986193
+          },
+          {
             "source_power_dbm": -51.849,
             "raw_output_dbm": -52.944
           },
@@ -199,8 +303,20 @@
             "raw_output_dbm": -51.944
           },
           {
+            "source_power_dbm": -50.835,
+            "raw_output_dbm": -51.943012833
+          },
+          {
             "source_power_dbm": -49.823,
             "raw_output_dbm": -50.944
+          },
+          {
+            "source_power_dbm": -49.8229,
+            "raw_output_dbm": -50.943901283
+          },
+          {
+            "source_power_dbm": -48.8101,
+            "raw_output_dbm": -49.944098717
           },
           {
             "source_power_dbm": -48.81,
@@ -211,12 +327,24 @@
             "raw_output_dbm": -48.944
           },
           {
+            "source_power_dbm": -46.784,
+            "raw_output_dbm": -47.944986193
+          },
+          {
             "source_power_dbm": -46.783,
             "raw_output_dbm": -47.944
           },
           {
             "source_power_dbm": -45.77,
             "raw_output_dbm": -46.944
+          },
+          {
+            "source_power_dbm": -45.7689,
+            "raw_output_dbm": -46.942914116
+          },
+          {
+            "source_power_dbm": -44.7571,
+            "raw_output_dbm": -45.944098717
           },
           {
             "source_power_dbm": -44.757,
@@ -231,6 +359,10 @@
             "raw_output_dbm": -43.944
           },
           {
+            "source_power_dbm": -41.718,
+            "raw_output_dbm": -42.944986193
+          },
+          {
             "source_power_dbm": -41.717,
             "raw_output_dbm": -42.944
           },
@@ -239,8 +371,20 @@
             "raw_output_dbm": -41.944
           },
           {
+            "source_power_dbm": -40.7029,
+            "raw_output_dbm": -41.942914116
+          },
+          {
+            "source_power_dbm": -39.6911,
+            "raw_output_dbm": -40.944098717
+          },
+          {
             "source_power_dbm": -39.691,
             "raw_output_dbm": -40.944
+          },
+          {
+            "source_power_dbm": -39.1845,
+            "raw_output_dbm": -40.444493097
           },
           {
             "source_power_dbm": -39.184,
@@ -251,12 +395,28 @@
             "raw_output_dbm": -39.944
           },
           {
+            "source_power_dbm": -38.677,
+            "raw_output_dbm": -39.943013807
+          },
+          {
+            "source_power_dbm": -38.172,
+            "raw_output_dbm": -39.444986193
+          },
+          {
             "source_power_dbm": -38.171,
             "raw_output_dbm": -39.444
           },
           {
             "source_power_dbm": -37.665,
             "raw_output_dbm": -38.944
+          },
+          {
+            "source_power_dbm": -37.6639,
+            "raw_output_dbm": -38.942915187
+          },
+          {
+            "source_power_dbm": -37.1591,
+            "raw_output_dbm": -38.445084813
           },
           {
             "source_power_dbm": -37.158,
@@ -271,12 +431,28 @@
             "raw_output_dbm": -37.444
           },
           {
+            "source_power_dbm": -36.144,
+            "raw_output_dbm": -37.443013807
+          },
+          {
+            "source_power_dbm": -35.6389,
+            "raw_output_dbm": -36.944887574
+          },
+          {
             "source_power_dbm": -35.638,
             "raw_output_dbm": -36.944
           },
           {
             "source_power_dbm": -35.132,
             "raw_output_dbm": -36.444
+          },
+          {
+            "source_power_dbm": -35.1311,
+            "raw_output_dbm": -36.443112426
+          },
+          {
+            "source_power_dbm": -34.626,
+            "raw_output_dbm": -35.944986193
           },
           {
             "source_power_dbm": -34.625,
@@ -291,6 +467,10 @@
             "raw_output_dbm": -70.915
           },
           {
+            "source_power_dbm": -69.7513,
+            "raw_output_dbm": -70.670295181
+          },
+          {
             "source_power_dbm": -69.751,
             "raw_output_dbm": -70.67
           },
@@ -299,8 +479,20 @@
             "raw_output_dbm": -60.968
           },
           {
+            "source_power_dbm": -59.8916,
+            "raw_output_dbm": -60.949854043
+          },
+          {
             "source_power_dbm": -58.896,
             "raw_output_dbm": -59.968
+          },
+          {
+            "source_power_dbm": -58.8957,
+            "raw_output_dbm": -59.967704433
+          },
+          {
+            "source_power_dbm": -57.882,
+            "raw_output_dbm": -58.968985222
           },
           {
             "source_power_dbm": -57.881,
@@ -311,6 +503,14 @@
             "raw_output_dbm": -57.968
           },
           {
+            "source_power_dbm": -56.866,
+            "raw_output_dbm": -57.967014778
+          },
+          {
+            "source_power_dbm": -55.8529,
+            "raw_output_dbm": -56.9688867
+          },
+          {
             "source_power_dbm": -55.852,
             "raw_output_dbm": -56.968
           },
@@ -319,8 +519,16 @@
             "raw_output_dbm": -55.968
           },
           {
+            "source_power_dbm": -54.8371,
+            "raw_output_dbm": -55.967112426
+          },
+          {
             "source_power_dbm": -53.824,
             "raw_output_dbm": -54.968
+          },
+          {
+            "source_power_dbm": -52.8099,
+            "raw_output_dbm": -53.9688867
           },
           {
             "source_power_dbm": -52.809,
@@ -331,6 +539,14 @@
             "raw_output_dbm": -52.968
           },
           {
+            "source_power_dbm": -51.7941,
+            "raw_output_dbm": -52.9671133
+          },
+          {
+            "source_power_dbm": -50.781,
+            "raw_output_dbm": -51.968985222
+          },
+          {
             "source_power_dbm": -50.78,
             "raw_output_dbm": -51.968
           },
@@ -339,8 +555,20 @@
             "raw_output_dbm": -50.968
           },
           {
+            "source_power_dbm": -49.765,
+            "raw_output_dbm": -50.967013807
+          },
+          {
             "source_power_dbm": -48.752,
             "raw_output_dbm": -49.968
+          },
+          {
+            "source_power_dbm": -48.7519,
+            "raw_output_dbm": -49.967901478
+          },
+          {
+            "source_power_dbm": -47.7381,
+            "raw_output_dbm": -48.969083744
           },
           {
             "source_power_dbm": -47.737,
@@ -351,6 +579,14 @@
             "raw_output_dbm": -47.968
           },
           {
+            "source_power_dbm": -46.722,
+            "raw_output_dbm": -47.967014778
+          },
+          {
+            "source_power_dbm": -45.7089,
+            "raw_output_dbm": -46.9688867
+          },
+          {
             "source_power_dbm": -45.708,
             "raw_output_dbm": -46.968
           },
@@ -359,8 +595,16 @@
             "raw_output_dbm": -45.968
           },
           {
+            "source_power_dbm": -44.6931,
+            "raw_output_dbm": -45.967112426
+          },
+          {
             "source_power_dbm": -43.68,
             "raw_output_dbm": -44.968
+          },
+          {
+            "source_power_dbm": -42.6659,
+            "raw_output_dbm": -43.9688867
           },
           {
             "source_power_dbm": -42.665,
@@ -371,12 +615,28 @@
             "raw_output_dbm": -42.968
           },
           {
+            "source_power_dbm": -41.6501,
+            "raw_output_dbm": -42.9671133
+          },
+          {
+            "source_power_dbm": -40.637,
+            "raw_output_dbm": -41.968985222
+          },
+          {
             "source_power_dbm": -40.636,
             "raw_output_dbm": -41.968
           },
           {
             "source_power_dbm": -39.622,
             "raw_output_dbm": -40.968
+          },
+          {
+            "source_power_dbm": -39.6209,
+            "raw_output_dbm": -40.966915187
+          },
+          {
+            "source_power_dbm": -39.1151,
+            "raw_output_dbm": -40.468098619
           },
           {
             "source_power_dbm": -39.115,
@@ -387,6 +647,14 @@
             "raw_output_dbm": -39.968
           },
           {
+            "source_power_dbm": -38.6079,
+            "raw_output_dbm": -39.967901575
+          },
+          {
+            "source_power_dbm": -38.101,
+            "raw_output_dbm": -39.468984252
+          },
+          {
             "source_power_dbm": -38.1,
             "raw_output_dbm": -39.468
           },
@@ -395,16 +663,32 @@
             "raw_output_dbm": -38.968
           },
           {
+            "source_power_dbm": -37.5921,
+            "raw_output_dbm": -38.967112426
+          },
+          {
             "source_power_dbm": -37.086,
             "raw_output_dbm": -38.468
+          },
+          {
+            "source_power_dbm": -37.0859,
+            "raw_output_dbm": -38.467901381
           },
           {
             "source_power_dbm": -36.579,
             "raw_output_dbm": -37.968
           },
           {
+            "source_power_dbm": -36.0721,
+            "raw_output_dbm": -37.468098619
+          },
+          {
             "source_power_dbm": -36.072,
             "raw_output_dbm": -37.468
+          },
+          {
+            "source_power_dbm": -35.5649,
+            "raw_output_dbm": -36.968885827
           },
           {
             "source_power_dbm": -35.564,
@@ -413,6 +697,10 @@
           {
             "source_power_dbm": -35.057,
             "raw_output_dbm": -36.468
+          },
+          {
+            "source_power_dbm": -35.056,
+            "raw_output_dbm": -36.467013807
           },
           {
             "source_power_dbm": -34.55,
@@ -431,8 +719,20 @@
             "raw_output_dbm": -70.727
           },
           {
+            "source_power_dbm": -69.7505,
+            "raw_output_dbm": -70.726507688
+          },
+          {
             "source_power_dbm": -59.865,
             "raw_output_dbm": -60.993
+          },
+          {
+            "source_power_dbm": -59.8591,
+            "raw_output_dbm": -60.987192913
+          },
+          {
+            "source_power_dbm": -58.8494,
+            "raw_output_dbm": -59.993393701
           },
           {
             "source_power_dbm": -58.849,
@@ -443,12 +743,28 @@
             "raw_output_dbm": -58.993
           },
           {
+            "source_power_dbm": -57.833,
+            "raw_output_dbm": -58.992015748
+          },
+          {
+            "source_power_dbm": -56.8189,
+            "raw_output_dbm": -57.993885827
+          },
+          {
             "source_power_dbm": -56.818,
             "raw_output_dbm": -57.993
           },
           {
             "source_power_dbm": -55.803,
             "raw_output_dbm": -56.993
+          },
+          {
+            "source_power_dbm": -55.8021,
+            "raw_output_dbm": -56.992114173
+          },
+          {
+            "source_power_dbm": -54.788,
+            "raw_output_dbm": -55.993984252
           },
           {
             "source_power_dbm": -54.787,
@@ -463,12 +779,28 @@
             "raw_output_dbm": -53.993
           },
           {
+            "source_power_dbm": -52.755,
+            "raw_output_dbm": -53.992015748
+          },
+          {
+            "source_power_dbm": -51.7409,
+            "raw_output_dbm": -52.993885827
+          },
+          {
             "source_power_dbm": -51.74,
             "raw_output_dbm": -52.993
           },
           {
             "source_power_dbm": -50.725,
             "raw_output_dbm": -51.993
+          },
+          {
+            "source_power_dbm": -50.7241,
+            "raw_output_dbm": -51.992114173
+          },
+          {
+            "source_power_dbm": -49.71,
+            "raw_output_dbm": -50.993984252
           },
           {
             "source_power_dbm": -49.709,
@@ -479,8 +811,20 @@
             "raw_output_dbm": -49.993
           },
           {
+            "source_power_dbm": -48.6929,
+            "raw_output_dbm": -49.992901478
+          },
+          {
             "source_power_dbm": -47.678,
             "raw_output_dbm": -48.993
+          },
+          {
+            "source_power_dbm": -47.6771,
+            "raw_output_dbm": -48.992114173
+          },
+          {
+            "source_power_dbm": -46.663,
+            "raw_output_dbm": -47.993984252
           },
           {
             "source_power_dbm": -46.662,
@@ -491,8 +835,20 @@
             "raw_output_dbm": -46.993
           },
           {
+            "source_power_dbm": -45.646,
+            "raw_output_dbm": -46.992015748
+          },
+          {
+            "source_power_dbm": -44.6319,
+            "raw_output_dbm": -45.993885827
+          },
+          {
             "source_power_dbm": -44.631,
             "raw_output_dbm": -45.993
+          },
+          {
+            "source_power_dbm": -43.6151,
+            "raw_output_dbm": -44.993098425
           },
           {
             "source_power_dbm": -43.615,
@@ -503,6 +859,14 @@
             "raw_output_dbm": -43.993
           },
           {
+            "source_power_dbm": -42.599,
+            "raw_output_dbm": -43.992015748
+          },
+          {
+            "source_power_dbm": -41.5849,
+            "raw_output_dbm": -42.993885827
+          },
+          {
             "source_power_dbm": -41.584,
             "raw_output_dbm": -42.993
           },
@@ -511,8 +875,20 @@
             "raw_output_dbm": -41.993
           },
           {
+            "source_power_dbm": -40.5681,
+            "raw_output_dbm": -41.992114173
+          },
+          {
+            "source_power_dbm": -39.5539,
+            "raw_output_dbm": -40.993885827
+          },
+          {
             "source_power_dbm": -39.553,
             "raw_output_dbm": -40.993
+          },
+          {
+            "source_power_dbm": -39.0451,
+            "raw_output_dbm": -40.493098425
           },
           {
             "source_power_dbm": -39.045,
@@ -523,8 +899,20 @@
             "raw_output_dbm": -39.993
           },
           {
+            "source_power_dbm": -38.5369,
+            "raw_output_dbm": -39.992901381
+          },
+          {
             "source_power_dbm": -38.03,
             "raw_output_dbm": -39.493
+          },
+          {
+            "source_power_dbm": -38.029,
+            "raw_output_dbm": -39.492015748
+          },
+          {
+            "source_power_dbm": -37.5231,
+            "raw_output_dbm": -38.994082677
           },
           {
             "source_power_dbm": -37.522,
@@ -533,6 +921,10 @@
           {
             "source_power_dbm": -37.014,
             "raw_output_dbm": -38.493
+          },
+          {
+            "source_power_dbm": -37.0139,
+            "raw_output_dbm": -38.492901575
           },
           {
             "source_power_dbm": -36.506,
@@ -545,6 +937,14 @@
           {
             "source_power_dbm": -35.491,
             "raw_output_dbm": -36.993
+          },
+          {
+            "source_power_dbm": -35.4901,
+            "raw_output_dbm": -36.992114173
+          },
+          {
+            "source_power_dbm": -34.9839,
+            "raw_output_dbm": -36.493885827
           },
           {
             "source_power_dbm": -34.983,
@@ -567,8 +967,20 @@
             "raw_output_dbm": -70.785
           },
           {
+            "source_power_dbm": -69.7497,
+            "raw_output_dbm": -70.784704955
+          },
+          {
+            "source_power_dbm": -59.8252,
+            "raw_output_dbm": -61.024114119
+          },
+          {
             "source_power_dbm": -59.82,
             "raw_output_dbm": -61.019
+          },
+          {
+            "source_power_dbm": -58.8032,
+            "raw_output_dbm": -60.019196657
           },
           {
             "source_power_dbm": -58.803,
@@ -581,6 +993,14 @@
           {
             "source_power_dbm": -56.77,
             "raw_output_dbm": -58.019
+          },
+          {
+            "source_power_dbm": -56.769,
+            "raw_output_dbm": -58.018016716
+          },
+          {
+            "source_power_dbm": -55.754,
+            "raw_output_dbm": -57.019983284
           },
           {
             "source_power_dbm": -55.753,
@@ -603,12 +1023,24 @@
             "raw_output_dbm": -53.019
           },
           {
+            "source_power_dbm": -51.685,
+            "raw_output_dbm": -53.018016716
+          },
+          {
+            "source_power_dbm": -50.6701,
+            "raw_output_dbm": -52.020081613
+          },
+          {
             "source_power_dbm": -50.669,
             "raw_output_dbm": -52.019
           },
           {
             "source_power_dbm": -49.652,
             "raw_output_dbm": -51.019
+          },
+          {
+            "source_power_dbm": -49.6519,
+            "raw_output_dbm": -51.018901672
           },
           {
             "source_power_dbm": -48.635,
@@ -621,6 +1053,14 @@
           {
             "source_power_dbm": -46.602,
             "raw_output_dbm": -48.019
+          },
+          {
+            "source_power_dbm": -46.601,
+            "raw_output_dbm": -48.018016716
+          },
+          {
+            "source_power_dbm": -45.586,
+            "raw_output_dbm": -47.019983284
           },
           {
             "source_power_dbm": -45.585,
@@ -643,6 +1083,14 @@
             "raw_output_dbm": -43.019
           },
           {
+            "source_power_dbm": -41.517,
+            "raw_output_dbm": -43.018016716
+          },
+          {
+            "source_power_dbm": -40.502,
+            "raw_output_dbm": -42.019983284
+          },
+          {
             "source_power_dbm": -40.501,
             "raw_output_dbm": -42.019
           },
@@ -655,12 +1103,28 @@
             "raw_output_dbm": -40.519
           },
           {
+            "source_power_dbm": -38.9755,
+            "raw_output_dbm": -40.518508841
+          },
+          {
+            "source_power_dbm": -38.468,
+            "raw_output_dbm": -40.019982318
+          },
+          {
             "source_power_dbm": -38.467,
             "raw_output_dbm": -40.019
           },
           {
             "source_power_dbm": -37.959,
             "raw_output_dbm": -39.519
+          },
+          {
+            "source_power_dbm": -37.958,
+            "raw_output_dbm": -39.518017682
+          },
+          {
+            "source_power_dbm": -37.451,
+            "raw_output_dbm": -39.019982318
           },
           {
             "source_power_dbm": -37.45,
@@ -671,8 +1135,20 @@
             "raw_output_dbm": -38.519
           },
           {
+            "source_power_dbm": -36.941,
+            "raw_output_dbm": -38.518015748
+          },
+          {
             "source_power_dbm": -36.434,
             "raw_output_dbm": -38.019
+          },
+          {
+            "source_power_dbm": -36.4339,
+            "raw_output_dbm": -38.018901768
+          },
+          {
+            "source_power_dbm": -35.9261,
+            "raw_output_dbm": -37.52008055
           },
           {
             "source_power_dbm": -35.925,
@@ -683,12 +1159,24 @@
             "raw_output_dbm": -37.019
           },
           {
+            "source_power_dbm": -35.416,
+            "raw_output_dbm": -37.018017682
+          },
+          {
+            "source_power_dbm": -34.909,
+            "raw_output_dbm": -36.519982318
+          },
+          {
             "source_power_dbm": -34.908,
             "raw_output_dbm": -36.519
           },
           {
             "source_power_dbm": -34.4,
             "raw_output_dbm": -36.019
+          },
+          {
+            "source_power_dbm": -34.399,
+            "raw_output_dbm": -36.018015748
           }
         ]
       },
@@ -703,8 +1191,16 @@
             "raw_output_dbm": -70.844
           },
           {
+            "source_power_dbm": -69.7489,
+            "raw_output_dbm": -70.843901765
+          },
+          {
             "source_power_dbm": -59.775,
             "raw_output_dbm": -61.046
+          },
+          {
+            "source_power_dbm": -59.7519,
+            "raw_output_dbm": -61.023308448
           },
           {
             "source_power_dbm": -58.757,
@@ -715,6 +1211,10 @@
             "raw_output_dbm": -59.046
           },
           {
+            "source_power_dbm": -56.7211,
+            "raw_output_dbm": -58.046098232
+          },
+          {
             "source_power_dbm": -56.721,
             "raw_output_dbm": -58.046
           },
@@ -723,8 +1223,16 @@
             "raw_output_dbm": -57.046
           },
           {
+            "source_power_dbm": -55.7029,
+            "raw_output_dbm": -57.045901768
+          },
+          {
             "source_power_dbm": -54.685,
             "raw_output_dbm": -56.046
+          },
+          {
+            "source_power_dbm": -53.6671,
+            "raw_output_dbm": -55.046098232
           },
           {
             "source_power_dbm": -53.667,
@@ -735,8 +1243,16 @@
             "raw_output_dbm": -54.046
           },
           {
+            "source_power_dbm": -52.6489,
+            "raw_output_dbm": -54.045901768
+          },
+          {
             "source_power_dbm": -51.631,
             "raw_output_dbm": -53.046
+          },
+          {
+            "source_power_dbm": -50.6131,
+            "raw_output_dbm": -52.046098232
           },
           {
             "source_power_dbm": -50.613,
@@ -747,8 +1263,16 @@
             "raw_output_dbm": -51.046
           },
           {
+            "source_power_dbm": -49.5949,
+            "raw_output_dbm": -51.045901768
+          },
+          {
             "source_power_dbm": -48.577,
             "raw_output_dbm": -50.046
+          },
+          {
+            "source_power_dbm": -47.5591,
+            "raw_output_dbm": -49.046098232
           },
           {
             "source_power_dbm": -47.559,
@@ -759,8 +1283,16 @@
             "raw_output_dbm": -48.046
           },
           {
+            "source_power_dbm": -46.5409,
+            "raw_output_dbm": -48.045901768
+          },
+          {
             "source_power_dbm": -45.523,
             "raw_output_dbm": -47.046
+          },
+          {
+            "source_power_dbm": -44.5051,
+            "raw_output_dbm": -46.046098232
           },
           {
             "source_power_dbm": -44.505,
@@ -771,8 +1303,16 @@
             "raw_output_dbm": -45.046
           },
           {
+            "source_power_dbm": -43.4869,
+            "raw_output_dbm": -45.045901768
+          },
+          {
             "source_power_dbm": -42.469,
             "raw_output_dbm": -44.046
+          },
+          {
+            "source_power_dbm": -41.4511,
+            "raw_output_dbm": -43.046098232
           },
           {
             "source_power_dbm": -41.451,
@@ -783,6 +1323,10 @@
             "raw_output_dbm": -42.046
           },
           {
+            "source_power_dbm": -40.4329,
+            "raw_output_dbm": -42.045901768
+          },
+          {
             "source_power_dbm": -39.415,
             "raw_output_dbm": -41.046
           },
@@ -791,12 +1335,20 @@
             "raw_output_dbm": -40.546
           },
           {
+            "source_power_dbm": -38.3971,
+            "raw_output_dbm": -40.046098232
+          },
+          {
             "source_power_dbm": -38.397,
             "raw_output_dbm": -40.046
           },
           {
             "source_power_dbm": -37.888,
             "raw_output_dbm": -39.546
+          },
+          {
+            "source_power_dbm": -37.8879,
+            "raw_output_dbm": -39.545901768
           },
           {
             "source_power_dbm": -37.379,
@@ -815,12 +1367,20 @@
             "raw_output_dbm": -37.546
           },
           {
+            "source_power_dbm": -35.3431,
+            "raw_output_dbm": -37.046098232
+          },
+          {
             "source_power_dbm": -35.343,
             "raw_output_dbm": -37.046
           },
           {
             "source_power_dbm": -34.834,
             "raw_output_dbm": -36.546
+          },
+          {
+            "source_power_dbm": -34.8339,
+            "raw_output_dbm": -36.545901768
           },
           {
             "source_power_dbm": -34.325,
@@ -835,8 +1395,16 @@
             "raw_output_dbm": -71.151
           },
           {
+            "source_power_dbm": -69.7481,
+            "raw_output_dbm": -70.903098413
+          },
+          {
             "source_power_dbm": -69.748,
             "raw_output_dbm": -70.903
+          },
+          {
+            "source_power_dbm": -59.7595,
+            "raw_output_dbm": -61.10328265
           },
           {
             "source_power_dbm": -59.748,
@@ -847,8 +1415,20 @@
             "raw_output_dbm": -60.074
           },
           {
+            "source_power_dbm": -58.7103,
+            "raw_output_dbm": -60.073313052
+          },
+          {
+            "source_power_dbm": -57.6925,
+            "raw_output_dbm": -59.074490677
+          },
+          {
             "source_power_dbm": -57.692,
             "raw_output_dbm": -59.074
+          },
+          {
+            "source_power_dbm": -56.6729,
+            "raw_output_dbm": -58.074882353
           },
           {
             "source_power_dbm": -56.672,
@@ -857,6 +1437,10 @@
           {
             "source_power_dbm": -55.653,
             "raw_output_dbm": -57.074
+          },
+          {
+            "source_power_dbm": -55.652,
+            "raw_output_dbm": -57.073018646
           },
           {
             "source_power_dbm": -54.634,
@@ -871,12 +1455,24 @@
             "raw_output_dbm": -54.074
           },
           {
+            "source_power_dbm": -51.577,
+            "raw_output_dbm": -53.074980392
+          },
+          {
             "source_power_dbm": -51.576,
             "raw_output_dbm": -53.074
           },
           {
             "source_power_dbm": -50.557,
             "raw_output_dbm": -52.074
+          },
+          {
+            "source_power_dbm": -50.556,
+            "raw_output_dbm": -52.073018646
+          },
+          {
+            "source_power_dbm": -49.5381,
+            "raw_output_dbm": -51.074098135
           },
           {
             "source_power_dbm": -49.538,
@@ -887,8 +1483,16 @@
             "raw_output_dbm": -50.074
           },
           {
+            "source_power_dbm": -48.5189,
+            "raw_output_dbm": -50.073901865
+          },
+          {
             "source_power_dbm": -47.5,
             "raw_output_dbm": -49.074
+          },
+          {
+            "source_power_dbm": -46.481,
+            "raw_output_dbm": -48.074980392
           },
           {
             "source_power_dbm": -46.48,
@@ -897,6 +1501,10 @@
           {
             "source_power_dbm": -45.461,
             "raw_output_dbm": -47.074
+          },
+          {
+            "source_power_dbm": -45.46,
+            "raw_output_dbm": -47.073018646
           },
           {
             "source_power_dbm": -44.442,
@@ -911,6 +1519,10 @@
             "raw_output_dbm": -44.074
           },
           {
+            "source_power_dbm": -41.385,
+            "raw_output_dbm": -43.074980392
+          },
+          {
             "source_power_dbm": -41.384,
             "raw_output_dbm": -43.074
           },
@@ -919,8 +1531,20 @@
             "raw_output_dbm": -42.074
           },
           {
+            "source_power_dbm": -40.364,
+            "raw_output_dbm": -42.073018646
+          },
+          {
+            "source_power_dbm": -39.3461,
+            "raw_output_dbm": -41.074098135
+          },
+          {
             "source_power_dbm": -39.346,
             "raw_output_dbm": -41.074
+          },
+          {
+            "source_power_dbm": -38.8364,
+            "raw_output_dbm": -40.574392157
           },
           {
             "source_power_dbm": -38.836,
@@ -931,6 +1555,14 @@
             "raw_output_dbm": -40.074
           },
           {
+            "source_power_dbm": -38.3261,
+            "raw_output_dbm": -40.073117647
+          },
+          {
+            "source_power_dbm": -37.8179,
+            "raw_output_dbm": -39.574882353
+          },
+          {
             "source_power_dbm": -37.817,
             "raw_output_dbm": -39.574
           },
@@ -939,8 +1571,20 @@
             "raw_output_dbm": -39.074
           },
           {
+            "source_power_dbm": -37.3071,
+            "raw_output_dbm": -39.073117647
+          },
+          {
+            "source_power_dbm": -36.7989,
+            "raw_output_dbm": -38.574882353
+          },
+          {
             "source_power_dbm": -36.798,
             "raw_output_dbm": -38.574
+          },
+          {
+            "source_power_dbm": -36.2881,
+            "raw_output_dbm": -38.074098039
           },
           {
             "source_power_dbm": -36.288,
@@ -951,12 +1595,28 @@
             "raw_output_dbm": -37.574
           },
           {
+            "source_power_dbm": -35.7779,
+            "raw_output_dbm": -37.572921569
+          },
+          {
+            "source_power_dbm": -35.2701,
+            "raw_output_dbm": -37.075078431
+          },
+          {
             "source_power_dbm": -35.269,
             "raw_output_dbm": -37.074
           },
           {
             "source_power_dbm": -34.76,
             "raw_output_dbm": -36.574
+          },
+          {
+            "source_power_dbm": -34.7589,
+            "raw_output_dbm": -36.572921569
+          },
+          {
+            "source_power_dbm": -34.251,
+            "raw_output_dbm": -36.074980392
           },
           {
             "source_power_dbm": -34.25,
@@ -971,8 +1631,16 @@
             "raw_output_dbm": -71.212
           },
           {
+            "source_power_dbm": -69.7473,
+            "raw_output_dbm": -70.964294071
+          },
+          {
             "source_power_dbm": -69.747,
             "raw_output_dbm": -70.964
+          },
+          {
+            "source_power_dbm": -59.7473,
+            "raw_output_dbm": -61.164294
           },
           {
             "source_power_dbm": -59.747,
@@ -983,12 +1651,28 @@
             "raw_output_dbm": -60.103
           },
           {
+            "source_power_dbm": -58.6643,
+            "raw_output_dbm": -60.102314398
+          },
+          {
+            "source_power_dbm": -57.6453,
+            "raw_output_dbm": -59.104273262
+          },
+          {
             "source_power_dbm": -57.644,
             "raw_output_dbm": -59.103
           },
           {
             "source_power_dbm": -56.624,
             "raw_output_dbm": -58.103
+          },
+          {
+            "source_power_dbm": -56.6229,
+            "raw_output_dbm": -58.101922625
+          },
+          {
+            "source_power_dbm": -55.6041,
+            "raw_output_dbm": -57.104077375
           },
           {
             "source_power_dbm": -55.603,
@@ -999,8 +1683,20 @@
             "raw_output_dbm": -56.103
           },
           {
+            "source_power_dbm": -54.5819,
+            "raw_output_dbm": -56.101921569
+          },
+          {
+            "source_power_dbm": -53.5631,
+            "raw_output_dbm": -55.103098039
+          },
+          {
             "source_power_dbm": -53.563,
             "raw_output_dbm": -55.103
+          },
+          {
+            "source_power_dbm": -52.5429,
+            "raw_output_dbm": -54.103881489
           },
           {
             "source_power_dbm": -52.542,
@@ -1011,6 +1707,14 @@
             "raw_output_dbm": -53.103
           },
           {
+            "source_power_dbm": -51.521,
+            "raw_output_dbm": -53.102020568
+          },
+          {
+            "source_power_dbm": -50.5021,
+            "raw_output_dbm": -52.104077375
+          },
+          {
             "source_power_dbm": -50.501,
             "raw_output_dbm": -52.103
           },
@@ -1019,8 +1723,20 @@
             "raw_output_dbm": -51.103
           },
           {
+            "source_power_dbm": -49.4799,
+            "raw_output_dbm": -51.101921569
+          },
+          {
+            "source_power_dbm": -48.4611,
+            "raw_output_dbm": -50.103098039
+          },
+          {
             "source_power_dbm": -48.461,
             "raw_output_dbm": -50.103
+          },
+          {
+            "source_power_dbm": -47.4409,
+            "raw_output_dbm": -49.103881489
           },
           {
             "source_power_dbm": -47.44,
@@ -1031,6 +1747,14 @@
             "raw_output_dbm": -48.103
           },
           {
+            "source_power_dbm": -46.4191,
+            "raw_output_dbm": -48.102118511
+          },
+          {
+            "source_power_dbm": -45.3999,
+            "raw_output_dbm": -47.103881489
+          },
+          {
             "source_power_dbm": -45.399,
             "raw_output_dbm": -47.103
           },
@@ -1039,8 +1763,20 @@
             "raw_output_dbm": -46.103
           },
           {
+            "source_power_dbm": -44.378,
+            "raw_output_dbm": -46.102019608
+          },
+          {
+            "source_power_dbm": -43.3591,
+            "raw_output_dbm": -45.103098039
+          },
+          {
             "source_power_dbm": -43.359,
             "raw_output_dbm": -45.103
+          },
+          {
+            "source_power_dbm": -42.3389,
+            "raw_output_dbm": -44.103881489
           },
           {
             "source_power_dbm": -42.338,
@@ -1051,12 +1787,24 @@
             "raw_output_dbm": -43.103
           },
           {
+            "source_power_dbm": -41.317,
+            "raw_output_dbm": -43.102020568
+          },
+          {
+            "source_power_dbm": -40.2981,
+            "raw_output_dbm": -42.104077375
+          },
+          {
             "source_power_dbm": -40.297,
             "raw_output_dbm": -42.103
           },
           {
             "source_power_dbm": -39.277,
             "raw_output_dbm": -41.103
+          },
+          {
+            "source_power_dbm": -39.2759,
+            "raw_output_dbm": -41.101921569
           },
           {
             "source_power_dbm": -38.767,
@@ -1067,12 +1815,20 @@
             "raw_output_dbm": -40.103
           },
           {
+            "source_power_dbm": -37.7471,
+            "raw_output_dbm": -39.604076321
+          },
+          {
             "source_power_dbm": -37.746,
             "raw_output_dbm": -39.603
           },
           {
             "source_power_dbm": -37.236,
             "raw_output_dbm": -39.103
+          },
+          {
+            "source_power_dbm": -37.2349,
+            "raw_output_dbm": -39.101921569
           },
           {
             "source_power_dbm": -36.726,
@@ -1087,12 +1843,24 @@
             "raw_output_dbm": -37.603
           },
           {
+            "source_power_dbm": -35.196,
+            "raw_output_dbm": -37.103978474
+          },
+          {
             "source_power_dbm": -35.195,
             "raw_output_dbm": -37.103
           },
           {
             "source_power_dbm": -34.685,
             "raw_output_dbm": -36.603
+          },
+          {
+            "source_power_dbm": -34.684,
+            "raw_output_dbm": -36.602019608
+          },
+          {
+            "source_power_dbm": -34.1751,
+            "raw_output_dbm": -36.103098039
           },
           {
             "source_power_dbm": -34.175,
@@ -1107,12 +1875,24 @@
             "raw_output_dbm": -71.274
           },
           {
+            "source_power_dbm": -69.7465,
+            "raw_output_dbm": -71.026488189
+          },
+          {
             "source_power_dbm": -69.746,
             "raw_output_dbm": -71.026
           },
           {
+            "source_power_dbm": -59.7465,
+            "raw_output_dbm": -61.23748945
+          },
+          {
             "source_power_dbm": -59.746,
             "raw_output_dbm": -61.237
+          },
+          {
+            "source_power_dbm": -58.6182,
+            "raw_output_dbm": -60.133195745
           },
           {
             "source_power_dbm": -58.618,
@@ -1123,6 +1903,14 @@
             "raw_output_dbm": -59.133
           },
           {
+            "source_power_dbm": -57.5962,
+            "raw_output_dbm": -59.132217221
+          },
+          {
+            "source_power_dbm": -56.5761,
+            "raw_output_dbm": -58.134076321
+          },
+          {
             "source_power_dbm": -56.575,
             "raw_output_dbm": -58.133
           },
@@ -1131,8 +1919,20 @@
             "raw_output_dbm": -57.133
           },
           {
+            "source_power_dbm": -55.553,
+            "raw_output_dbm": -57.132021526
+          },
+          {
+            "source_power_dbm": -54.5329,
+            "raw_output_dbm": -56.133880626
+          },
+          {
             "source_power_dbm": -54.532,
             "raw_output_dbm": -56.133
+          },
+          {
+            "source_power_dbm": -53.5101,
+            "raw_output_dbm": -55.133097847
           },
           {
             "source_power_dbm": -53.51,
@@ -1143,6 +1943,14 @@
             "raw_output_dbm": -54.133
           },
           {
+            "source_power_dbm": -52.4879,
+            "raw_output_dbm": -54.131923679
+          },
+          {
+            "source_power_dbm": -51.4681,
+            "raw_output_dbm": -53.134076321
+          },
+          {
             "source_power_dbm": -51.467,
             "raw_output_dbm": -53.133
           },
@@ -1151,8 +1959,20 @@
             "raw_output_dbm": -52.133
           },
           {
+            "source_power_dbm": -50.445,
+            "raw_output_dbm": -52.132021526
+          },
+          {
+            "source_power_dbm": -49.4249,
+            "raw_output_dbm": -51.133880626
+          },
+          {
             "source_power_dbm": -49.424,
             "raw_output_dbm": -51.133
+          },
+          {
+            "source_power_dbm": -48.4021,
+            "raw_output_dbm": -50.133097847
           },
           {
             "source_power_dbm": -48.402,
@@ -1163,12 +1983,28 @@
             "raw_output_dbm": -49.133
           },
           {
+            "source_power_dbm": -47.3799,
+            "raw_output_dbm": -49.131923679
+          },
+          {
+            "source_power_dbm": -46.3601,
+            "raw_output_dbm": -48.134076321
+          },
+          {
             "source_power_dbm": -46.359,
             "raw_output_dbm": -48.133
           },
           {
             "source_power_dbm": -45.338,
             "raw_output_dbm": -47.133
+          },
+          {
+            "source_power_dbm": -45.3369,
+            "raw_output_dbm": -47.131923679
+          },
+          {
+            "source_power_dbm": -44.3171,
+            "raw_output_dbm": -46.134076321
           },
           {
             "source_power_dbm": -44.316,
@@ -1179,8 +2015,20 @@
             "raw_output_dbm": -45.133
           },
           {
+            "source_power_dbm": -43.2939,
+            "raw_output_dbm": -45.132902057
+          },
+          {
             "source_power_dbm": -42.273,
             "raw_output_dbm": -44.133
+          },
+          {
+            "source_power_dbm": -42.2721,
+            "raw_output_dbm": -44.132119374
+          },
+          {
+            "source_power_dbm": -41.2519,
+            "raw_output_dbm": -43.133880626
           },
           {
             "source_power_dbm": -41.251,
@@ -1189,6 +2037,14 @@
           {
             "source_power_dbm": -40.23,
             "raw_output_dbm": -42.133
+          },
+          {
+            "source_power_dbm": -40.2291,
+            "raw_output_dbm": -42.132119374
+          },
+          {
+            "source_power_dbm": -39.2089,
+            "raw_output_dbm": -41.133880626
           },
           {
             "source_power_dbm": -39.208,
@@ -1205,6 +2061,14 @@
           {
             "source_power_dbm": -37.676,
             "raw_output_dbm": -39.633
+          },
+          {
+            "source_power_dbm": -37.6751,
+            "raw_output_dbm": -39.632119374
+          },
+          {
+            "source_power_dbm": -37.1659,
+            "raw_output_dbm": -39.133880626
           },
           {
             "source_power_dbm": -37.165,
@@ -1227,6 +2091,14 @@
             "raw_output_dbm": -37.133
           },
           {
+            "source_power_dbm": -35.1211,
+            "raw_output_dbm": -37.132119374
+          },
+          {
+            "source_power_dbm": -34.6119,
+            "raw_output_dbm": -36.633880626
+          },
+          {
             "source_power_dbm": -34.611,
             "raw_output_dbm": -36.633
           },
@@ -1247,8 +2119,20 @@
             "raw_output_dbm": -71.088
           },
           {
+            "source_power_dbm": -69.7457,
+            "raw_output_dbm": -71.08770669
+          },
+          {
             "source_power_dbm": -59.746,
             "raw_output_dbm": -61.311
+          },
+          {
+            "source_power_dbm": -59.7457,
+            "raw_output_dbm": -61.310706899
+          },
+          {
+            "source_power_dbm": -58.5728,
+            "raw_output_dbm": -60.164781601
           },
           {
             "source_power_dbm": -58.572,
@@ -1259,8 +2143,20 @@
             "raw_output_dbm": -59.164
           },
           {
+            "source_power_dbm": -57.5485,
+            "raw_output_dbm": -59.163510763
+          },
+          {
             "source_power_dbm": -56.527,
             "raw_output_dbm": -58.164
+          },
+          {
+            "source_power_dbm": -56.526,
+            "raw_output_dbm": -58.163022483
+          },
+          {
+            "source_power_dbm": -55.505,
+            "raw_output_dbm": -57.164977517
           },
           {
             "source_power_dbm": -55.504,
@@ -1283,12 +2179,28 @@
             "raw_output_dbm": -53.164
           },
           {
+            "source_power_dbm": -51.412,
+            "raw_output_dbm": -53.163022483
+          },
+          {
+            "source_power_dbm": -50.391,
+            "raw_output_dbm": -52.164977517
+          },
+          {
             "source_power_dbm": -50.39,
             "raw_output_dbm": -52.164
           },
           {
             "source_power_dbm": -49.367,
             "raw_output_dbm": -51.164
+          },
+          {
+            "source_power_dbm": -49.3669,
+            "raw_output_dbm": -51.163902248
+          },
+          {
+            "source_power_dbm": -48.3441,
+            "raw_output_dbm": -50.164097752
           },
           {
             "source_power_dbm": -48.344,
@@ -1301,6 +2213,14 @@
           {
             "source_power_dbm": -46.299,
             "raw_output_dbm": -48.164
+          },
+          {
+            "source_power_dbm": -46.298,
+            "raw_output_dbm": -48.163022483
+          },
+          {
+            "source_power_dbm": -45.277,
+            "raw_output_dbm": -47.164977517
           },
           {
             "source_power_dbm": -45.276,
@@ -1323,8 +2243,20 @@
             "raw_output_dbm": -43.164
           },
           {
+            "source_power_dbm": -41.184,
+            "raw_output_dbm": -43.163022483
+          },
+          {
+            "source_power_dbm": -40.1629,
+            "raw_output_dbm": -42.164879765
+          },
+          {
             "source_power_dbm": -40.162,
             "raw_output_dbm": -42.164
+          },
+          {
+            "source_power_dbm": -39.1391,
+            "raw_output_dbm": -41.164097752
           },
           {
             "source_power_dbm": -39.139,
@@ -1335,12 +2267,28 @@
             "raw_output_dbm": -40.664
           },
           {
+            "source_power_dbm": -38.6275,
+            "raw_output_dbm": -40.663511719
+          },
+          {
+            "source_power_dbm": -38.117,
+            "raw_output_dbm": -40.164976563
+          },
+          {
             "source_power_dbm": -38.116,
             "raw_output_dbm": -40.164
           },
           {
             "source_power_dbm": -37.605,
             "raw_output_dbm": -39.664
+          },
+          {
+            "source_power_dbm": -37.604,
+            "raw_output_dbm": -39.663023438
+          },
+          {
+            "source_power_dbm": -37.094,
+            "raw_output_dbm": -39.164976563
           },
           {
             "source_power_dbm": -37.093,
@@ -1351,8 +2299,16 @@
             "raw_output_dbm": -38.664
           },
           {
+            "source_power_dbm": -36.581,
+            "raw_output_dbm": -38.663021526
+          },
+          {
             "source_power_dbm": -36.071,
             "raw_output_dbm": -38.164
+          },
+          {
+            "source_power_dbm": -35.5599,
+            "raw_output_dbm": -37.664878906
           },
           {
             "source_power_dbm": -35.559,
@@ -1363,12 +2319,24 @@
             "raw_output_dbm": -37.164
           },
           {
+            "source_power_dbm": -35.0471,
+            "raw_output_dbm": -37.163121094
+          },
+          {
+            "source_power_dbm": -34.537,
+            "raw_output_dbm": -36.664976563
+          },
+          {
             "source_power_dbm": -34.536,
             "raw_output_dbm": -36.664
           },
           {
             "source_power_dbm": -34.025,
             "raw_output_dbm": -36.164
+          },
+          {
+            "source_power_dbm": -34.024,
+            "raw_output_dbm": -36.163021526
           }
         ]
       },
@@ -1383,8 +2351,20 @@
             "raw_output_dbm": -71.152
           },
           {
+            "source_power_dbm": -69.7449,
+            "raw_output_dbm": -71.15190234
+          },
+          {
             "source_power_dbm": -59.745,
             "raw_output_dbm": -61.386
+          },
+          {
+            "source_power_dbm": -59.7449,
+            "raw_output_dbm": -61.385902379
+          },
+          {
+            "source_power_dbm": -58.5265,
+            "raw_output_dbm": -60.196488105
           },
           {
             "source_power_dbm": -58.526,
@@ -1393,6 +2373,10 @@
           {
             "source_power_dbm": -57.502,
             "raw_output_dbm": -59.196
+          },
+          {
+            "source_power_dbm": -57.5016,
+            "raw_output_dbm": -59.195609375
           },
           {
             "source_power_dbm": -56.478,
@@ -1407,12 +2391,20 @@
             "raw_output_dbm": -56.196
           },
           {
+            "source_power_dbm": -53.4061,
+            "raw_output_dbm": -55.196097656
+          },
+          {
             "source_power_dbm": -53.406,
             "raw_output_dbm": -55.196
           },
           {
             "source_power_dbm": -52.382,
             "raw_output_dbm": -54.196
+          },
+          {
+            "source_power_dbm": -52.3819,
+            "raw_output_dbm": -54.195902344
           },
           {
             "source_power_dbm": -51.358,
@@ -1427,12 +2419,20 @@
             "raw_output_dbm": -51.196
           },
           {
+            "source_power_dbm": -48.2861,
+            "raw_output_dbm": -50.196097656
+          },
+          {
             "source_power_dbm": -48.286,
             "raw_output_dbm": -50.196
           },
           {
             "source_power_dbm": -47.262,
             "raw_output_dbm": -49.196
+          },
+          {
+            "source_power_dbm": -47.2619,
+            "raw_output_dbm": -49.195902344
           },
           {
             "source_power_dbm": -46.238,
@@ -1451,12 +2451,20 @@
             "raw_output_dbm": -45.196
           },
           {
+            "source_power_dbm": -42.1421,
+            "raw_output_dbm": -44.196097656
+          },
+          {
             "source_power_dbm": -42.142,
             "raw_output_dbm": -44.196
           },
           {
             "source_power_dbm": -41.118,
             "raw_output_dbm": -43.196
+          },
+          {
+            "source_power_dbm": -41.1179,
+            "raw_output_dbm": -43.195902344
           },
           {
             "source_power_dbm": -40.094,
@@ -1479,12 +2487,20 @@
             "raw_output_dbm": -39.696
           },
           {
+            "source_power_dbm": -37.0221,
+            "raw_output_dbm": -39.196097656
+          },
+          {
             "source_power_dbm": -37.022,
             "raw_output_dbm": -39.196
           },
           {
             "source_power_dbm": -36.51,
             "raw_output_dbm": -38.696
+          },
+          {
+            "source_power_dbm": -36.5099,
+            "raw_output_dbm": -38.695902344
           },
           {
             "source_power_dbm": -35.998,

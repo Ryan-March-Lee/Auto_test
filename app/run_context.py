@@ -18,6 +18,7 @@ from domain.models import RunContext
 from domain.run.models import generate_run_id
 from application.ports.config_repository import ConfigurationLoadResult
 from application.ports.run_repository import RunRepositoryPort
+from application.simulation_run import reject_simulated_run
 from application.run_service import (
     RunNotResumable,
     RunSnapshot,
@@ -29,7 +30,7 @@ from application.run_service import (
     load_hardware_config,
     load_run_configuration,
 )
-from infrastructure.filesystem.paths import PathService
+from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService
 from infrastructure.persistence.run_repository import RunRepository
 
 
@@ -225,6 +226,14 @@ def load_prepared_run(
     if not repository.run_exists(run_id):
         raise FileNotFoundError(f"运行不存在或结构不完整: {run_id}")
     ensure_run_resumable(repository.load_manifest(run_id))
+    # 仿真运行是一次性运行：不提供“加载运行”恢复入口，也不能被当成真机运行继续
+    # 测量。标记缺失/损坏时失败关闭；生产默认仿真根下的目录按仿真运行拒绝。
+    reject_simulated_run(
+        repository,
+        run_id,
+        run_directory=repository.layout(run_id).run_directory,
+        default_simulation_root=DEFAULT_PATHS.simulation_root,
+    )
     hardware_config_path = find_run_hardware_config(repository, run_id)
     hardware_config = load_hardware_config(repository, run_id)
     loaded = load_run_configuration(repository, run_id)

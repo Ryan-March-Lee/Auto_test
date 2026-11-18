@@ -55,6 +55,24 @@ def choose_stage_result(
     return path, loaded
 
 
+def _result_paths(window: Any) -> Any:
+    """当前作用域的结果目录：仿真运行返回仿真路径，正式运行返回真实路径。"""
+    coordinator = getattr(window, "coordinator", None)
+    provider = getattr(coordinator, "current_result_paths", None)
+    if callable(provider):
+        return provider()
+    return window.paths
+
+
+def _result_query(window: Any) -> Any:
+    """当前作用域的阶段结果查询；不按模式回退到全局真实结果查询。"""
+    coordinator = getattr(window, "coordinator", None)
+    provider = getattr(coordinator, "current_result_query", None)
+    if callable(provider):
+        return provider()
+    return window.gui_data_service.results
+
+
 def _choose(
     window: Any,
     stage: MeasurementStage,
@@ -65,7 +83,7 @@ def _choose(
 ) -> tuple[str, LoadedResultDto] | None:
     """四个入口共用的“选文件并按显式路径加载”；取消或失败返回 ``None``。"""
     return choose_stage_result(
-        window, results=window.gui_data_service.results,
+        window, results=_result_query(window),
         directory=directory, stage=stage, title=title, label=label,
         log=window.add_log_message,
     )
@@ -110,7 +128,7 @@ def load_cable_loss_result(window: Any) -> None:
     selected = _choose(
         window, MeasurementStage.CABLE_LOSS,
         title="选择线损测量结果", label="线损测量结果",
-        directory=window.paths.cable_loss_results_dir,
+        directory=_result_paths(window).cable_loss_results_dir,
     )
     if selected is None:
         return
@@ -132,7 +150,7 @@ def load_driver_mapping_cable_loss(window: Any) -> None:
         window, MeasurementStage.CABLE_LOSS,
         title="选择驱动映射使用的线损测量结果",
         label="驱动映射使用的线损测量结果",
-        directory=window.paths.cable_loss_results_dir,
+        directory=_result_paths(window).cable_loss_results_dir,
         show=window.driver_mapping_page.show_loaded_cable_loss,
     )
 
@@ -143,7 +161,7 @@ def load_amplifier_cable_loss(window: Any) -> None:
         window, MeasurementStage.CABLE_LOSS,
         title="选择主功放使用的线损测量结果",
         label="主功放使用的线损测量结果",
-        directory=window.paths.cable_loss_results_dir,
+        directory=_result_paths(window).cable_loss_results_dir,
         show=window.amplifier_page.show_loaded_cable_loss,
     )
 
@@ -154,7 +172,7 @@ def load_amplifier_driver_mapping(window: Any) -> None:
         window, MeasurementStage.DRIVER_MAPPING,
         title="选择主功放使用的驱动映射结果",
         label="主功放使用的驱动映射结果",
-        directory=window.paths.driver_mapping_results_dir,
+        directory=_result_paths(window).driver_mapping_results_dir,
         show=window.amplifier_page.show_loaded_driver_mapping,
     )
 

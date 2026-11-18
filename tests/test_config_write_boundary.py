@@ -70,6 +70,9 @@ ATOMIC_WRITE_IMPORTERS = {
     "infrastructure/persistence/stage_result_repository.py": (
         "阶段目录正式测量结果（原子独占创建，不覆盖历史）"
     ),
+    "app/simulation_runtime.py": (
+        "仿真输入草稿（temp/simulation_runs/configs，规范化后的当前编辑文档）"
+    ),
 }
 
 # 正式配置的序列化格式：``indent=4`` + 非 ASCII 原样保留。
@@ -170,6 +173,13 @@ JSON_WRITE_SITES = {
         "FileStageResultRepository._write_new_json",
     ): (
         "阶段目录正式测量结果 JSON（原子独占创建，不覆盖历史）",
+        CATEGORY_OTHER_JSON,
+    ),
+    (
+        "app/simulation_runtime.py",
+        "_write_simulation_draft",
+    ): (
+        "仿真输入草稿（configs/ 下的规范化编辑文档，不是 config.json）",
         CATEGORY_OTHER_JSON,
     ),
     ("collect_baseline.py", "collect_baseline"): ("基线收集清单", CATEGORY_OTHER_JSON),

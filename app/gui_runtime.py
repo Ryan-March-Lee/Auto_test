@@ -50,6 +50,7 @@ from application.run_service import (
     load_hardware_config,
     load_run_configuration,
 )
+from application.simulation_run import reject_simulated_prepared_run
 from domain.configuration.models import require_current_schema_version
 from app.events import MessageEvent, ProgressEvent, RealtimeDataEvent
 from application.dto import (
@@ -102,7 +103,14 @@ def connect_instruments(prepared_run: PreparedRun, *, recorder: Any = None) -> A
 
     没有运行契约的运行对象在这里明确失败（:class:`RunNotResumable`）：连接仪器只
     接受运行目录内冻结的硬件配置，不存在“用调用方配置路径装配”的旁路。
+
+    仿真运行在解析硬件快照、打开任何 VISA 资源之前被拒绝：标记（或生产默认仿真根
+    下的运行目录）证明这次运行只允许使用 :class:`instrument.simulation_port`，
+    绝不能按冻结的演示地址连接真实仪器。
     """
+    reject_simulated_prepared_run(
+        prepared_run, default_simulation_root=DEFAULT_PATHS.simulation_root
+    )
     return create_measurement_port(
         _hardware_config_path(prepared_run), mode="hardware", recorder=recorder
     )

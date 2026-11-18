@@ -76,6 +76,12 @@ BROAD_CATCH_BASELINE = {
         "create_driver_mapping_measurement#1",
         "create_amplifier_measurement#1",
     ),
+    "app/simulation_runtime.py": (
+        # 创建运行、写标记、登记 manifest 是一次事务：任一失败都补偿撤销本次新建且
+        # 尚未开始的运行，再抛出原始异常；补偿自身失败只记录。
+        "prepare_simulated_run#1",
+        "_discard_created_run#1",
+    ),
     "application/measurements/amplifier_test.py": (
         "AmplifierMeasurementUseCase.measure_all_frequencies#1",
         "AmplifierMeasurementUseCase._try_record#1",
@@ -190,6 +196,11 @@ BROAD_CATCH_BASELINE = {
         "settle_instrument_stage#1",
         "ApplicationCoordinator.load_configuration#1",
         "ApplicationCoordinator.save_configuration#1",
+        # 仿真运行提交是“端口接管 + 运行身份发布”的事务：页面回调在这一段之后失败
+        # 时必须整体回滚（关端口、撤销运行、恢复配置），因此这里聚合所有异常。
+        "ApplicationCoordinator._commit_simulated_run#1",
+        # 回滚/人工清理已经确定结果，刷新状态文案失败不能再改写事务结论。
+        "ApplicationCoordinator._refresh_run_status_safely#1",
         "ApplicationCoordinator._freeze_pending_run#1",
         "ApplicationCoordinator._compensate_pending_run#1",
         "ApplicationCoordinator.load_prepared_run#1",

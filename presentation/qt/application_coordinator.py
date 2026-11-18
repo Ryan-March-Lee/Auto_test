@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Protocol, runtime_checkable
 
 from app.gui_runtime import load_prepared_run, prepare_configuration
+from app.simulation_runtime import discard_simulated_run, prepare_simulated_run
 from application.configuration_authoring import (
     ConfigurationAuthoringService,
     ConfigurationEditingDocument,
@@ -64,6 +65,7 @@ from .measurement_worker_factories import (
     build_simulation_worker_factories,
 )
 from .realtime_buffer import RealtimeMeasurementBuffer
+from .simulated_run import SimulatedRunContext
 from .simulation_session import SimulationSession, build_simulation_session
 from .workers import InstrumentWorker
 
@@ -303,8 +305,11 @@ class ApplicationCoordinator:
         )
         # 命名配置快照是独立持久化能力；组合根注入，协调器不直接依赖文件系统实现。
         self.configuration_snapshots = configuration_snapshots
+        self._simulated_run: SimulatedRunContext | None = None
         self.controller: MeasurementController = controller or MeasurementController(
-            build_measurement_worker_factories(),
+            build_measurement_worker_factories(
+                simulated_context_provider=self.current_simulated_run
+            ),
             self.measurement_config_path,
             simulation_worker_factories=build_simulation_worker_factories(),
         )
@@ -491,8 +496,12 @@ class ApplicationCoordinator:
     # ---- 模拟会话状态 ----
 
     def is_mock_mode(self) -> bool:
-        """当前配置是否已加载为 Mock、或已进入 Mock 模拟会话。"""
-        return self._mock_snapshot_name is not None or self._simulation_session is not None
+        """当前是否处于只读的 Mock/仿真会话（配置参数固定，不能真机连接）。"""
+        return (
+            self._mock_snapshot_name is not None
+            or self._simulation_session is not None
+            or self._simulated_run is not None
+        )
 
     def mock_configuration_name(self) -> str | None:
         """已加载的 Mock 快照显示名称；普通配置为 ``None``。"""
@@ -519,15 +528,48 @@ class ApplicationCoordinator:
         """Mock 配置/模拟会话的只读原因；普通配置返回 ``None``。"""
         return MOCK_SIMULATION_READ_ONLY_REASON if self.is_mock_mode() else None
 
+    # ---- 仿真运行上下文 ----
+
+    @property
+    def simulated_run(self) -> SimulatedRunContext | None:
+        """当前已提交的仿真运行上下文；没有进入仿真运行时为 ``None``。"""
+        return self._simulated_run
+
+    def current_simulated_run(self) -> SimulatedRunContext | None:
+        """worker 工厂查询仿真运行上下文的无副作用入口。"""
+        return self._simulated_run
+
+    def is_simulated_run_active(self) -> bool:
+        """当前会话是否是一次仿真运行（与旧 Mock 模拟会话互斥）。"""
+        return self._simulated_run is not None
+
+    def current_result_paths(self) -> Any:
+        """当前作用域的结果目录服务：仿真运行返回仿真路径，正式运行返回真实路径。
+
+        页面选文件与随后按显式路径加载必须指向同一个根；仿真运行不得让文件对话框
+        打开真实 ``test_results/``。
+        """
+        if self._simulated_run is not None:
+            return self._simulated_run.paths
+        return self.paths
+
+    def current_result_query(self) -> Any:
+        """当前作用域的阶段结果查询：仿真运行只读仿真根，正式运行用固定数据服务。"""
+        if self._simulated_run is not None:
+            return self._simulated_run.results
+        return self.gui_data_service.results
+
     def measurement_session_ready(self) -> bool:
         """最终动作是否已交出可进入测量区的一致会话。
 
-        正式运行要求状态已提交为 ``CONNECTED``；模拟会话要求会话对象与
-        ``SIMULATING`` 同时存在。只看见 ``CONNECTED`` 不够：一份尚未提交的 Mock
-        配置可能叠加在旧正式会话状态上，不能被误当成可进入测量区。
+        正式运行与仿真运行都要求状态已提交为 ``CONNECTED``；旧 Mock 模拟会话要求
+        会话对象与 ``SIMULATING`` 同时存在。只看见 ``CONNECTED`` 不够：一份尚未
+        提交的 Mock 配置可能叠加在旧正式会话状态上，不能被误当成可进入测量区。
         """
         if self._simulation_session is not None:
             return self._state is RunFlowState.SIMULATING
+        if self._simulated_run is not None:
+            return self._state is RunFlowState.CONNECTED
         if self.is_mock_mode():
             return False
         return self._state is RunFlowState.CONNECTED
@@ -535,7 +577,8 @@ class ApplicationCoordinator:
     def _formal_session_active(self) -> bool:
         """是否仍持有正式执行会话（运行、端口、待提交运行或正式状态）。
 
-        Mock 模拟会话与正式会话严格互斥：加载 Mock 前必须先结束正式会话，否则
+        仿真运行与正式运行共用 ``prepared_run``/``CONNECTED``，因此同样属于正式
+        会话；旧 Mock 模拟会话与它们严格互斥。加载 Mock 前必须先结束会话，否则
         旧端口/旧运行会与模拟状态并存，测量入口也无法判断该用哪一套契约。
         """
         return (
@@ -543,6 +586,7 @@ class ApplicationCoordinator:
             or self.background_run is not None
             or self.instrument_ctrl is not None
             or self._pending_run is not None
+            or self._simulated_run is not None
             or self._state
             in (
                 RunFlowState.CONNECTED,
@@ -553,7 +597,12 @@ class ApplicationCoordinator:
         )
 
     def measurement_entry_message(self) -> str:
-        """最终动作成功后的用户可见结论；模拟模式明确说明不会连接真实仪器。"""
+        """最终动作成功后的用户可见结论；仿真运行明确说明不连接真实仪器。"""
+        if self._simulated_run is not None:
+            return (
+                f"仿真运行 {self._simulated_run.run_id} 已就绪：只从 readings.json "
+                "读取仪器读数，不连接真实仪器"
+            )
         if self._simulation_session is not None:
             return (
                 "Mock 模拟会话已就绪：测量只回放 mock_data，"
@@ -562,18 +611,18 @@ class ApplicationCoordinator:
         return "所有仪器连接成功！"
 
     def resolve_measurement_session(self) -> Any:
-        """统一会话入口：返回模拟会话或正式运行契约；不可用时提示并返回 ``None``。
+        """统一会话入口：返回模拟会话或运行契约；不可用时提示并返回 ``None``。
 
-        测量页面（步骤 10 起）通过这个入口取得“正式运行或模拟会话”，不需要自己
-        判断当前模式，也不能把模拟会话当成缺少端口的正式运行。
+        仿真运行与正式运行一样返回 ``PreparedRun``：页面不需要判断模式，端口读数
+        来源由协调器持有的运行上下文决定。
         """
         if self._simulation_session is not None:
             if self._state is not RunFlowState.SIMULATING:
                 self._error("当前模拟会话状态不一致；请返回欢迎页重新进入模拟模式")
                 return None
             return self._simulation_session
-        if self.is_mock_mode():
-            self._error("Mock 模拟配置尚未进入模拟会话；请先点击“连接仪器”")
+        if self.is_mock_mode() and self._simulated_run is None:
+            self._error("Mock 模拟配置尚未进入仿真运行；请先点击“连接仪器”")
             return None
         return self.resolve_measurement_run()
 
@@ -778,6 +827,14 @@ class ApplicationCoordinator:
         mock_name = (
             display_name.strip() if is_mock_configuration_name(display_name) else None
         )
+        if self._simulated_run is not None:
+            failure = ConfigurationError(
+                "当前处于仿真运行；请先返回欢迎页结束会话，再加载配置快照"
+            )
+            self.last_load_error = failure
+            self._log(f"加载配置失败: {failure}")
+            self._warn("加载配置失败", str(failure))
+            return False
         if mock_name is not None and self._formal_session_active():
             failure = ConfigurationError(
                 "当前仍有正式执行会话；请先返回欢迎页结束会话，再加载 Mock 模拟配置"
@@ -888,6 +945,10 @@ class ApplicationCoordinator:
         """
         if self._simulation_session is not None:
             return str(self.config_path)
+        if self._simulated_run is not None:
+            # 仿真运行没有真实硬件快照可解析：路径只是页面命令的元数据，worker 不会
+            # 读取它，也不会据此连接仪器。
+            return str(self.config_path)
         run = self.prepared_run
         if run is None:
             raise RunNotResumable(
@@ -904,10 +965,11 @@ class ApplicationCoordinator:
         """返回当前运行契约，供测量页面消费；不可用时提示并返回 ``None``。
 
         ``_pending_run`` 永远不在这里出现：待提交运行只有在最终化事务成功、端口
-        同时提交后才会变成 ``prepared_run``。模拟会话没有正式运行契约，也不能用
-        旧运行替代，因此在这里明确拒绝。
+        同时提交后才会变成 ``prepared_run``。旧 Mock 模拟会话没有正式运行契约，
+        也不能用旧运行替代，因此在这里明确拒绝；仿真运行与正式运行一样返回运行
+        契约，端口读数来源由仿真上下文决定。
         """
-        if self.is_mock_mode():
+        if self.is_mock_mode() and self._simulated_run is None:
             self._error(
                 "当前为 Mock 模拟配置或模拟会话，没有正式运行契约；"
                 "请使用模拟测量入口"
@@ -1022,6 +1084,7 @@ class ApplicationCoordinator:
         self._reconnecting = False
         self._saved_configuration_pending = False
         self._simulation_session = None
+        self._simulated_run = None
         self._mock_snapshot_name = None
 
     # ---- 最终化事务 ----
@@ -1056,6 +1119,8 @@ class ApplicationCoordinator:
                 "当前已在 Mock 模拟会话中；重复连接不会启动真机连接"
             )
             return False
+        if self._simulated_run is not None:
+            return self._finalize_simulated_run()
         if self._mock_snapshot_name is not None:
             return self._enter_simulation()
         if self._should_reconnect():
@@ -1132,6 +1197,254 @@ class ApplicationCoordinator:
             f"可回放 {len(session.measurement_types)} 个测量阶段，"
             "不会连接真实仪器或写入正式结果"
         )
+        return True
+
+    def _enter_simulated_run(self) -> bool:
+        """仿真运行的最终入口：规范化 → 校验 → 装配真实运行 → 提交上下文。
+
+        本入口不保存 ``config.json``、不写命名配置快照、不启动 ``InstrumentWorker``、
+        不调用 ``connect_instruments()``；仿真数据根、标记与端口全部由
+        :func:`app.simulation_runtime.prepare_simulated_run` 装配。只有运行、端口与
+        仿真上下文全部就绪后才一次性提交；任何失败都保持原状态，不留半提交运行。
+        """
+        if self._simulated_run is not None:
+            self._log("当前已在仿真运行中；重复连接不会创建第二个运行")
+            return False
+        if self._measurement_is_active():
+            self._refuse_while_measuring("无法进入仿真运行")
+            return False
+        if self.has_unreleased_ports() or self._state is RunFlowState.MANUAL_CLEANUP_REQUIRED:
+            self._set_state(RunFlowState.MANUAL_CLEANUP_REQUIRED)
+            self._warn(
+                "无法进入仿真运行",
+                "存在未完成的仪器清理；请在现场确认仪器已断开并重试清理后再进入",
+            )
+            return False
+        if self._pending_run is not None or self._state is RunFlowState.FINALIZING:
+            self._log("最终动作正在进行；完成或取消后才能进入仿真运行")
+            return False
+        if self._formal_session_active():
+            message = "当前仍有执行会话；请先返回欢迎页再进入仿真运行"
+            self._log(message)
+            self._warn("无法进入仿真运行", message)
+            return False
+        snapshot_name = self._mock_snapshot_name
+        if snapshot_name is None:
+            self._log("未加载 Mock 配置，不能进入仿真运行")
+            return False
+        page = self.test_config_page
+        if page is None or not self.validate_configuration():
+            self._log("Mock 配置校验失败：未进入仿真运行")
+            return False
+        candidate: dict[str, Any] | None = None
+        assembly = None
+        try:
+            candidate = ConfigurationAuthoringService().author_document(
+                ConfigurationEditingDocument.from_mapping(self.config)
+            )
+            if self._mock_paths is None:
+                raise ConfigurationError("未装配 Mock 数据路径服务，不能进入仿真运行")
+            scenarios = tuple(
+                load_mock_scenario(
+                    self._mock_paths.require_scenario_path_for(kind.value),
+                    expected_measurement_type=kind,
+                )
+                for kind in _MOCK_MEASUREMENT_TYPES
+            )
+            match = MockConfigurationMatcher(scenarios).match(
+                snapshot_name, candidate
+            )
+            assembly = prepare_simulated_run(
+                candidate,
+                match,
+                mock_paths=self._mock_paths,
+                paths=self.paths,
+            )
+        except (ConfigurationError, OSError, RuntimeError, TypeError, ValueError, KeyError) as failure:
+            self._log(f"无法进入仿真运行: {failure}")
+            self._warn(
+                "无法进入仿真运行",
+                f"Mock 配置或仿真数据不可用，未创建运行: {failure}",
+            )
+            return False
+        return self._commit_simulated_run(assembly, candidate)
+
+    def _commit_simulated_run(self, assembly: Any, candidate: dict[str, Any]) -> bool:
+        """提交一次已装配的仿真运行；任一失败都回滚到进入前的会话。
+
+        提交分两段：先接管端口，再发布运行身份与页面展示。发布段依赖页面回调
+        （只读原因、状态文案），它们可能失败；此时必须关闭已接管的端口、撤销本次
+        新建运行并恢复原配置，绝不留下“端口已接管、运行未提交”的半提交状态。
+        清理不完整时进入人工清理，而不是只写一条日志就允许继续。
+        """
+        if assembly is None or candidate is None:
+            self._log("仿真运行装配结果缺失；未提交")
+            return False
+        try:
+            context = SimulatedRunContext.from_assembly(assembly)
+        except (ConfigurationError, OSError, RuntimeError, TypeError, ValueError) as failure:
+            if not self._discard_simulated_assembly(assembly):
+                self._enter_manual_cleanup("仿真运行上下文不可用且清理未完成")
+            self._log(f"构建仿真运行上下文失败: {failure}")
+            self._warn("无法进入仿真运行", f"仿真端口不可用: {failure}")
+            return False
+        try:
+            snapshot = self._capture_simulated_commit_state()
+        except (AttributeError, RuntimeError, TypeError, ValueError) as failure:
+            if not self._discard_simulated_assembly(assembly):
+                self._enter_manual_cleanup("仿真运行提交前快照失败且清理未完成")
+            self._log(f"记录仿真运行提交前状态失败: {failure}")
+            self._warn("无法进入仿真运行", f"提交前状态不可记录: {failure}")
+            return False
+        if not self.accept_instrument_controller(context.port):
+            discarded = self._discard_simulated_assembly(assembly)
+            self._log("仿真端口交接失败；本次运行未提交")
+            if not discarded or self.has_unreleased_ports():
+                self._enter_manual_cleanup("仿真端口交接失败且清理未完成")
+            return False
+        try:
+            self.prepared_run = assembly.prepared_run
+            self.background_run = assembly.prepared_run
+            self._pending_run = None
+            self._pending_run_created_here = False
+            self._saved_configuration_pending = False
+            self._simulated_run = context
+            self.config = candidate
+            self._push_config_to_page()
+            self._sync_page_read_only()
+            self._set_state(RunFlowState.CONNECTED)
+            self.run_status_changed(self.run_status_text())
+        except Exception as failure:  # noqa: BLE001 - 提交必须整体成功或整体回滚
+            self._rollback_simulated_commit(snapshot, assembly, failure)
+            return False
+        self._log(
+            f"已进入仿真运行 {context.run_id}；运行目录: "
+            f"{self.prepared_run.run_directory}；冻结读数 "
+            f"{len(context.readings)} 个阶段，不连接真实仪器"
+        )
+        return True
+
+    def _capture_simulated_commit_state(self) -> dict[str, Any]:
+        """记录提交前的会话身份、配置与页面副本，供发布失败时原样恢复。"""
+        return {
+            "prepared_run": self.prepared_run,
+            "background_run": self.background_run,
+            "pending_run": self._pending_run,
+            "pending_run_created_here": self._pending_run_created_here,
+            "saved_configuration_pending": self._saved_configuration_pending,
+            "simulated_run": self._simulated_run,
+            "config": self.config,
+            "state": self._state,
+            "page_configs": tuple(
+                (page, getattr(page, "config", None))
+                for page in (self.test_config_page, self.power_page)
+            ),
+        }
+
+    def _rollback_simulated_commit(
+        self, snapshot: Mapping[str, Any], assembly: Any, failure: BaseException
+    ) -> None:
+        """恢复提交前状态并撤销未提交运行；清理不完整时转入人工清理。
+
+        这里不再调用页面的 ``set_run_status``/``set_read_only`` 等可能正是失败来源的
+        回调：状态字段直接恢复到提交前，运行状态文案只做一次尽力刷新。页面配置副本
+        必须恢复，否则失败后界面会继续持有一份从未提交的仿真配置。
+        """
+        self.prepared_run = snapshot["prepared_run"]
+        self.background_run = snapshot["background_run"]
+        self._pending_run = snapshot["pending_run"]
+        self._pending_run_created_here = snapshot["pending_run_created_here"]
+        self._saved_configuration_pending = snapshot["saved_configuration_pending"]
+        self._simulated_run = snapshot["simulated_run"]
+        self.config = snapshot["config"]
+        for page, page_config in snapshot["page_configs"]:
+            if page is None:
+                continue
+            try:
+                page.config = page_config
+            except (AttributeError, RuntimeError, TypeError, ValueError) as restore_failure:
+                self._log(f"恢复页面配置副本失败: {restore_failure}")
+        released = self.release_instrument_port()
+        discarded = self._discard_simulated_assembly(assembly)
+        self._state = snapshot["state"]
+        if not released or not discarded or self.has_unreleased_ports():
+            self._enter_manual_cleanup("仿真运行提交失败且清理未完成")
+        else:
+            self._refresh_run_status_safely()
+        self._log(f"仿真运行提交失败，已回滚到进入前状态: {failure}")
+        self._warn(
+            "无法进入仿真运行",
+            f"运行未提交，界面已恢复到进入前状态: {failure}",
+        )
+
+    def _refresh_run_status_safely(self) -> None:
+        """尽力刷新运行状态文案；页面回调失败不能改变已经完成的事务结果。"""
+        try:
+            self.run_status_changed(self.run_status_text())
+        except Exception:  # noqa: BLE001 - 页面展示失败只记录，回滚结果已经确定
+            self._log("刷新运行状态文案失败；界面将在下次同步时恢复")
+
+    def _enter_manual_cleanup(self, reason: str) -> None:
+        """进入人工清理：直接提交状态字段，不依赖可能已经失败的页面回调。"""
+        self._state = RunFlowState.MANUAL_CLEANUP_REQUIRED
+        self._log(f"仿真运行需要人工清理: {reason}")
+        self._refresh_run_status_safely()
+
+    def _finalize_simulated_run(self) -> bool:
+        """仿真运行的重连入口：只按同一份冻结读数重建端口，不创建运行。"""
+        context = self._simulated_run
+        if context is None:
+            return False
+        if self._state is RunFlowState.CONNECTED and self.instrument_ctrl is not None:
+            self._log("当前已在仿真运行中；重复连接不会创建第二个运行")
+            return False
+        if not self._should_reconnect():
+            self._log("仿真运行当前不在可重连状态；请返回欢迎页重新进入")
+            return False
+        try:
+            rebuilt = context.with_new_port()
+        except (ConfigurationError, OSError, RuntimeError, TypeError, ValueError) as failure:
+            self._log(f"重建仿真端口失败: {failure}")
+            self._warn("仿真重连失败", str(failure))
+            return False
+        if not self.accept_instrument_controller(rebuilt.port):
+            self._log("仿真端口重建后交接失败")
+            if self.has_unreleased_ports():
+                self._set_state(RunFlowState.MANUAL_CLEANUP_REQUIRED)
+            else:
+                self._set_state(RunFlowState.RECONNECT_REQUIRED)
+            return False
+        self._simulated_run = rebuilt
+        self._reconnecting = False
+        self._set_state(RunFlowState.CONNECTED)
+        self.run_status_changed(self.run_status_text())
+        self._log(
+            f"已用同一份冻结读数重建仿真端口: {rebuilt.run_id}；未创建新运行"
+        )
+        return True
+
+    def _discard_simulated_assembly(self, assembly: Any) -> bool:
+        """撤销一次未提交的仿真运行；返回运行目录与草稿是否都已清理。
+
+        失败必须可见并阻断后续事务：调用方据此进入人工清理，而不是把残留运行当成
+        “本次只是没进入”。补偿异常只记录，不覆盖最初的装配/提交失败。
+        """
+        try:
+            outcome = discard_simulated_run(assembly)
+        except (ConfigurationError, OSError, RuntimeError, TypeError, ValueError) as failure:
+            self._log(f"撤销仿真运行失败: {failure}")
+            self._warn(
+                "仿真运行清理失败",
+                "本次未提交的仿真运行目录可能仍存在；请人工检查仿真数据根",
+            )
+            return False
+        if not outcome.ok:
+            self._log(outcome.describe())
+            self._warn(
+                "仿真运行清理失败",
+                outcome.describe() + "；请人工检查仿真数据根后再继续",
+            )
+            return False
         return True
 
     def prepare_pending_run(self):
@@ -1263,6 +1576,9 @@ class ApplicationCoordinator:
 
     def _start_reconnect(self, bind_signals: Callable[[Any], None] | None) -> bool:
         """重连已有运行：不保存配置、不创建新运行，只提交新端口。"""
+        if self._simulated_run is not None:
+            # 仿真运行没有真实仪器可连接：重连只重建端口。
+            return self._finalize_simulated_run()
         run = self.prepared_run
         if run is None:
             self._warn("重新连接失败", "没有可重新连接的运行")
@@ -1457,6 +1773,13 @@ class ApplicationCoordinator:
 
     def load_prepared_run(self, run_id: str):
         """配置阶段：重新打开已有执行会话，不依赖 GUI 内存中的配置。"""
+        if self._simulated_run is not None:
+            message = (
+                "当前处于仿真运行；请先返回欢迎页结束会话，再重新打开运行"
+            )
+            self._log(message)
+            self._warn("重新打开执行会话失败", message)
+            return None
         if self._refuse_while_measuring("重新打开执行会话失败"):
             return None
         try:
@@ -1531,6 +1854,13 @@ class ApplicationCoordinator:
         return True
 
     def run_status_text(self) -> str:
+        if self._simulated_run is not None:
+            suffix = (
+                "（端口已释放，需重连仿真运行）"
+                if self._state is RunFlowState.RECONNECT_REQUIRED
+                else "（不连接真实仪器）"
+            )
+            return f"当前执行: 仿真运行 {self._simulated_run.run_id} {suffix}"
         if self._simulation_session is not None:
             return (
                 f"当前执行: Mock 模拟会话（{self._simulation_session.snapshot_name}，"
@@ -1627,6 +1957,14 @@ class ApplicationCoordinator:
         明确失败。``bind_signals`` 由窗口提供，在 worker 启动前连接窗口自身的 Qt 槽。
         """
         if self._refuse_while_measuring("仪器连接失败"):
+            return False
+        if self._simulated_run is not None:
+            message = (
+                "当前为仿真运行；不会连接真实仪器。"
+                "端口释放后请点击“连接仪器”重建仿真端口，不会创建新运行"
+            )
+            self._log(message)
+            self._warn("仪器连接失败", message)
             return False
         if self.is_mock_mode():
             message = "当前为 Mock 模拟配置或模拟会话；不会连接真实仪器"

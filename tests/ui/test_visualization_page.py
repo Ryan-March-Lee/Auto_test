@@ -26,6 +26,7 @@ from application.dto.run_history import ResultReportLocation, ResultReportState
 from application.ports.gui_data_service import LoadedResultDto
 from PySide6.QtWidgets import QDialog, QFrame
 from presentation.qt.history_view_model import HistoryViewModel
+from presentation.qt.realtime_plot import ALL_PANELS, DRIVER_MAPPING_PANELS
 from presentation.qt.visualization_page import VisualizationPage
 
 
@@ -209,6 +210,23 @@ class VisualizationPageTests(unittest.TestCase):
 
         page.frequency_filmstrip.chips()[0].click()
         self.assertEqual(len(page.data_plot_widget.target_bands()), 1)
+
+    def test_plot_panels_follow_the_loaded_result_kind(self):
+        """驱动映射历史结果只画两张图；功放结果仍保留效率与 DC 功耗。"""
+        amplifier_page = self._page(chooser=lambda: _amplifier_dto())
+        self.assertTrue(amplifier_page.load_test_data())
+        self.assertEqual(amplifier_page.data_plot_widget.panel_keys(), ALL_PANELS)
+
+        driver_page = self._page(
+            chooser=lambda: LoadedResultDto(
+                RESULT_ID, "driver_mapping.json", _driver_result()
+            )
+        )
+        self.assertTrue(driver_page.load_test_data())
+        self.assertEqual(
+            driver_page.data_plot_widget.panel_keys(), DRIVER_MAPPING_PANELS
+        )
+        self.assertEqual(len(driver_page.data_plot_widget.figure.axes), 2)
 
     # -- 另存为：只针对已加载结果 -------------------------------------------
 

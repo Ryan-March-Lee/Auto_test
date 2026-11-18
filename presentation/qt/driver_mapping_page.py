@@ -61,6 +61,7 @@ from .measurement_surface import (
 from .pages import PageControllerBindingMixin
 from .realtime_buffer import RealtimeMeasurementBuffer
 from .realtime_page import RealtimePageMixin, format_latest_number
+from .realtime_plot import DRIVER_MAPPING_PANELS
 from .stage_summary import (
     NOT_STARTED,
     StageMetric,
@@ -215,6 +216,10 @@ class DriverMappingPage(
         result_layout.addWidget(self.stage_metrics_row)
         self.driver_plot_widget = self._plot_widget_factory(result_surface)
         self._realtime_plot_widget = self.driver_plot_widget
+        # 驱动映射只测输入-输出功率与增益；效率与 DC 功耗没有测量数据，不画空图。
+        set_panels = getattr(self.driver_plot_widget, "set_panels", None)
+        if set_panels is not None:
+            set_panels(DRIVER_MAPPING_PANELS)
         prev_clicked = getattr(self.driver_plot_widget, "prev_clicked", None)
         next_clicked = getattr(self.driver_plot_widget, "next_clicked", None)
         if prev_clicked is not None:

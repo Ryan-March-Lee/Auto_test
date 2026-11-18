@@ -60,7 +60,12 @@ from .measurement_surface import (
     hairline,
     section_caption,
 )
-from .realtime_plot import PlotTargetBand, RealTimePlotWidget
+from .realtime_plot import (
+    ALL_PANELS,
+    DRIVER_MAPPING_PANELS,
+    PlotTargetBand,
+    RealTimePlotWidget,
+)
 from .theme import (
     MEASUREMENT_LEFT_PANEL_MAX_WIDTH,
     MEASUREMENT_LEFT_PANEL_MIN_WIDTH,
@@ -339,6 +344,7 @@ class VisualizationPage(QWidget):
             if loaded is None:
                 return False
             view = self.history.show(loaded)
+            self._sync_plot_panels(view)
             self.update_frequency_display()
             self.display_current_frequency_data()
             self.save_as_button.setEnabled(True)
@@ -351,6 +357,13 @@ class VisualizationPage(QWidget):
             self._log(f"数据加载失败: {error}")
             self._set_empty_state("数据加载失败")
             return False
+
+    def _sync_plot_panels(self, view) -> None:
+        """按结果类型选择面板：驱动映射没有效率与 DC 功耗数据，只画两张图。"""
+        panels = ALL_PANELS if view.result.is_amplifier else DRIVER_MAPPING_PANELS
+        set_panels = getattr(self.data_plot_widget, "set_panels", None)
+        if set_panels is not None:
+            set_panels(panels)
 
     def _choose_result(self):
         """返回用户选中的历史结果；测试可注入 ``chooser`` 代替真实对话框。"""

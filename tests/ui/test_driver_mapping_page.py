@@ -87,11 +87,15 @@ class Plot(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.updated = []
+        self.panels = []
         self.frequency_selected = Signal()
         self.frequency_rows = []
 
     def update_plot(self, data):
         self.updated.append(data)
+
+    def set_panels(self, panels):
+        self.panels.append(tuple(panels))
 
     def set_frequencies(self, frequencies, current_index):
         self.frequency_rows.append((tuple(frequencies), current_index))
@@ -477,6 +481,13 @@ class DriverMappingPageTests(unittest.TestCase):
             if label.property("role") == "sectionCaption"
         ]
         self.assertEqual(captions, ["测量结果"])
+
+    def test_plot_requests_only_input_output_and_gain_panels(self):
+        """驱动映射没有效率与 DC 功耗数据：不给绘图控件请求这两张空图。"""
+        self.assertEqual(
+            self.page.driver_plot_widget.panels,
+            [("input_output", "gain")],
+        )
 
 
 

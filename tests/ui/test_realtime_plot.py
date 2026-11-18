@@ -9,7 +9,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QCoreApplication, QEvent
 from PySide6.QtWidgets import QApplication
 
-from presentation.qt.realtime_plot import PlotTargetBand, RealTimePlotWidget
+from presentation.qt.realtime_plot import (
+    ALL_PANELS,
+    DRIVER_MAPPING_PANELS,
+    PlotTargetBand,
+    RealTimePlotWidget,
+)
 from presentation.qt.theme import build_stylesheet
 
 
@@ -100,6 +105,79 @@ class LatestPointTests(_PlotCase):
         plot.update_plot({"frequency": 1.0, "sweep_data": {"gain": ["bad"]}})
 
         self.assertEqual([text.get_text() for text in plot.ax1.texts], ["等待数据"])
+
+
+class PanelSelectionTests(_PlotCase):
+    def test_default_panels_keep_the_two_by_two_grid(self):
+        plot = self._plot()
+
+        self.assertEqual(plot.panel_keys(), ALL_PANELS)
+        self.assertEqual(len(plot.figure.axes), 4)
+        self.assertEqual(
+            plot.figure.axes[0].get_subplotspec().get_gridspec().get_geometry(),
+            (2, 2),
+        )
+
+    def test_driver_panels_are_one_row_of_two(self):
+        widget = RealTimePlotWidget(panels=DRIVER_MAPPING_PANELS)
+        self.addCleanup(_destroy, widget)
+        self.addCleanup(widget._draw_timer.stop)
+        widget.update_plot(dict(_SWEEP))
+
+        self.assertEqual(widget.panel_keys(), ("input_output", "gain"))
+        self.assertEqual(len(widget.figure.axes), 2)
+        self.assertEqual(
+            widget.figure.axes[0].get_subplotspec().get_gridspec().get_geometry(),
+            (1, 2),
+        )
+        legends = [
+            axis.get_legend().get_texts()[0].get_text()
+            for axis in widget.figure.axes
+        ]
+        self.assertEqual(legends, ["输出功率 — dBm", "增益 — dB"])
+        self.assertFalse(hasattr(widget, "ax3"), "收窄后不保留多余坐标轴")
+
+    def test_switching_panels_rebuilds_the_figure_and_waits_for_new_data(self):
+        plot = self._plot()
+        plot.update_plot(dict(_SWEEP))
+
+        plot.set_panels(DRIVER_MAPPING_PANELS)
+
+        self.assertEqual(plot.panel_keys(), ("input_output", "gain"))
+        self.assertEqual(len(plot.figure.axes), 2)
+        self.assertEqual([text.get_text() for text in plot.ax1.texts], ["等待数据"])
+
+        plot.set_panels(ALL_PANELS)
+        self.assertEqual(len(plot.figure.axes), 4)
+        self.assertTrue(hasattr(plot, "ax4"))
+
+    def test_panel_selection_is_validated(self):
+        with self.assertRaises(TypeError):
+            RealTimePlotWidget(panels="input_output")
+        with self.assertRaises(ValueError):
+            RealTimePlotWidget(panels=())
+        with self.assertRaises(ValueError):
+            RealTimePlotWidget(panels=("nope",))
+        with self.assertRaises(ValueError):
+            RealTimePlotWidget(panels=("gain", "gain"))
+
+    def test_switching_panels_on_a_visible_widget_keeps_rendering(self):
+        plot = self._plot()
+        plot.resize(640, 480)
+        plot.show()
+        self.app.processEvents()
+        plot.canvas.cancel_rebuild()
+        plot.rebuild_background()
+
+        plot.set_panels(DRIVER_MAPPING_PANELS)
+        plot.update_plot(dict(_SWEEP))
+        self.app.processEvents()
+        plot.canvas.cancel_rebuild()
+        plot.rebuild_background()
+
+        self.assertIsNotNone(plot._background)
+        self.assertEqual(len(plot.figure.axes), 2)
+        self.assertTrue(all(len(axis.lines) == 2 for axis in plot.figure.axes))
 
 
 class TargetBandTests(_PlotCase):

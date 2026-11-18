@@ -1,7 +1,9 @@
 """测量页面共享的实时绘图控件。
 
-绘图只做展示：四张图固定为“输入-输出功率 / 增益 / 效率 / DC 功耗”，配色与字体
+绘图只做展示：默认四张图“输入-输出功率 / 增益 / 效率 / DC 功耗”，配色与字体
 统一来自 :mod:`presentation.qt.theme`，因此测量页与历史可视化页的图看起来是同一套。
+面板集合可以按页面收窄：驱动映射只测输入-输出与增益，效率与 DC 功耗没有测量数据，
+页面用 :data:`DRIVER_MAPPING_PANELS` 只画这两张图。
 
 P2 在原有 2×2 布局上补三种“会说话”的读法，全部只消费调用方已经取好的数据：
 
@@ -51,7 +53,12 @@ from .theme import MOTION_REVEAL_MS, TOKENS, set_button_variant
 
 logger = get_logger(__name__)
 
-__all__ = ["PlotTargetBand", "RealTimePlotWidget"]
+__all__ = [
+    "ALL_PANELS",
+    "DRIVER_MAPPING_PANELS",
+    "PlotTargetBand",
+    "RealTimePlotWidget",
+]
 
 #: 量程滞回：数据仍在视窗内时只 blit；越界才按“span 的 8%”扩界并重建背景。
 _VIEW_PAD_RATIO = 0.08
@@ -162,8 +169,9 @@ _TITLE_COLOR = TOKENS["text"]
 
 @dataclass(frozen=True)
 class _PanelSpec:
-    """一个子图的固定语义：标题、轴标签、系列色与最新值读数。"""
+    """一个子图的固定语义：面板名、标题、轴标签、系列色与最新值读数。"""
 
+    key: str
     title: str
     xlabel: str
     ylabel: str
@@ -173,9 +181,10 @@ class _PanelSpec:
     digits: int
 
 
-# 四张图固定顺序：标题、X 轴、Y 轴、曲线颜色、读数标签、单位与小数位。
+# 四张图固定顺序：面板名、标题、X 轴、Y 轴、曲线颜色、读数标签、单位与小数位。
 _PLOT_PANELS = (
     _PanelSpec(
+        "input_output",
         "输入功率 vs 输出功率",
         "输入功率 (dBm)",
         "输出功率 (dBm)",
@@ -185,6 +194,7 @@ _PLOT_PANELS = (
         1,
     ),
     _PanelSpec(
+        "gain",
         "输出功率 vs 增益",
         "输出功率 (dBm)",
         "增益 (dB)",
@@ -194,6 +204,7 @@ _PLOT_PANELS = (
         1,
     ),
     _PanelSpec(
+        "efficiency",
         "输出功率 vs 效率",
         "输出功率 (dBm)",
         "效率 (%)",
@@ -203,6 +214,7 @@ _PLOT_PANELS = (
         1,
     ),
     _PanelSpec(
+        "dc_power",
         "DC功耗",
         "测量点",
         "DC功耗 (W)",
@@ -212,6 +224,33 @@ _PLOT_PANELS = (
         2,
     ),
 )
+
+_PANEL_SPECS = {spec.key: spec for spec in _PLOT_PANELS}
+
+#: 默认面板集合：主功放页与历史可视化页的功放结果共用这一组。
+ALL_PANELS = tuple(spec.key for spec in _PLOT_PANELS)
+#: 驱动映射只测“信号源输入 -> 驱放输出”和增益；效率与 DC 功耗没有测量数据，
+#: 画出来只会是永远“等待数据”的空图，因此不请求这两面板。
+DRIVER_MAPPING_PANELS = ("input_output", "gain")
+
+
+def _panel_keys(panels: Sequence[str] | None) -> tuple[str, ...]:
+    """把调用方的面板选择规整成有校验的键元组；``None`` 表示全部面板。"""
+    if panels is None:
+        return ALL_PANELS
+    if isinstance(panels, (str, bytes)) or not isinstance(panels, Sequence):
+        raise TypeError("面板集合必须是面板名序列")
+    keys = tuple(panels)
+    if not keys:
+        raise ValueError("至少需要一个面板")
+    for key in keys:
+        if not isinstance(key, str):
+            raise TypeError("面板名必须是字符串")
+        if key not in _PANEL_SPECS:
+            raise ValueError(f"未知面板: {key}")
+    if len(set(keys)) != len(keys):
+        raise ValueError("面板名不能重复")
+    return keys
 
 
 @dataclass
@@ -335,38 +374,33 @@ class RealTimePlotWidget(QWidget):
     #: 重绘节流：实时点按频点到达时最多每 100ms 真正画一次，坐标轴仍立即更新。
     DRAW_INTERVAL_MS = 100
 
-    def __init__(self, show_nav_buttons=False):
+    def __init__(self, show_nav_buttons=False, panels=None):
         super().__init__()
         self.setObjectName("plotPanel")
         self.show_nav_buttons = show_nav_buttons
+        self._panel_keys = _panel_keys(panels)
+        self.figure: Figure | None = None
+        self.canvas: _DeferredCanvas | None = None
         # 不用 constrained layout：背景重建只在切页/尺寸变化/量程扩展时发生，固定
         # 边距能把这一次重建里的布局开销省掉；数据更新走 blit，不经过布局引擎。
-        self.figure = Figure(figsize=(6.4, 4.8), dpi=100)
-        self.figure.set_facecolor(TOKENS["surface"])
-        self.canvas = _DeferredCanvas(self.figure)
-        self.canvas.bind_owner(self)
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QScrollArea.NoFrame)
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        canvas_widget = QWidget()
-        canvas_layout = QVBoxLayout(canvas_widget)
-        canvas_layout.setContentsMargins(0, 0, 0, 0)
-        canvas_layout.addWidget(self.canvas)
-        self.scroll_area.setWidget(canvas_widget)
-        self.canvas.setMinimumSize(480, 340)
-        self.figure.subplots(2, 2)
-        axes = self.figure.axes
-        self.ax1, self.ax2, self.ax3, self.ax4 = axes
+        self._canvas_host = QWidget()
+        self._canvas_layout = QVBoxLayout(self._canvas_host)
+        self._canvas_layout.setContentsMargins(0, 0, 0, 0)
+        self.scroll_area.setWidget(self._canvas_host)
         self._panels: list[_PanelArtists] = []
+        self._axes: list[Any] = []
         self._target_bands: tuple[PlotTargetBand, ...] = ()
         self._background: Any | None = None
         self._background_size: tuple[int, int] = (0, 0)
         self._overlay_regions: list[Any] = []
         self._static_dirty = True
         self._render_pending = False
-        # ax2 的 x 轴当前是否显示“输出功率”；没有输出功率时退回“测量点”。
+        # 增益图的 x 轴当前是否显示“输出功率”；没有输出功率时退回“测量点”。
         self._output_axis = True
         self._draw_timer = QTimer(self)
         self._draw_timer.setSingleShot(True)
@@ -403,8 +437,75 @@ class RealTimePlotWidget(QWidget):
             layout.addLayout(row)
         layout.addWidget(self.scroll_area, 1)
         self.setFocusPolicy(Qt.WheelFocus)
-        self.canvas.installEventFilter(self)
+        self._build_figure(self._panel_keys)
+
+    # -- 面板集合 -----------------------------------------------------------
+
+    def set_panels(self, panels: Sequence[str]) -> None:
+        """切换要显示的面板集合；集合相同时不重建画布。
+
+        重建会清掉已画曲线与目标带，等待下一次 ``update_plot`` 重新填入；页面在加载
+        结果、确认测量类型后调用，因此不会丢掉同一份结果已经画好的数据。
+        """
+        keys = _panel_keys(panels)
+        if keys == self._panel_keys:
+            return
+        self._panel_keys = keys
+        self._build_figure(keys)
+
+    def panel_keys(self) -> tuple[str, ...]:
+        """当前显示的面板集合（只读）。"""
+        return self._panel_keys
+
+    def _build_figure(self, panel_keys: tuple[str, ...]) -> None:
+        """按面板集合重建画布：两张图排一行，四张图排 2×2。"""
+        self._discard_canvas()
+        figure = Figure(figsize=(6.4, 4.8), dpi=100)
+        figure.set_facecolor(TOKENS["surface"])
+        canvas = _DeferredCanvas(figure)
+        canvas.bind_owner(self)
+        canvas.setMinimumSize(480, 340)
+        count = len(panel_keys)
+        columns = 2 if count > 1 else 1
+        rows = math.ceil(count / columns)
+        figure.subplots(rows, columns, squeeze=False)
+        axes = list(figure.axes)
+        for axis in axes[count:]:
+            axis.set_visible(False)
+        # 先把新画布装进控件状态，再挂到可见布局上：挂载会同步触发 showEvent，
+        # 那时 ``on_canvas_shown`` 必须看到的是这一张画布，而不是刚丢掉的旧画布。
+        self.figure = figure
+        self.canvas = canvas
+        self._axes = axes[:count]
+        self._panels = []
+        self._target_bands = ()
+        self._background = None
+        self._background_size = (0, 0)
+        self._overlay_regions = []
+        self._output_axis = True
+        self._canvas_layout.addWidget(canvas)
+        canvas.installEventFilter(self)
+        self._attach_axes()
         self.setup_empty_plots()
+
+    def _discard_canvas(self) -> None:
+        """换面板时丢掉旧画布；旧画布的重建定时器必须先停，不能再整图绘制。"""
+        canvas = self.canvas
+        if canvas is None:
+            return
+        canvas.cancel_rebuild()
+        canvas.removeEventFilter(self)
+        self._canvas_layout.removeWidget(canvas)
+        canvas.setParent(None)
+        canvas.deleteLater()
+
+    def _attach_axes(self) -> None:
+        """按当前面板暴露 ``ax1``…``axN``；切到更少面板时删掉多余属性。"""
+        for index, axis in enumerate(self._axes, start=1):
+            setattr(self, f"ax{index}", axis)
+        for index in range(len(self._axes) + 1, len(_PLOT_PANELS) + 1):
+            if hasattr(self, f"ax{index}"):
+                delattr(self, f"ax{index}")
 
     # -- 样式 ---------------------------------------------------------------
 
@@ -455,19 +556,19 @@ class RealTimePlotWidget(QWidget):
         )
 
     def setup_empty_plots(self):
-        """建立四张固定子图：轴、图例和“等待数据”只建一次，之后只改数据。"""
+        """建立当前面板集合的子图：轴、图例和“等待数据”只建一次，之后只改数据。"""
         self._apply_layout()
         self._panels = [
-            self._build_panel(index, axis)
-            for index, axis in enumerate(self.figure.axes)
+            self._build_panel(key, axis)
+            for key, axis in zip(self._panel_keys, self._axes)
         ]
         self._static_dirty = True
         # 构造时控件还不可见：draw_idle 只记待办，第一次上屏时再 blit / 重建。
         self.canvas.draw_idle()
 
-    def _build_panel(self, index: int, axis) -> _PanelArtists:
+    def _build_panel(self, key: str, axis) -> _PanelArtists:
         """一个面板的静态件与空动态件；动态件先隐藏，有数据后再显示。"""
-        panel_spec = _PLOT_PANELS[index]
+        panel_spec = _PANEL_SPECS[key]
         self._style_axis(axis, panel_spec.title, panel_spec.xlabel, panel_spec.ylabel)
         axis.set_xlim(0.0, 1.0)
         axis.set_ylim(0.0, 1.0)
@@ -609,35 +710,18 @@ class RealTimePlotWidget(QWidget):
             sweep = data.get("sweep_data", {})
             if not isinstance(sweep, Mapping):
                 sweep = {}
-            pin = _numeric_list(
-                sweep.get("input_power_dut", sweep.get("input_power_sg"))
-            )
-            pout = _numeric_list(
-                sweep.get("output_power_dut", sweep.get("output_power_driver"))
-            )
-            gain = _numeric_list(sweep.get("gain"))
-            efficiency = _numeric_list(sweep.get("efficiency"))
-            dc_power = _numeric_list(sweep.get("dc_power"))
-            points = (
-                _pair(pin, pout),
-                _pair(pout, gain) if pout is not None else _pair(_indices(gain), gain),
-                _pair(pout, efficiency),
-                _pair(_indices(dc_power), dc_power),
-            )
+            series, has_output = self._sweep_series(sweep)
             static_changed = False
-            for index, panel in enumerate(self._panels):
+            for panel in self._panels:
                 static_changed = (
-                    self._apply_series(panel, points[index]) or static_changed
+                    self._apply_series(panel, series.get(panel.spec.key))
+                    or static_changed
                 )
-            # 输入-输出图的横轴就是输入功率；没有输出功率时退回“测量点”。
-            wants_output_axis = pout is not None
-            if wants_output_axis != self._output_axis:
-                self._output_axis = wants_output_axis
-                self._panels[1].axis.set_xlabel(
-                    "输出功率 (dBm)" if wants_output_axis else "测量点",
-                    color=_TICK_COLOR,
-                    fontdict={**_CJK_FONT, "size": 8.5},
-                )
+            # 增益图的横轴是输出功率；没有输出功率时退回“测量点”。面板不在时跳过。
+            gain_panel = self._panel("gain")
+            if gain_panel is not None and has_output != self._output_axis:
+                self._output_axis = has_output
+                self._set_output_axis_label(gain_panel)
                 static_changed = True
             if static_changed:
                 self._static_dirty = True
@@ -645,6 +729,43 @@ class RealTimePlotWidget(QWidget):
         except Exception as error:  # noqa: BLE001 - 绘图失败不得中断测量线程
             # 绘图是展示副作用：失败记日志并保持上一帧，不向测量线程抛出。
             logger.warning("绘图更新失败: %s", error)
+
+    @staticmethod
+    def _sweep_series(
+        sweep: Mapping[str, Any],
+    ) -> tuple[dict[str, tuple[list[float], list[float]] | None], bool]:
+        """把一次扫频拆成各面板的数据对；没有输出功率时返回 ``False``。"""
+        pin = _numeric_list(sweep.get("input_power_dut", sweep.get("input_power_sg")))
+        pout = _numeric_list(
+            sweep.get("output_power_dut", sweep.get("output_power_driver"))
+        )
+        gain = _numeric_list(sweep.get("gain"))
+        efficiency = _numeric_list(sweep.get("efficiency"))
+        dc_power = _numeric_list(sweep.get("dc_power"))
+        series = {
+            "input_output": _pair(pin, pout),
+            "gain": (
+                _pair(pout, gain) if pout is not None else _pair(_indices(gain), gain)
+            ),
+            "efficiency": _pair(pout, efficiency),
+            "dc_power": _pair(_indices(dc_power), dc_power),
+        }
+        return series, pout is not None
+
+    def _panel(self, key: str) -> _PanelArtists | None:
+        """按面板名取当前显示的艺术家集合；面板被收窄时返回 ``None``。"""
+        for panel in self._panels:
+            if panel.spec.key == key:
+                return panel
+        return None
+
+    def _set_output_axis_label(self, panel: _PanelArtists) -> None:
+        """增益图的横轴在“输出功率”和“测量点”之间切换。"""
+        panel.axis.set_xlabel(
+            "输出功率 (dBm)" if self._output_axis else "测量点",
+            color=_TICK_COLOR,
+            fontdict={**_CJK_FONT, "size": 8.5},
+        )
 
     def _apply_series(
         self,
@@ -768,11 +889,9 @@ class RealTimePlotWidget(QWidget):
             self._reset_view(panel)
         self._target_bands = ()
         self._output_axis = True
-        self._panels[1].axis.set_xlabel(
-            "输出功率 (dBm)",
-            color=_TICK_COLOR,
-            fontdict={**_CJK_FONT, "size": 8.5},
-        )
+        gain_panel = self._panel("gain")
+        if gain_panel is not None:
+            self._set_output_axis_label(gain_panel)
         self._static_dirty = True
         self._request_draw()
 

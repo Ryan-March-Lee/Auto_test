@@ -18,7 +18,7 @@ from presentation.qt.realtime_plot import (
 )
 from presentation.qt.realtime_buffer import RealtimeMeasurementBuffer
 from presentation.qt.realtime_page import RealtimePageMixin
-from presentation.qt.theme import build_stylesheet
+from presentation.qt.theme import TOKENS, build_stylesheet
 
 
 def _destroy(widget):
@@ -122,7 +122,7 @@ class PanelSelectionTests(_PlotCase):
         )
 
     def test_cable_loss_panels_plot_one_curve_per_cable_against_frequency(self):
-        """线损面板组：四幅图各一条线缆，横轴频率(GHz)、纵轴线损(dB)。"""
+        """线损面板组：四幅图各一条线缆，横轴频率(GHz)、纵轴写明线缆编号与线损(dB)。"""
         widget = RealTimePlotWidget(panels=CABLE_LOSS_PANELS)
         self.addCleanup(_destroy, widget)
         self.addCleanup(widget._draw_timer.stop)
@@ -145,7 +145,8 @@ class PanelSelectionTests(_PlotCase):
         ]
         self.assertEqual(legends, ["线缆1 — dB", "线缆2 — dB", "线缆3 — dB", "线缆4 — dB"])
         self.assertEqual(widget.ax1.get_xlabel(), "频率 (GHz)")
-        self.assertEqual(widget.ax1.get_ylabel(), "线损 (dB)")
+        self.assertEqual(widget.ax1.get_ylabel(), "线缆1 线损 (dB)")
+        self.assertEqual(widget.ax4.get_ylabel(), "线缆4 线损 (dB)")
         self.assertEqual(list(widget.ax1.lines[0].get_xdata()), [2.4, 3.5])
         self.assertEqual(list(widget.ax1.lines[0].get_ydata()), [1.0, 1.2])
         # 没有数据的线缆保持“等待数据”，不画一条空曲线。
@@ -225,6 +226,17 @@ class PanelSelectionTests(_PlotCase):
         self.assertIsNotNone(plot._background)
         self.assertEqual(len(plot.figure.axes), 2)
         self.assertTrue(all(len(axis.lines) == 2 for axis in plot.figure.axes))
+
+
+class AxisLabelStyleTests(_PlotCase):
+    def test_panels_have_no_title_and_readable_black_axis_labels(self):
+        plot = self._plot()
+
+        for axis in plot.figure.axes:
+            self.assertEqual(axis.get_title(), "", "图里不再画加粗标题")
+            for label in (axis.xaxis.label, axis.yaxis.label):
+                self.assertEqual(label.get_color(), TOKENS["text"])
+                self.assertGreaterEqual(label.get_fontsize(), 10.0)
 
 
 class TargetBandTests(_PlotCase):

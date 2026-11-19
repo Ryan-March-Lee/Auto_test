@@ -18,8 +18,11 @@ P2 在原有 2×2 布局上补三种“会说话”的读法，全部只消费�
 - **目标带**：调用方明确给出目标范围时才画一条淡色水平带。没有目标值时不画，
   这里不发明任何业务语义。
 
-性能约束：一张 2×2、带中文标题和刻度的图整图 Agg 绘制要 300–500ms。因此本控件把
-“静态背景”（坐标轴、刻度、网格、固定标题、轴标签、图例、目标带、等待提示）只画
+图里不再画加粗标题：子图的语义由黑色加大的横纵轴标签表达，纵轴标签直接写明
+被测对象（例如线损页的“线缆1 线损 (dB)”），小面板里省下的标题高度留给坐标区。
+
+性能约束：一张 2×2、带中文轴标签和刻度的图整图 Agg 绘制要 300–500ms。因此本控件把
+“静态背景”（坐标轴、刻度、网格、轴标签、图例、目标带、等待提示）只画
 一次并缓存在 ``_background``，每个数据点只用背景缓存 + ``restore_region`` 重画曲线、
 最新点圆环与数值标注，再一次 ``blit`` 上屏；单点更新从数百毫秒降到十几毫秒。背景只在
 首次显示、尺寸变化、量程扩展或静态内容变化时重建。隐藏页面只记录待办，显示后要么
@@ -169,21 +172,22 @@ class _DeferredCanvas(FigureCanvas):
             owner.rebuild_background()
 
 
-# 中文字体：matplotlib 默认字体没有中文字形，标题必须显式指定，否则显示为方框。
+# 中文字体：matplotlib 默认字体没有中文字形，轴标签必须显式指定，否则显示为方框。
 _CJK_FONT = {"family": "Microsoft YaHei"}
 _CJK = _CJK_FONT["family"]
 _GRID_COLOR = TOKENS["table_grid"]
 _SPINE_COLOR = TOKENS["border_strong"]
 _TICK_COLOR = TOKENS["text_secondary"]
-_TITLE_COLOR = TOKENS["text"]
+#: 横纵轴标签统一用主题最深的一档文字色（近黑），比刻度更醒目。
+_AXIS_LABEL_COLOR = TOKENS["text"]
+_AXIS_LABEL_SIZE = 10.0
 
 
 @dataclass(frozen=True)
 class _PanelSpec:
-    """一个子图的固定语义：面板名、标题、轴标签、系列色与最新值读数。"""
+    """一个子图的固定语义：面板名、轴标签、系列色与最新值读数。"""
 
     key: str
-    title: str
     xlabel: str
     ylabel: str
     color: str
@@ -192,11 +196,10 @@ class _PanelSpec:
     digits: int
 
 
-# 四张图固定顺序：面板名、标题、X 轴、Y 轴、曲线颜色、读数标签、单位与小数位。
+# 四张图固定顺序：面板名、X 轴、Y 轴、曲线颜色、读数标签、单位与小数位。
 _PLOT_PANELS = (
     _PanelSpec(
         "input_output",
-        "输入功率 vs 输出功率",
         "输入功率 (dBm)",
         "输出功率 (dBm)",
         TOKENS["series_1"],
@@ -206,7 +209,6 @@ _PLOT_PANELS = (
     ),
     _PanelSpec(
         "gain",
-        "输出功率 vs 增益",
         "输出功率 (dBm)",
         "增益 (dB)",
         TOKENS["series_2"],
@@ -216,7 +218,6 @@ _PLOT_PANELS = (
     ),
     _PanelSpec(
         "efficiency",
-        "输出功率 vs 效率",
         "输出功率 (dBm)",
         "效率 (%)",
         TOKENS["series_3"],
@@ -226,7 +227,6 @@ _PLOT_PANELS = (
     ),
     _PanelSpec(
         "dc_power",
-        "DC功耗",
         "测量点",
         "DC功耗 (W)",
         TOKENS["series_4"],
@@ -240,12 +240,12 @@ _PANEL_SPECS = {spec.key: spec for spec in _PLOT_PANELS}
 
 #: 线损页的四幅图：每幅一条线缆，横轴频率(GHz)、纵轴线损(dB)。与功放页的四幅图
 #: 语义不同——那边是“同一频点的四个指标”，这边是“同一条缆随频率的完整曲线”。
+#: 图里没有标题，线缆编号直接写进纵轴标签，读数时不必再对照面板名。
 _CABLE_LOSS_PANELS = tuple(
     _PanelSpec(
         f"cable{index}",
-        f"线缆{index} 线损 vs 频率",
         "频率 (GHz)",
-        "线损 (dB)",
+        f"线缆{index} 线损 (dB)",
         TOKENS[f"series_{index}"],
         f"线缆{index}",
         "dB",
@@ -293,7 +293,7 @@ class _PanelArtists:
     """一个子图的艺术家集合：静态件只建一次，动态件每个频点只改数据。
 
     动态件（曲线、最新点圆环、数值标注）在重建背景时临时隐藏，所以背景缓存里不会
-    夹带上一个频点的曲线；静态件（坐标轴、刻度、固定标题、图例、目标带、等待提示）
+    夹带上一个频点的曲线；静态件（坐标轴、刻度、轴标签、图例、目标带、等待提示）
     留在背景里，blit 更新不重排、也不重新测量文字。
     """
 
@@ -580,16 +580,23 @@ class RealTimePlotWidget(QWidget):
     # -- 样式 ---------------------------------------------------------------
 
     @staticmethod
-    def _style_axis(axis, title: str, xlabel: str, ylabel: str) -> None:
-        """统一四张图的字体、网格与边框；中文字体必须逐次指定。"""
+    def _style_axis(axis, xlabel: str, ylabel: str) -> None:
+        """统一四张图的字体、网格与边框；中文字体必须逐次指定。
+
+        不画标题：加粗标题在小面板里会挤掉坐标区，横纵轴标签才是读图的主线索，
+        因此改用主题最深的文字色并稍微放大。
+        """
         axis.set_facecolor(TOKENS["surface"])
-        axis.set_title(
-            title,
-            color=_TITLE_COLOR,
-            fontdict={**_CJK_FONT, "size": 10.5, "fontweight": "bold"},
+        axis.set_xlabel(
+            xlabel,
+            color=_AXIS_LABEL_COLOR,
+            fontdict={**_CJK_FONT, "size": _AXIS_LABEL_SIZE},
         )
-        axis.set_xlabel(xlabel, color=_TICK_COLOR, fontdict={**_CJK_FONT, "size": 8.5})
-        axis.set_ylabel(ylabel, color=_TICK_COLOR, fontdict={**_CJK_FONT, "size": 8.5})
+        axis.set_ylabel(
+            ylabel,
+            color=_AXIS_LABEL_COLOR,
+            fontdict={**_CJK_FONT, "size": _AXIS_LABEL_SIZE},
+        )
         axis.grid(True, color=_GRID_COLOR, linewidth=0.8)
         axis.set_axisbelow(True)
         axis.tick_params(labelsize=7.5, colors=_TICK_COLOR, length=3)
@@ -598,24 +605,25 @@ class RealTimePlotWidget(QWidget):
             spine.set_linewidth(0.8)
 
     def _apply_layout(self) -> None:
-        """按画布尺寸设固定边距与间距：小窗口也不让标题、轴标签和标注互相压住。
+        """按画布尺寸设固定边距与间距：小窗口也不让轴标签和标注互相压住。
 
         右侧额外留出数值标注的位置：标注锚在最后一个数据点上、再向右偏 7px，最右
         一列的标注会落在坐标区之外；没有这段余量时它会被画布边缘裁掉。行/列间距按
         “至少 N 像素”反推 hspace/wspace：窗口变小时间距不会跟着缩到文字重叠。
+        标题去掉后上沿只需容纳刻度，行间距也只需容纳下一排的 x 轴标签。
         """
         width = max(int(self.canvas.width()), 1)
         height = max(int(self.canvas.height()), 1)
-        left = max(0.07, 46.0 / width)
+        left = max(0.08, 54.0 / width)
         right = 1.0 - max(0.06, 46.0 / width)
-        top = 1.0 - max(0.07, 34.0 / height)
-        bottom = max(0.10, 40.0 / height)
+        top = 1.0 - max(0.05, 20.0 / height)
+        bottom = max(0.10, 44.0 / height)
         usable_width = max(1.0, (right - left) * width)
         usable_height = max(1.0, (top - bottom) * height)
         # 列间距要同时容纳左列的数值标注与右列的 y 轴标签；行间距要容纳上排的
-        # x 轴标签与下排标题。matplotlib 的 *space 是“占平均轴尺寸的比例”。
+        # x 轴标签。matplotlib 的 *space 是“占平均轴尺寸的比例”。
         wspace = max(0.24, 2.0 * 88.0 / max(1.0, usable_width - 88.0))
-        hspace = max(0.38, 2.0 * 68.0 / max(1.0, usable_height - 68.0))
+        hspace = max(0.30, 2.0 * 52.0 / max(1.0, usable_height - 52.0))
         self.figure.subplots_adjust(
             left=left,
             right=right,
@@ -639,7 +647,7 @@ class RealTimePlotWidget(QWidget):
     def _build_panel(self, key: str, axis) -> _PanelArtists:
         """一个面板的静态件与空动态件；动态件先隐藏，有数据后再显示。"""
         panel_spec = _PANEL_SPECS[key]
-        self._style_axis(axis, panel_spec.title, panel_spec.xlabel, panel_spec.ylabel)
+        self._style_axis(axis, panel_spec.xlabel, panel_spec.ylabel)
         axis.set_xlim(0.0, 1.0)
         axis.set_ylim(0.0, 1.0)
         line = axis.plot(

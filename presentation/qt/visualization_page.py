@@ -67,8 +67,7 @@ from .realtime_plot import (
     RealTimePlotWidget,
 )
 from .theme import (
-    MEASUREMENT_LEFT_PANEL_MAX_WIDTH,
-    MEASUREMENT_LEFT_PANEL_MIN_WIDTH,
+    MEASUREMENT_LEFT_PANEL_WIDTH,
     set_button_variant,
 )
 
@@ -207,9 +206,9 @@ class VisualizationPage(QWidget):
 
         # 可视化和三个测量页使用同一套“左控制面 + 右结果面”：切到 04 时不会突然
         # 从两栏控制台变成一张整宽表单。左栏只放浏览与导出动作，右侧整块留给图。
+        # 宽度与三个测量页共用 theme 里的同一个固定值。
         left_panel = QWidget()
-        left_panel.setMinimumWidth(MEASUREMENT_LEFT_PANEL_MIN_WIDTH)
-        left_panel.setMaximumWidth(MEASUREMENT_LEFT_PANEL_MAX_WIDTH)
+        left_panel.setFixedWidth(MEASUREMENT_LEFT_PANEL_WIDTH)
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(12)
@@ -251,18 +250,24 @@ class VisualizationPage(QWidget):
         control_layout.addWidget(section_caption("频点浏览"))
         navigation = QHBoxLayout()
         navigation.setSpacing(8)
-        self.freq_prev_btn = QPushButton("◀ 上一个")
+        # 窄栏里两个方向键只占图标宽度，文字含义放在 tooltip 与可访问名称里；
+        # 频点徽标仍是这一行的主体，占用剩余宽度。
+        self.freq_prev_btn = QPushButton("◀")
         set_button_variant(self.freq_prev_btn, "secondary")
+        self.freq_prev_btn.setToolTip("上一个频点")
+        self.freq_prev_btn.setAccessibleName("上一个频点")
         self.freq_prev_btn.setEnabled(False)
         self.freq_prev_btn.clicked.connect(self.prev_frequency)
         navigation.addWidget(self.freq_prev_btn)
         self.freq_label = QLabel("未加载数据")
         self.freq_label.setObjectName("freqBadge")
         self.freq_label.setAlignment(Qt.AlignCenter)
-        self.freq_label.setMinimumWidth(120)
+        self.freq_label.setMinimumWidth(88)
         navigation.addWidget(self.freq_label, 1)
-        self.freq_next_btn = QPushButton("下一个 ▶")
+        self.freq_next_btn = QPushButton("▶")
         set_button_variant(self.freq_next_btn, "secondary")
+        self.freq_next_btn.setToolTip("下一个频点")
+        self.freq_next_btn.setAccessibleName("下一个频点")
         self.freq_next_btn.setEnabled(False)
         self.freq_next_btn.clicked.connect(self.next_frequency)
         navigation.addWidget(self.freq_next_btn)
@@ -290,6 +295,7 @@ class VisualizationPage(QWidget):
         self.data_plot_widget = RealTimePlotWidget()
         result_layout.addWidget(self.data_plot_widget, 1)
         layout.addWidget(results, 1)
+        self.control_panel = left_panel
 
     def on_activated(self):
         """页面可见时重新校验报告可用性：报告可能在后台补生成或由外部工具更新。"""

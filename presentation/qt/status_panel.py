@@ -133,8 +133,9 @@ class StatusSlot(QWidget):
 class StatusPanel(QFrame):
     """一行运行状态：最近一条消息 + 最近几条的 tooltip 历史。"""
 
-    #: 面板最小宽度：再窄状态文本就只剩几个字了。
-    MINIMUM_WIDTH = 300
+    #: 面板最小宽度：再窄状态文本就只剩几个字了。左栏固定 288px 后，这里从 300
+    #: 收到 260，把省下的余量留给控制面；完整状态仍保留在 tooltip 里。
+    MINIMUM_WIDTH = 260
 
     def __init__(self, *, parent: QWidget | None = None) -> None:
         super().__init__(parent)

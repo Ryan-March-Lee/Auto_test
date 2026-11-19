@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Callable
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -55,8 +55,7 @@ from .stage_summary import (
 )
 from .status_panel import StatusSlot
 from .theme import (
-    MEASUREMENT_LEFT_PANEL_MAX_WIDTH,
-    MEASUREMENT_LEFT_PANEL_MIN_WIDTH,
+    MEASUREMENT_LEFT_PANEL_WIDTH,
     set_button_variant,
 )
 
@@ -125,10 +124,9 @@ class AmplifierPage(
         # 左侧窄栏自上而下放控制面与运行状态；右侧整块留给结果面。
         # 测量结果由频点浏览图按频点展示，页面不再重复列一份结果表。
         # 接线说明只保留连接图入口：测试者已知道仪器怎么接，按钮只用于防止忘记。
-        # 宽度与另两个测量页共用 theme 里的同一组常量。
+        # 宽度与另三个左栏页面共用 theme 里的同一个固定值。
         left_panel = QWidget()
-        left_panel.setMinimumWidth(MEASUREMENT_LEFT_PANEL_MIN_WIDTH)
-        left_panel.setMaximumWidth(MEASUREMENT_LEFT_PANEL_MAX_WIDTH)
+        left_panel.setFixedWidth(MEASUREMENT_LEFT_PANEL_WIDTH)
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(12)
@@ -160,13 +158,10 @@ class AmplifierPage(
             },
         )
         self.controls.show_idle()
-        # 开始是控制面唯一的主操作，独占整行；停止与连接图收成一行紧凑次操作。
+        # 开始是控制面唯一的主操作；停止与连接图纵向排列，一行一个。
         control_layout.addWidget(self.amplifier_test_btn)
-        secondary_actions = QHBoxLayout()
-        secondary_actions.setSpacing(8)
         for button in (self.stop_btn, self.show_amp_diagram_btn):
-            secondary_actions.addWidget(button, 1)
-        control_layout.addLayout(secondary_actions)
+            control_layout.addWidget(button)
         # 两类校准输入是主功放测量的前置条件：合并成同一个“校准输入”区块，每行是
         # 来源文件、测量时间和加载动作。驱动关闭时不需要驱动映射，整行随模式隐藏。
         control_layout.addWidget(hairline())
@@ -605,14 +600,17 @@ class AmplifierPage(
 
 
 def _calibration_input_row(button: QPushButton, label: QLabel) -> QWidget:
-    """一行校准输入：加载动作在左，来源文件与测量时间在右，文本可换行。"""
+    """校准输入：加载动作一行，来源文件与测量时间在下一行。
+
+    窄栏里按钮与说明并排会把说明挤成一条窄柱；上下排列后两者都保持完整宽度，
+    说明只负责换行。
+    """
     row = QWidget()
-    row_layout = QHBoxLayout(row)
+    row_layout = QVBoxLayout(row)
     row_layout.setContentsMargins(0, 0, 0, 0)
-    row_layout.setSpacing(8)
+    row_layout.setSpacing(2)
     row_layout.addWidget(button)
-    row_layout.setAlignment(button, Qt.AlignmentFlag.AlignTop)
-    row_layout.addWidget(label, 1)
+    row_layout.addWidget(label)
     return row
 
 

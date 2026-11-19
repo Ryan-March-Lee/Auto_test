@@ -537,6 +537,28 @@ class VisualizationPageTests(unittest.TestCase):
         self.assertTrue(page.freq_next_btn.isEnabled())
         self.assertTrue(page.save_as_button.isEnabled())
 
+    def test_frequency_navigation_uses_compact_icon_buttons(self):
+        page = self._page()
+        self.assertEqual(page.freq_prev_btn.text(), "\u25c0")
+        self.assertEqual(page.freq_next_btn.text(), "\u25b6")
+        self.assertEqual(page.freq_prev_btn.toolTip(), "上一个频点")
+        self.assertEqual(page.freq_next_btn.toolTip(), "下一个频点")
+        self.assertEqual(page.freq_label.minimumWidth(), 88)
+
+    def test_left_panel_is_the_shared_fixed_width(self):
+        from PySide6.QtCore import QCoreApplication, QEvent
+        from presentation.qt.theme import MEASUREMENT_LEFT_PANEL_WIDTH
+
+        page = self._page()
+        self.assertIs(page.control_panel, page.layout().itemAt(0).widget())
+        page.resize(1400, 900)
+        page.show()
+        self.app.processEvents()
+        self.assertEqual(page.control_panel.width(), MEASUREMENT_LEFT_PANEL_WIDTH)
+        page.close()
+        page.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
     def test_frequency_navigation_updates_the_label(self):
         page = self._page(chooser=lambda: _amplifier_dto())
         self.assertTrue(page.load_test_data())

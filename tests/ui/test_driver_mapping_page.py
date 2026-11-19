@@ -17,7 +17,7 @@ from presentation.qt.measurement_state import (
     MeasurementKind,
     MeasurementStatus,
 )
-from presentation.qt.theme import MEASUREMENT_LEFT_PANEL_MIN_WIDTH
+from presentation.qt.theme import MEASUREMENT_LEFT_PANEL_WIDTH
 
 
 def _destroy_widget(widget):
@@ -509,8 +509,8 @@ class DriverMappingPageTests(unittest.TestCase):
         self.app.processEvents()
         result = page.findChild(QFrame, "measurementResultSurface")
         self.assertIsNotNone(result)
-        # 左栏宽度取 theme 里的共用常量，与另两个测量页保持一致。
-        self.assertEqual(page.control_panel.width(), MEASUREMENT_LEFT_PANEL_MIN_WIDTH)
+        # 左栏宽度取 theme 里的固定值，与另三个左栏页面保持一致。
+        self.assertEqual(page.control_panel.width(), MEASUREMENT_LEFT_PANEL_WIDTH)
         self.assertLess(
             page.control_panel.x() + page.control_panel.width(),
             result.x(),
@@ -523,6 +523,23 @@ class DriverMappingPageTests(unittest.TestCase):
 
 
 
+
+    def test_actions_stack_vertically_one_per_row(self):
+        page = self.page
+        page.resize(1200, 800)
+        page.show()
+        self.app.processEvents()
+        buttons = (
+            page.driver_mapping_btn,
+            page.driver_stop_btn,
+            page.show_driver_diagram_btn,
+            page.load_cable_loss_btn,
+        )
+        tops = [button.geometry().top() for button in buttons]
+        self.assertEqual(tops, sorted(tops))
+        self.assertEqual(len(set(tops)), len(buttons))
+        self.assertEqual(len({button.geometry().width() for button in buttons}), 1)
+        page.close()
 
     def test_calibration_inputs_live_in_the_control_surface(self):
         from PySide6.QtWidgets import QFrame

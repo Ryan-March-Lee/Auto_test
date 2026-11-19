@@ -14,7 +14,7 @@ from presentation.qt.measurement_controls import MeasurementAction
 from presentation.qt.measurement_state import MeasurementKind, MeasurementStatus
 from presentation.qt.measurement_workspace import mode_text
 from presentation.qt.stage_summary import NOT_STARTED
-from presentation.qt.theme import MEASUREMENT_LEFT_PANEL_MIN_WIDTH
+from presentation.qt.theme import MEASUREMENT_LEFT_PANEL_WIDTH
 
 
 def _destroy_widget(widget):
@@ -512,17 +512,15 @@ class AmplifierPageTests(unittest.TestCase):
         self.assertTrue(self.page.amplifier_test_btn.isEnabled())
         self.assertFalse(self.page.stop_btn.isEnabled())
 
-    def test_stop_and_diagram_share_one_row_below_start(self):
+    def test_stop_and_diagram_stack_vertically_below_start(self):
         page = self.page
         page.resize(1200, 800)
         page.show()
         self.app.processEvents()
         buttons = (page.stop_btn, page.show_amp_diagram_btn)
-        tops = {button.geometry().top() for button in buttons}
-        self.assertEqual(len(tops), 1)
-        lefts = [button.geometry().left() for button in buttons]
-        self.assertEqual(lefts, sorted(lefts))
-        self.assertLess(page.amplifier_test_btn.geometry().top(), min(tops))
+        tops = [button.geometry().top() for button in buttons]
+        self.assertLess(tops[0], tops[1])
+        self.assertLess(page.amplifier_test_btn.geometry().top(), tops[0])
         page.close()
 
     def test_left_column_holds_controls_and_result_surface_takes_the_right(self):
@@ -534,8 +532,8 @@ class AmplifierPageTests(unittest.TestCase):
         self.app.processEvents()
         result = page.findChild(QFrame, "measurementResultSurface")
         self.assertIsNotNone(result)
-        # 左栏宽度取 theme 里的共用常量，与另两个测量页保持一致。
-        self.assertEqual(page.control_panel.width(), MEASUREMENT_LEFT_PANEL_MIN_WIDTH)
+        # 左栏宽度取 theme 里的固定值，与另三个左栏页面保持一致。
+        self.assertEqual(page.control_panel.width(), MEASUREMENT_LEFT_PANEL_WIDTH)
         self.assertLess(
             page.control_panel.x() + page.control_panel.width(),
             result.x(),
@@ -586,36 +584,69 @@ class AmplifierPageTests(unittest.TestCase):
         ]
         self.assertEqual(primary, [self.page.amplifier_test_btn])
 
-    def test_start_measurement_takes_its_own_row_in_the_control_surface(self):
+    def test_actions_stack_vertically_one_per_row(self):
         from PySide6.QtWidgets import QFrame
 
-        control_layout = self.page.findChild(QFrame, "measurementSurface").layout()
-        start_items = [
-            index
+        control = self.page.findChild(QFrame, "measurementSurface")
+        control_layout = control.layout()
+        widgets = [
+            control_layout.itemAt(index).widget()
             for index in range(control_layout.count())
-            if control_layout.itemAt(index).widget() is self.page.amplifier_test_btn
         ]
-        self.assertEqual(len(start_items), 1)
-        row_index = next(
-            index
-            for index in range(control_layout.count())
-            if control_layout.itemAt(index).layout() is not None
-        )
-        self.assertLess(start_items[0], row_index)
-
-    def test_secondary_actions_share_one_compact_row(self):
-        from PySide6.QtWidgets import QFrame
-
-        control_layout = self.page.findChild(QFrame, "measurementSurface").layout()
-        row_layout = next(
-            control_layout.itemAt(index).layout()
-            for index in range(control_layout.count())
-            if control_layout.itemAt(index).layout() is not None
-        )
         self.assertEqual(
-            [row_layout.itemAt(index).widget() for index in range(row_layout.count())],
-            [self.page.stop_btn, self.page.show_amp_diagram_btn],
+            widgets[1:4],
+            [
+                self.page.amplifier_test_btn,
+                self.page.stop_btn,
+                self.page.show_amp_diagram_btn,
+            ],
         )
+        self.page.resize(1200, 800)
+        self.page.show()
+        self.app.processEvents()
+        buttons = (
+            self.page.amplifier_test_btn,
+            self.page.stop_btn,
+            self.page.show_amp_diagram_btn,
+            self.page.load_cable_loss_btn,
+            self.page.load_driver_mapping_btn,
+        )
+        tops = [
+            button.mapTo(control, button.rect().topLeft()).y() for button in buttons
+        ]
+        self.assertEqual(tops, sorted(tops))
+        self.assertEqual(len(set(tops)), len(buttons))
+        self.assertEqual(len({button.geometry().width() for button in buttons}), 1)
+        self.page.close()
+
+    def test_calibration_rows_stack_the_load_action_above_its_source(self):
+        rows = (
+            (
+                self.page.cable_loss_input_row,
+                self.page.load_cable_loss_btn,
+                self.page.cable_loss_source_label,
+            ),
+            (
+                self.page.driver_mapping_input_row,
+                self.page.load_driver_mapping_btn,
+                self.page.driver_mapping_source_label,
+            ),
+        )
+        self.page.resize(1200, 800)
+        self.page.show()
+        self.app.processEvents()
+        for row, button, label in rows:
+            with self.subTest(button=button.text()):
+                layout = row.layout()
+                self.assertEqual(
+                    [layout.itemAt(index).widget() for index in range(layout.count())],
+                    [button, label],
+                )
+                self.assertLess(
+                    button.geometry().top(),
+                    label.geometry().top(),
+                )
+        self.page.close()
 
     def test_calibration_inputs_share_one_section_in_the_control_surface(self):
         from PySide6.QtWidgets import QFrame
@@ -629,27 +660,6 @@ class AmplifierPageTests(unittest.TestCase):
             if label.property("role") == "sectionCaption"
         ]
         self.assertEqual(captions, ["测量控制", "校准输入"])
-
-    def test_calibration_rows_pair_the_load_action_with_its_source(self):
-        rows = (
-            (
-                self.page.cable_loss_input_row,
-                self.page.load_cable_loss_btn,
-                self.page.cable_loss_source_label,
-            ),
-            (
-                self.page.driver_mapping_input_row,
-                self.page.load_driver_mapping_btn,
-                self.page.driver_mapping_source_label,
-            ),
-        )
-        for row, button, label in rows:
-            with self.subTest(button=button.text()):
-                layout = row.layout()
-                self.assertEqual(
-                    [layout.itemAt(index).widget() for index in range(layout.count())],
-                    [button, label],
-                )
 
     def test_driver_off_hides_the_whole_driver_mapping_row(self):
         self.page._driver_mode_provider = lambda: False

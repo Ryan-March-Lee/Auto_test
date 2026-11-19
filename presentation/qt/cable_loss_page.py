@@ -53,8 +53,7 @@ from .stage_summary import (
 )
 from .status_panel import StatusSlot
 from .theme import (
-    MEASUREMENT_LEFT_PANEL_MAX_WIDTH,
-    MEASUREMENT_LEFT_PANEL_MIN_WIDTH,
+    MEASUREMENT_LEFT_PANEL_WIDTH,
     set_button_variant,
 )
 
@@ -125,10 +124,9 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         layout.setSpacing(12)
 
         # 左侧窄栏自上而下放控制面与运行状态；右侧整块留给结果面。
-        # 接线说明只由连接图承担。宽度与另两个测量页共用 theme 里的同一组常量。
+        # 接线说明只由连接图承担。宽度与另三个左栏页面共用 theme 里的同一个固定值。
         left_panel = QWidget()
-        left_panel.setMinimumWidth(MEASUREMENT_LEFT_PANEL_MIN_WIDTH)
-        left_panel.setMaximumWidth(MEASUREMENT_LEFT_PANEL_MAX_WIDTH)
+        left_panel.setFixedWidth(MEASUREMENT_LEFT_PANEL_WIDTH)
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(12)
@@ -158,17 +156,15 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
             },
         )
         self.controls.show_idle()
-        # 开始是控制面唯一的主操作，独占整行；停止、加载与连接图收成一行紧凑次操作。
+        # 开始是控制面唯一的主操作；其余动作纵向排列，一行一个，窄栏里每个按钮都
+        # 保持完整文案，不把三个按钮挤在同一行。
         control_layout.addWidget(self.start_measurement_btn)
-        secondary_actions = QHBoxLayout()
-        secondary_actions.setSpacing(8)
         for button in (
             self.stop_cable_loss_btn,
-            self.load_cable_results_btn,
             self.show_cable_loss_diagram_btn,
+            self.load_cable_results_btn,
         ):
-            secondary_actions.addWidget(button, 1)
-        control_layout.addLayout(secondary_actions)
+            control_layout.addWidget(button)
         left_layout.addWidget(control_surface)
         # 运行控制台回答“这是哪次运行、开始前还缺什么”，紧挨控制面放在状态行上方。
         self.console = MeasurementRunConsole()

@@ -62,8 +62,7 @@ from .stage_summary import (
 )
 from .status_panel import StatusSlot
 from .theme import (
-    MEASUREMENT_LEFT_PANEL_MAX_WIDTH,
-    MEASUREMENT_LEFT_PANEL_MIN_WIDTH,
+    MEASUREMENT_LEFT_PANEL_WIDTH,
     set_button_variant,
 )
 
@@ -128,10 +127,9 @@ class DriverMappingPage(
 
         # 左侧窄栏自上而下放控制面与运行状态；右侧整块留给四张图。
         # 接线说明只保留连接图入口：测试者已知道仪器怎么接，按钮只用于防止忘记。
-        # 宽度与另两个测量页共用 theme 里的同一组常量。
+        # 宽度与另三个左栏页面共用 theme 里的同一个固定值。
         left_panel = QWidget()
-        left_panel.setMinimumWidth(MEASUREMENT_LEFT_PANEL_MIN_WIDTH)
-        left_panel.setMaximumWidth(MEASUREMENT_LEFT_PANEL_MAX_WIDTH)
+        left_panel.setFixedWidth(MEASUREMENT_LEFT_PANEL_WIDTH)
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(12)
@@ -158,13 +156,10 @@ class DriverMappingPage(
             },
         )
         self.controls.show_idle()
-        # 开始是控制面唯一的主操作，独占整行；停止与连接图收成一行紧凑次操作。
+        # 开始是控制面唯一的主操作；停止与连接图纵向排列，一行一个。
         control_layout.addWidget(self.driver_mapping_btn)
-        secondary_actions = QHBoxLayout()
-        secondary_actions.setSpacing(8)
         for button in (self.driver_stop_btn, self.show_driver_diagram_btn):
-            secondary_actions.addWidget(button, 1)
-        control_layout.addLayout(secondary_actions)
+            control_layout.addWidget(button)
         # 线损是驱动映射的前置输入：加载入口与来源文件、测量时间同属“校准输入”区块。
         # 未选择时这里给出明确空态，但“是否允许启动”的判断仍留在 start_measurement。
         control_layout.addWidget(hairline())

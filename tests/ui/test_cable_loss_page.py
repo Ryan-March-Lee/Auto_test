@@ -347,6 +347,23 @@ class CableLossPageTests(unittest.TestCase):
         self.assertFalse(hasattr(self.page, "show_path2_btn"))
         self.assertEqual(self.page.findChildren(QTextEdit), [])
 
+    def test_actions_stack_vertically_one_per_row(self):
+        page = self.page
+        page.resize(1200, 800)
+        page.show()
+        self.app.processEvents()
+        buttons = (
+            page.start_measurement_btn,
+            page.stop_cable_loss_btn,
+            page.show_cable_loss_diagram_btn,
+            page.load_cable_results_btn,
+        )
+        tops = [button.geometry().top() for button in buttons]
+        self.assertEqual(tops, sorted(tops))
+        self.assertEqual(len(set(tops)), len(buttons))
+        self.assertEqual(len({button.geometry().width() for button in buttons}), 1)
+        page.close()
+
     def test_result_surface_holds_the_plot_monitor_and_source_label(self):
         from PySide6.QtWidgets import QFrame
 

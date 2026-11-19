@@ -127,9 +127,8 @@ class SimulatedRunLifecycleTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-        # 报告图表由 matplotlib 在 worker 线程渲染；在已有大量 Qt 控件的同一进程里
-        # 会触发 Qt 后端的线程限制。图表渲染已由无 GUI 链路测试覆盖，这里只验证
-        # “阶段目录里的 CSV/报告可见”，因此用空图集替换图表渲染。
+        # 报告图表渲染已由 analysis 的真实渲染用例覆盖；这里只验证“阶段目录里的
+        # CSV/报告可见”，用空图集替换图表渲染以免把渲染开销带进窗口级用例。
         patcher = patch(
             "infrastructure.persistence.stage_artifact_repository."
             "_default_report_plots",

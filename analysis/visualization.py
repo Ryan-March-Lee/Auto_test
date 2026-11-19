@@ -16,7 +16,9 @@ from pathlib import Path
 from typing import Dict
 
 import pandas as pd
-import matplotlib.pyplot as plt
+import matplotlib
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.figure import Figure
 from matplotlib.font_manager import FontProperties
 import seaborn as sns
 
@@ -75,11 +77,25 @@ BASE_COLOR_PALETTE = [
 
 def configure_plot_style() -> None:
     """设置绘图使用的全局字体与样式；由可视化入口显式调用。"""
-    plt.rcParams['font.family'] = 'serif'
-    plt.rcParams['font.serif'] = ['Times New Roman'] + list(plt.rcParams['font.serif'])
-    plt.rcParams['axes.unicode_minus'] = False
+    matplotlib.rcParams['font.family'] = 'serif'
+    matplotlib.rcParams['font.serif'] = ['Times New Roman'] + list(matplotlib.rcParams['font.serif'])
+    matplotlib.rcParams['axes.unicode_minus'] = False
     sns.set_style("whitegrid")
     sns.set_context("notebook", font_scale=1.2)
+
+
+def _new_figure(figsize: tuple[float, float]) -> Figure:
+    """创建只用于保存文件的无 GUI 图形。
+
+    报告图表由测量 worker 线程渲染。``pyplot`` 会按进程中已加载的 Qt 绑定选择
+    Qt 后端，随后在非主线程创建 Qt 画布并告警
+    （``Starting a Matplotlib GUI outside of the main thread will likely fail``），
+    严重时直接崩溃。报告只写 PNG/PDF、从不显示窗口，因此这里显式挂 Agg 画布：
+    渲染与线程、GUI 后端无关，也不会改动全局 matplotlib 后端。
+    """
+    fig = Figure(figsize=figsize)
+    FigureCanvasAgg(fig)
+    return fig
 
 
 def _coerce_result(data: ResultSource) -> ReportResult:
@@ -143,7 +159,7 @@ class DataVisualization:
                 pass
             raise
         finally:
-            plt.close(fig)
+            fig.clear()
         if not self.quiet:
             saved = f"{name}.png"
             if self.include_pdf:
@@ -202,7 +218,8 @@ class DataVisualization:
 
     def plot_p_in_vs_p_out(self, data: ResultSource) -> Path:
         dfs = self._extract_data_for_plotting(data)
-        fig, ax = plt.subplots(figsize=(8, 6))
+        fig = _new_figure((8, 6))
+        ax = fig.subplots()
         # 使用高对比度颜色，确保容易区分
         if len(dfs) <= len(self.base_color_palette):
             colors = self.base_color_palette[:len(dfs)]
@@ -224,7 +241,8 @@ class DataVisualization:
 
     def plot_p_out_vs_efficiency(self, data: ResultSource) -> Path:
         dfs = self._extract_data_for_plotting(data)
-        fig, ax = plt.subplots(figsize=(8, 6))
+        fig = _new_figure((8, 6))
+        ax = fig.subplots()
         # 使用高对比度颜色，确保容易区分
         if len(dfs) <= len(self.base_color_palette):
             colors = self.base_color_palette[:len(dfs)]
@@ -245,7 +263,8 @@ class DataVisualization:
 
     def plot_p_out_vs_gain(self, data: ResultSource) -> Path:
         dfs = self._extract_data_for_plotting(data)
-        fig, ax = plt.subplots(figsize=(8, 6))
+        fig = _new_figure((8, 6))
+        ax = fig.subplots()
         # 使用高对比度颜色，确保容易区分
         if len(dfs) <= len(self.base_color_palette):
             colors = self.base_color_palette[:len(dfs)]
@@ -267,7 +286,8 @@ class DataVisualization:
     def plot_freq_vs_saturation_metrics(self, data: ResultSource) -> Path:
         sat_df = self._find_saturation_points(data)
         if sat_df.empty: return None
-        fig, ax = plt.subplots(figsize=(8, 6))
+        fig = _new_figure((8, 6))
+        ax = fig.subplots()
         ax.plot(sat_df['frequency'], sat_df['efficiency'], 'o-', label='饱和效率', color='r')
         ax.set_xlabel('工作频率 (GHz)', fontproperties=chinese_font)
         ax.set_ylabel('饱和效率 (%)', fontproperties=chinese_font, color='r')
@@ -280,7 +300,8 @@ class DataVisualization:
     def plot_freq_vs_sat_power_and_gain(self, data: ResultSource) -> Path:
         sat_df = self._find_saturation_points(data)
         if sat_df.empty: return None
-        fig, ax1 = plt.subplots(figsize=(8, 6))
+        fig = _new_figure((8, 6))
+        ax1 = fig.subplots()
 
         ax1.plot(sat_df['frequency'], sat_df['output_power'], 'o-', color='b', label='饱和输出功率')
         ax1.set_xlabel('工作频率 (GHz)', fontproperties=chinese_font)
@@ -302,9 +323,9 @@ class DataVisualization:
         dfs = self._extract_data_for_plotting(data)
         num_freqs = len(dfs)
         if num_freqs == 0: return None
-        fig, axes = plt.subplots(nrows=(num_freqs + 1) // 2, ncols=2, figsize=(16, 5 * ((num_freqs + 1) // 2)),
-                                 squeeze=False)
-        axes = axes.flatten()
+        rows = (num_freqs + 1) // 2
+        fig = _new_figure((16, 5 * rows))
+        axes = fig.subplots(nrows=rows, ncols=2, squeeze=False).flatten()
 
         for i, (freq, df) in enumerate(dfs.items()):
             ax1 = axes[i]
@@ -332,7 +353,8 @@ class DataVisualization:
     def plot_freq_vs_all_sat_metrics_combined(self, data: ResultSource) -> Path:
         sat_df = self._find_saturation_points(data)
         if sat_df.empty: return None
-        fig, ax1 = plt.subplots(figsize=(10, 7))
+        fig = _new_figure((10, 7))
+        ax1 = fig.subplots()
 
         p1, = ax1.plot(sat_df['frequency'], sat_df['efficiency'], 'o-', color='r', label='饱和效率')
         ax1.set_xlabel('工作频率 (GHz)', fontproperties=chinese_font)

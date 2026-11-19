@@ -213,6 +213,29 @@ class VisualizationAnalysisTests(unittest.TestCase):
         self.assertNotIn("collect_baseline", source)
 
 
+class ReportFigureBackendTests(unittest.TestCase):
+    """报告图表在测量 worker 线程渲染，不能依赖 GUI 后端创建画布。"""
+
+    def test_report_figures_use_a_non_gui_canvas(self):
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+        from analysis.visualization import _new_figure
+
+        fig = _new_figure((2, 2))
+        try:
+            self.assertIsInstance(fig.canvas, FigureCanvasAgg)
+            self.assertIsNone(fig.canvas.required_interactive_framework)
+        finally:
+            fig.clear()
+
+    def test_module_does_not_create_figures_through_pyplot(self):
+        source = (
+            Path(__file__).resolve().parents[1] / "analysis" / "visualization.py"
+        ).read_text(encoding="utf-8-sig")
+        self.assertNotIn("import matplotlib.pyplot", source)
+        self.assertNotIn("plt.subplots", source)
+
+
 class ReportInputTests(unittest.TestCase):
     def test_report_result_builder_applies_overrides(self):
         from application.inputs.result_reading import build_report_result

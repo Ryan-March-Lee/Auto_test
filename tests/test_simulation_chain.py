@@ -972,18 +972,29 @@ class AmplifierSimulationChainTests(SimulationChainTestCase):
                     label=f"{item.frequency_ghz} GHz 事件 current_point",
                 )
 
-        # 主功放进度按频点在本次扫描内推进（正式链路语义），不是全局 0～100。
+        # 主功放进度按整次测量推进：跨频点的整体 0～100，不在每个频点重新开始。
         planned = len(
             self._scenario(
                 MeasurementStage.AMPLIFIER
             ).source_config.target_input_powers_dbm
         )
+        frequencies = list(result.frequencies)
+        total = len(frequencies)
         expected_progress = []
-        for item in result.frequencies:
-            for index in range(len(item.sweep_data["sg_power"])):
-                expected_progress.append(int(100 * (index + 1) / planned))
+        for frequency_index, item in enumerate(frequencies):
+            measured = len(item.sweep_data["sg_power"])
+            for index in range(measured):
+                fraction = (
+                    frequency_index + (index + 1) / planned
+                ) / total
+                expected_progress.append(int(fraction * 100))
+            if measured < planned:
+                # 压缩提前结束：服务补发该频点的结尾进度，下个频点从正确起点继续。
+                expected_progress.append(
+                    int((frequency_index + 1) / total * 100)
+                )
         self.assertEqual(events.progress, expected_progress)
-        self.assertEqual(max(events.progress) <= 100, True)
+        self.assertEqual(max(events.progress), 100)
         manifest = self._manifest(prepared)
         self.assertEqual(manifest.status, RunStatus.COMPLETED)
         self.assertEqual(

@@ -1097,7 +1097,28 @@ class AmplifierMeasurementService(_Service):
             for point in targets
         )
 
-    def perform_power_sweep(self, frequency: float) -> dict[str, Any]:
+    def perform_power_sweep(
+        self,
+        frequency: float,
+        *,
+        frequency_index: int = 0,
+        frequency_count: int = 1,
+    ) -> dict[str, Any]:
+        """扫描一个频点，并按**整次测量**发布进度。
+
+        ``frequency_index`` / ``frequency_count`` 描述本频点在整次主功放测量里的
+        位置：进度始终是 0～1 的整体比例，不在每个频点重新从 0 开始。只扫单个频点
+        的调用方保留默认值，此时整体进度就等于本频点进度。
+
+        压缩提前结束是正常完成：显式补发本频点结尾的整体进度，下个频点因此从正确
+        的起点继续；DUT 输入保护触发时属于异常停止，不补发结尾进度。
+        """
+        if frequency_count < 1:
+            raise ValueError("frequency_count 必须至少为 1")
+        if not 0 <= frequency_index < frequency_count:
+            raise ValueError(
+                "frequency_index 必须落在 [0, frequency_count) 内"
+            )
         compression_value = self.compression_value
         attenuator_value = self.attenuator_value
         frequency_value = Frequency.from_ghz(frequency)
@@ -1129,6 +1150,9 @@ class AmplifierMeasurementService(_Service):
             )
         data = {"input_power_dut": [], "output_power_dut": [], "gain": [], "sg_power": [],
                 "voltages": [], "currents": [], "dc_power": [], "efficiency": []}
+        point_count = max(len(scan_points), 1)
+        frequency_complete = True
+        last_progress = 0.0
         self.inst_ctrl.rf_output_on()
         try:
             for index, (dut_target, sg_set, driver_output) in enumerate(scan_points):
@@ -1146,6 +1170,7 @@ class AmplifierMeasurementService(_Service):
                         self.event_sink,
                         StoppedEvent(self.run_id, reason="DUT 输入功率保护", emergency=True),
                     )
+                    frequency_complete = False
                     break
                 self.inst_ctrl.set_power(sg_power.dbm)
                 self.sleep_fn(self.settle_delay_s)
@@ -1195,11 +1220,20 @@ class AmplifierMeasurementService(_Service):
                                             "output_power": output.dbm, "gain": gain.db,
                                             "efficiency": data["efficiency"][-1],
                                             "dc_power": dc_power}}))
-                self._progress((index + 1) / max(len(scan_points), 1), "scan")
+                last_progress = (
+                    frequency_index + (index + 1) / point_count
+                ) / frequency_count
+                self._progress(last_progress, "scan")
                 if index >= 3 and (
                     Decibels(float(np.mean(data["gain"][:3]))) - gain
                 ).db >= compression_value.db:
                     break
+            # 压缩提前结束也代表本频点完成：补发结尾进度，避免进度停在中途、
+            # 下个频点又从本频点起点倒退。正常扫完整组点时结尾已发布过，不重复。
+            if frequency_complete:
+                boundary = (frequency_index + 1) / frequency_count
+                if last_progress < boundary:
+                    self._progress(boundary, "scan")
         finally:
             self.inst_ctrl.rf_output_off()
         result = calculate_compression_result(
@@ -1224,9 +1258,14 @@ class AmplifierMeasurementService(_Service):
             self.inst_ctrl.setup_dut_power()
             self.inst_ctrl.power_on_sequence()
             self.sleep_fn(2)
-            for frequency in self.inputs.frequencies:
+            frequencies = tuple(self.inputs.frequencies)
+            for frequency_index, frequency in enumerate(frequencies):
                 self._check_cancelled()
-                results[frequency.key] = self.perform_power_sweep(frequency.ghz)
+                results[frequency.key] = self.perform_power_sweep(
+                    frequency.ghz,
+                    frequency_index=frequency_index,
+                    frequency_count=len(frequencies),
+                )
             result = {"results": results, "configuration_snapshot": self.configuration_snapshot}
             self._save(result)
             return result

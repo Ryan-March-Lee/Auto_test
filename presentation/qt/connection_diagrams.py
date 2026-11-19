@@ -10,8 +10,8 @@
   圆角卡片，边框颜色取 :data:`presentation.qt.theme.TOKENS` 的语义色，和界面同一套配色。
 - **线缆**：每个连接用 ``assets/cable.png`` 的电缆照片表示，不再画箭头。电缆两端接头
   保持比例，只拉伸中间线身（见 :func:`_cable_pieces`），所以间距变化不会把接头压扁；
-  间距过短时整根电缆等比缩短。连续多根线缆分段相接；两行布局的拐角由一段横电缆和一段
-  竖电缆拼成直角。
+  间距过短时整根电缆等比缩短。连续多根线缆分段相接；每张图的设备都排在同一行，线缆
+  水平画在相邻设备之间。
 
 模块导入不修改全局 matplotlib 配置；中文字体样式由 :func:`configure_diagram_style`
 在创建图形时显式应用。图片只在真正绘图时读取并缓存，导入模块不碰文件系统。
@@ -84,10 +84,10 @@ DIAGRAM_DEVICES = {
         '频谱仪': (9, 2),
     },
     "amplifier_test": {
-        '信号源': (1, 3),
-        '线缆①': (2.2, 3),
-        '驱动功放': (3.8, 3),
-        '线缆③': (5.4, 3),
+        '信号源': (1, 2),
+        '线缆①': (2.2, 2),
+        '驱动功放': (3.8, 2),
+        '线缆③': (5.4, 2),
         '主功放': (7, 2),
         '线缆④': (8.6, 2),
         '衰减器': (10.2, 2),
@@ -111,7 +111,7 @@ DIAGRAM_VIEWS = {
     "cable_loss_path1": (12, (0.1, 7.9), (1.25, 2.75)),
     "cable_loss_path2": (14, (0.1, 9.1), (1.25, 2.75)),
     "driver_mapping": (14, (0.1, 9.9), (1.25, 2.75)),
-    "amplifier_test": (16, (0.1, 13.5), (1.3, 3.7)),
+    "amplifier_test": (16, (0.1, 13.5), (1.25, 2.75)),
     "amplifier_test_no_driver": (14, (0.1, 11.9), (1.25, 2.75)),
 }
 #: 单行标题（13 pt 加粗，含标题与坐标区之间的留白）占用的画布高度（英寸）。
@@ -232,24 +232,6 @@ def _draw_horizontal_cable(axis, x0, x1, y, thickness=CABLE_THICKNESS):
         cursor += length
 
 
-def _draw_vertical_cable(axis, x, y0, y1, thickness=CABLE_THICKNESS):
-    if y1 < y0:
-        y0, y1 = y1, y0
-    pieces = _cable_pieces(y1 - y0, thickness)
-    if pieces is None:
-        axis.plot(
-            [x, x], [y0, y1],
-            color=TOKENS["text"], linewidth=3, solid_capstyle="round", zorder=2,
-        )
-        return
-    cursor = y0
-    for part, length in pieces:
-        # 竖段由同一张电缆照片旋转 90° 得到，接头形状不变。
-        rotated = np.rot90(part)
-        _blit(axis, rotated, x - thickness / 2, x + thickness / 2, cursor, cursor + length, 2)
-        cursor += length
-
-
 def _draw_device(axis, name, x, y):
     """画一台设备，返回它的显示尺寸 ``(宽, 高)``，供线缆计算端点。"""
     picture_path = DEVICE_PICTURE_FILES.get(name)
@@ -336,30 +318,18 @@ def _draw_cable_label(axis, name, x0, x1, cable_y, devices):
 
 
 def _draw_cable_run(axis, left, run, right, metrics, devices):
+    """沿同一行在相邻两台设备之间水平画出整段线缆。"""
     left_x, left_y, left_w, _ = metrics[left]
-    right_x, right_y, right_w, right_h = metrics[right]
-    if abs(left_y - right_y) < 0.01:
-        if right_x >= left_x:
-            start, end = left_x + left_w / 2, right_x - right_w / 2
-        else:
-            start, end = left_x - left_w / 2, right_x + right_w / 2
-        boundaries = _segment_boundaries(start, end, run, devices)
-        for index, name in enumerate(run):
-            x0, x1 = boundaries[index], boundaries[index + 1]
-            _draw_horizontal_cable(axis, x0, x1, left_y)
-            _draw_cable_label(axis, name, x0, x1, left_y, devices)
-        return
-
-    # 两行布局：先沿出发设备的行水平走线，再在目标设备中线上垂直拐下去。
-    target_x = right_x
-    source_edge = left_x + left_w / 2 if target_x >= left_x else left_x - left_w / 2
-    boundaries = _segment_boundaries(source_edge, target_x, run, devices)
+    right_x, _right_y, right_w, _right_h = metrics[right]
+    if right_x >= left_x:
+        start, end = left_x + left_w / 2, right_x - right_w / 2
+    else:
+        start, end = left_x - left_w / 2, right_x + right_w / 2
+    boundaries = _segment_boundaries(start, end, run, devices)
     for index, name in enumerate(run):
         x0, x1 = boundaries[index], boundaries[index + 1]
         _draw_horizontal_cable(axis, x0, x1, left_y)
         _draw_cable_label(axis, name, x0, x1, left_y, devices)
-    arrival_y = right_y + right_h / 2 if right_y < left_y else right_y - right_h / 2
-    _draw_vertical_cable(axis, target_x, left_y, arrival_y)
 
 
 def _diagram_height(key, width=None):

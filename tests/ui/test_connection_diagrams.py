@@ -64,6 +64,11 @@ class ConnectionDiagramContentTests(unittest.TestCase):
                 "信号源": (1, 2), "线缆①": (2.5, 2), "衰减器": (4, 2),
                 "线缆②": (5.5, 2), "频谱仪": (7, 2),
             },
+            "amplifier_test": {
+                "信号源": (1, 2), "线缆①": (2.2, 2), "驱动功放": (3.8, 2),
+                "线缆③": (5.4, 2), "主功放": (7, 2), "线缆④": (8.6, 2),
+                "衰减器": (10.2, 2), "线缆②": (11.4, 2), "频谱仪": (12.6, 2),
+            },
             "amplifier_test_no_driver": {
                 "信号源": (1, 2), "线缆①": (2.5, 2), "主功放": (4.5, 2),
                 "线缆④": (6.5, 2), "衰减器": (8, 2), "线缆②": (9.5, 2),
@@ -73,6 +78,12 @@ class ConnectionDiagramContentTests(unittest.TestCase):
         for key, positions in expected_positions.items():
             with self.subTest(diagram=key):
                 self.assertEqual(diagrams.DIAGRAM_DEVICES[key], positions)
+
+    def test_every_diagram_keeps_devices_on_one_row(self):
+        """所有仪器排在同一行，图里没有需要竖线拐弯的上下两行布局。"""
+        for key, devices in diagrams.DIAGRAM_DEVICES.items():
+            with self.subTest(diagram=key):
+                self.assertEqual(len({y for _x, y in devices.values()}), 1)
 
     def test_no_driver_diagram_omits_driver_amplifier(self):
         self.assertNotIn("驱动功放", diagrams.DIAGRAM_DEVICES["amplifier_test_no_driver"])

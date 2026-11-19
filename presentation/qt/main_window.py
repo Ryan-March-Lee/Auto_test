@@ -398,7 +398,7 @@ class MainWindow(ConfigurationSnapshotActions, QMainWindow):
         """把工作台的动效开关转发给页面里自绘的读数条。
 
         外壳仍拥有开关：它只发一个布尔值，页面只把读数条的淡入与呼吸点落到静态
-        外观；没有读数条的页面（测试配置、可视化）自然跳过。
+        外观；没有自绘动效的页面（线损结果带、测试配置、可视化）自然跳过。
         """
         for page in getattr(self, "pages", {}).values():
             setter = getattr(page, "set_animations_enabled", None)

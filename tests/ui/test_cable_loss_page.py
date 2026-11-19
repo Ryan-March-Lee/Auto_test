@@ -1,4 +1,4 @@
-"""线损页的离屏行为：图代替格、读数条跟随最新频点、阶段摘要与来源行。
+"""线损页的离屏行为：图代替格、总览带累计统计、阶段摘要与来源行。
 
 页面用假绘图控件记录被推入的曲线数据，测试直接断言“页面已经显示的数据”，
 不依赖 matplotlib 渲染细节；绘图控件本身的渲染行为由
@@ -347,13 +347,13 @@ class CableLossPageTests(unittest.TestCase):
         self.assertFalse(hasattr(self.page, "show_path2_btn"))
         self.assertEqual(self.page.findChildren(QTextEdit), [])
 
-    def test_result_surface_holds_the_plot_source_and_source_label(self):
+    def test_result_surface_holds_the_plot_monitor_and_source_label(self):
         from PySide6.QtWidgets import QFrame
 
         result = self.page.findChild(QFrame, "measurementResultSurface")
         self.assertIs(self.page.cable_loss_plot.parentWidget(), result)
         self.assertIs(self.page.cable_loss_source_label.parentWidget(), result)
-        self.assertIs(self.page.readout.parentWidget(), result)
+        self.assertIs(self.page.cable_loss_monitor.parentWidget(), result)
         self.assertFalse(self.page.cable_loss_plot.isHidden())
 
     def test_view_diagram_button_opens_the_combined_diagram(self):
@@ -366,56 +366,59 @@ class CableLossPageTests(unittest.TestCase):
         self.assertFalse(summary.has_data)
         self.assertEqual(summary.headline, NOT_STARTED)
 
-    def test_readout_follows_the_latest_frequency_and_cable_values(self):
+    def test_monitor_starts_with_placeholders_for_all_four_cables(self):
+        monitor = self.page.cable_loss_monitor
+
+        self.assertEqual(monitor.cell_count(), 4)
+        self.assertEqual(
+            [monitor.cell(index).name_text() for index in range(4)],
+            ["线缆1", "线缆2", "线缆3", "线缆4"],
+        )
+        for index in range(4):
+            self.assertEqual(monitor.value_text(index, "maximum"), "—")
+
+    def test_monitor_only_fills_cables_that_have_measurements(self):
         self.controller.signals.data_update.emit({
             "frequency": "2.4",
             "cable_losses": {"cable1": 1.234},
         })
 
-        readout = self.page.readout
+        monitor = self.page.cable_loss_monitor
 
-        self.assertEqual(readout.frequency_text(), "2.4")
-        self.assertEqual(readout.unit_text(), "GHz")
-        self.assertEqual(
-            [metric.value for metric in readout.metrics()],
-            ["1.234", "—", "—", "—"],
-        )
-        self.assertEqual(
-            [metric.label for metric in readout.metrics()],
-            ["线缆1", "线缆2", "线缆3", "线缆4"],
-        )
+        self.assertEqual(monitor.value_text(0, "maximum"), "1.234")
+        self.assertEqual(monitor.value_text(0, "minimum"), "1.234")
+        self.assertEqual(monitor.value_text(0, "average"), "1.234")
+        self.assertEqual(monitor.value_text(1, "maximum"), "—")
+        self.assertEqual(monitor.value_text(3, "average"), "—")
 
-    def test_readout_moves_to_the_newest_frequency(self):
-        for frequency, loss in (("2.4", 1.0), ("3.5", 3.0)):
+    def test_monitor_accumulates_max_min_and_average_across_frequencies(self):
+        for frequency, loss in (("2.4", 1.0), ("2.5", 1.2), ("3.5", 1.1)):
             self.controller.signals.data_update.emit({
                 "frequency": frequency,
                 "cable_losses": {"cable1": loss},
             })
 
-        self.assertEqual(self.page.readout.frequency_text(), "3.5")
-        self.assertEqual(self.page.readout.metrics()[0].value, "3.000")
+        monitor = self.page.cable_loss_monitor
 
-    def test_readout_shows_the_delta_to_the_previous_frequency(self):
-        for frequency, loss in (("2.4", 1.0), ("2.5", 1.2)):
+        self.assertEqual(monitor.value_text(0, "maximum"), "1.200")
+        self.assertEqual(monitor.value_text(0, "minimum"), "1.000")
+        self.assertEqual(monitor.value_text(0, "average"), "1.100")
+
+    def test_monitor_remeasures_a_frequency_instead_of_double_counting_it(self):
+        for loss in (1.0, 1.5):
             self.controller.signals.data_update.emit({
-                "frequency": frequency,
+                "frequency": "2.4",
                 "cable_losses": {"cable1": loss},
             })
 
-        metric = self.page.readout.metrics()[0]
+        monitor = self.page.cable_loss_monitor
 
-        self.assertEqual(metric.value, "1.200")
-        self.assertEqual(metric.delta, "▲ 0.200")
+        self.assertEqual(self.page.point_count(), 1)
+        self.assertEqual(monitor.value_text(0, "maximum"), "1.500")
+        self.assertEqual(monitor.value_text(0, "minimum"), "1.500")
+        self.assertEqual(monitor.value_text(0, "average"), "1.500")
 
-    def test_no_delta_on_the_first_frequency(self):
-        self.controller.signals.data_update.emit({
-            "frequency": "2.4",
-            "cable_losses": {"cable1": 1.0},
-        })
-
-        self.assertEqual(self.page.readout.metrics()[0].delta, "")
-
-    def test_result_summary_reports_ranges_and_the_maximum(self):
+    def test_result_summary_reports_the_global_peak_without_repeating_ranges(self):
         for frequency, loss in (("2.4", 1.0), ("2.5", 1.2)):
             self.controller.signals.data_update.emit({
                 "frequency": frequency,
@@ -426,8 +429,12 @@ class CableLossPageTests(unittest.TestCase):
 
         self.assertFalse(summary.isHidden())
         self.assertIn("2 频点", summary.text())
-        self.assertIn("线缆1 1.000–1.200 dB", summary.text())
-        self.assertIn("最大 1.200 dB @ 2.5 GHz", summary.text())
+        self.assertIn("线缆1 峰值 1.200 dB @ 2.5 GHz", summary.text())
+        self.assertNotIn(
+            "1.000–1.200",
+            summary.text(),
+            "每条线缆的范围已由顶部总览带给出，底部不再重复",
+        )
         self.assertNotIn("条长", summary.text(), "表格的条长说明不该留在图表下面")
 
     def test_result_summary_hides_with_the_cleared_plot(self):
@@ -464,6 +471,7 @@ class CableLossPageTests(unittest.TestCase):
 
         self.assertEqual(self.page.point_count(), 0)
         self.assertEqual(self.page.cable_loss_plot.clear_calls, 1)
+        self.assertEqual(self.page.cable_loss_monitor.value_text(0, "maximum"), "—")
         summary = self.page.stage_summary()
         self.assertEqual(summary.headline, NOT_STARTED)
 

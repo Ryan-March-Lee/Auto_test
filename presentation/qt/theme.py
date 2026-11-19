@@ -171,6 +171,8 @@ TOKENS = {
     "font_card_address": "8pt",
     # 测量读数条的当前频点：结果面上最大的一个数，现场读数时先看到它。
     "font_readout": "28pt",
+    # 线损监控台的一行统计：比正文大一号的等宽数字，四格并排时仍能快速对读。
+    "font_monitor_value": "12pt",
     "font_mono": "Consolas",
 }
 
@@ -1316,6 +1318,41 @@ QFrame#measurementReadoutChip {
     background-color: $readout_chip_bg;
     border: 1px solid $readout_chip_border;
     border-radius: 8px;
+}
+/* 线损监控台：结果面顶部的四等分实时统计带。底色与网格由 CableLossMonitor 自绘，
+   这里只定义格子与文字；颜色沿用读数条令牌，让两个结果面保持同一套深色语言。 */
+QFrame#cableLossMonitor {
+    background: transparent;
+    border: none;
+}
+QFrame#cableLossMonitorCell {
+    background-color: $readout_chip_bg;
+    border: 1px solid $readout_chip_border;
+    border-radius: 8px;
+}
+QLabel#cableLossMonitorCable {
+    color: $readout_text;
+    font-size: $font_body;
+    font-weight: 700;
+}
+QLabel#cableLossMonitorUnit {
+    color: $readout_text_muted;
+    font-size: $font_small;
+}
+QFrame#cableLossMonitorHairline {
+    background-color: $readout_chip_border;
+    border: none;
+}
+QLabel#cableLossMonitorMetricLabel {
+    color: $readout_text_muted;
+    font-size: $font_small;
+    font-weight: 600;
+}
+QLabel#cableLossMonitorValue {
+    color: $readout_text;
+    font-family: "$font_mono";
+    font-size: $font_monitor_value;
+    font-weight: 600;
 }
 /* 面内分隔：只是一条 1px 的线，不加边距，也不使用 QFrame 的立体边框。 */
 QFrame#measurementHairline {

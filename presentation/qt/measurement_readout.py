@@ -22,8 +22,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from math import cos, pi
 
-from PySide6.QtCore import QEasingCurve, QPointF, QRectF, Qt, QVariantAnimation
-from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
+from PySide6.QtCore import QEasingCurve, QPointF, Qt, QVariantAnimation
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QFrame,
     QGraphicsOpacityEffect,
@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .readout_surface import paint_readout_surface
 from .theme import MOTION_BREATH_MS, MOTION_DATA_MS, TOKENS
 
 __all__ = ["MeasurementReadout", "ReadoutMetric"]
@@ -482,35 +483,4 @@ class MeasurementReadout(QFrame):
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt 覆盖方法
         """深色玻璃底、极淡网格与 1px 内高光；文字全部由子控件绘制。"""
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-        path = QPainterPath()
-        path.addRoundedRect(rect, 8.0, 8.0)
-        gradient = QLinearGradient(rect.topLeft(), rect.bottomLeft())
-        gradient.setColorAt(0.0, QColor(TOKENS["readout_body"]))
-        gradient.setColorAt(1.0, QColor(TOKENS["readout_body_bottom"]))
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(gradient)
-        painter.drawPath(path)
-
-        painter.save()
-        painter.setClipPath(path)
-        grid = QColor(TOKENS["readout_grid"])
-        grid.setAlpha(8)
-        painter.setPen(QPen(grid, 1.0))
-        for x in range(0, self.width(), 22):
-            painter.drawLine(x, 0, x, self.height())
-        for y in range(0, self.height(), 22):
-            painter.drawLine(0, y, self.width(), y)
-        highlight = QColor(TOKENS["readout_grid"])
-        highlight.setAlpha(20)
-        painter.setPen(QPen(highlight, 1.0))
-        painter.drawLine(
-            QPointF(rect.left() + 10, rect.top() + 1),
-            QPointF(rect.right() - 10, rect.top() + 1),
-        )
-        painter.restore()
-
-        painter.setPen(QPen(QColor(TOKENS["readout_border"]), 1.0))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawPath(path)
+        paint_readout_surface(painter, self)

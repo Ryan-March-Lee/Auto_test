@@ -1134,8 +1134,9 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIsNotNone(summary)
         self.assertEqual(summary.headline, "2 频点")
 
-        # 读数条跟随最新频点：图取代表格后不再有“选中行”，最新到达的频点就是当前读数。
-        self.assertEqual(page.readout.frequency_text(), "3.5")
+        # 总览带按线缆累计：两条频点分别落在线缆1 与线缆2 上。
+        self.assertEqual(page.cable_loss_monitor.value_text(0, "maximum"), "1.000")
+        self.assertEqual(page.cable_loss_monitor.value_text(1, "maximum"), "2.000")
 
         page.clear_results()
         self.app.processEvents()
@@ -1260,7 +1261,8 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self._silence_dialogs()
         window = self._window()
         window._enter_test_mode(False)
-        readout = window.cable_loss_page.readout
+        # 线损页的统计带没有动效；功放页仍用带淡入与呼吸点的读数条。
+        readout = window.amplifier_page.readout
 
         self.assertTrue(readout.animations_enabled())
 

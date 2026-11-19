@@ -1,9 +1,9 @@
 """独立的线损测量页面。
 
-结果面与功放页同构：顶部读数条 + 2×2 四幅曲线图。线损的数据形状是“每个频点 × 四条
-线缆”，因此四幅图各画一条线缆的“线损 vs 频率”（横轴频率 GHz、纵轴线损 dB），整条
-曲线一次看全；读数条只回答“最新频点、四条线缆各是多少”。页面不持有测量状态机、
-不读结果文件、不发测量命令。
+结果面与功放页同构：顶部线损总览监控台 + 2×2 四幅曲线图。线损的数据形状是“每个频点
+× 四条线缆”，因此四幅图各画一条线缆的“线损 vs 频率”（横轴频率 GHz、纵轴线损 dB），
+整条曲线一次看全；监控台把这条带等分成四格，每格给出该线缆本轮已测频点的
+Max / Min / Avg。页面不持有测量状态机、不读结果文件、不发测量命令。
 """
 
 from __future__ import annotations
@@ -24,20 +24,19 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .cable_loss_monitor import CableLossMonitor, CableLossStats
 from .measurement_console import (
     MeasurementRunConsole,
     archive_check,
     run_session_check,
     wiring_check,
 )
-from .measurement_readout import MeasurementReadout, ReadoutMetric
 from .measurement_start_facade import MeasurementStartFacade, StartMeasurementRequest
 from application.dto import CableLossMeasurementResult
 from .archival_page import ArchivalPageMixin
 from .measurement_controls import (
     MeasurementAction,
     MeasurementControlPresenter,
-    state_is_active,
 )
 from .measurement_state import CableLossPageResultState, MeasurementKind, MeasurementStatus
 from .measurement_surface import (
@@ -184,12 +183,13 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         self.control_panel = left_panel
         layout.addWidget(left_panel)
 
-        # 结果面与功放页同构：读数条在上，来源行依次向下，四幅线缆曲线占满剩余高度。
-        # 读数条回答“最新频点、四条线缆各是多少”，四幅图回答“损耗随频率怎么走”。
+        # 结果面与功放页同构：总览带在上，来源行依次向下，四幅线缆曲线占满剩余高度。
+        # 总览带回答“四条线缆到目前为止最好/最差/平均是多少”，四幅图回答“损耗随频率
+        # 怎么走”；最新频点的读数已经由绘图控件自带的胶片条承担，不再重复一遍。
         result_surface = build_surface(RESULT_SURFACE, title="测量结果")
         result_layout = result_surface.layout()
-        self.readout = MeasurementReadout(result_surface)
-        result_layout.addWidget(self.readout)
+        self.cable_loss_monitor = CableLossMonitor(_CABLE_LABELS, result_surface)
+        result_layout.addWidget(self.cable_loss_monitor)
         # 用户通过文件选择器加载结果时，在这里显示来源文件名；新测量或清空后隐藏。
         self.cable_loss_source_label = QLabel("")
         self.cable_loss_source_label.setObjectName("emptyHint")
@@ -208,7 +208,6 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         self.cable_loss_summary_label.hide()
         result_layout.addWidget(self.cable_loss_summary_label)
         layout.addWidget(result_surface, 1)
-        self.readout.set_reading("—", "", self._idle_metrics(), active=False)
         self._refresh_stage_summary()
         self._refresh_console()
         return self
@@ -273,9 +272,6 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
 
     def _on_state_changed(self, state: Any) -> None:
         self.controls.apply(state)
-        readout = getattr(self, "readout", None)
-        if readout is not None:
-            readout.set_active(self._measurement_active())
         self._refresh_console()
 
     def on_activated(self) -> None:
@@ -309,16 +305,10 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
             )
         )
 
-    def set_animations_enabled(self, enabled: bool) -> None:
-        """外壳关闭动效时，读数条的数值淡入与呼吸点一起落到静态外观。"""
-        self.readout.set_animations_enabled(enabled)
-
     def _on_error(self, message: str) -> None:
         if not self._archival_is_for_this_page():
             return
         self.controls.show_idle()
-        if getattr(self, "readout", None) is not None:
-            self.readout.set_active(False)
         self._archival_test_failed(message)
         self._error_callback(message)
 
@@ -326,8 +316,6 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         if not self._archival_is_for_this_page():
             return
         self.controls.show_idle()
-        if getattr(self, "readout", None) is not None:
-            self.readout.set_active(False)
         self._archival_test_stopped(reason, self._partial_result_path())
         self._log_callback(f"测量已停止: {reason}")
         self._progress_callback(0)
@@ -336,21 +324,19 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         if not self._archival_is_for_this_page():
             return
         self.controls.show_idle()
-        if getattr(self, "readout", None) is not None:
-            self.readout.set_active(False)
         self._progress_callback(100)
         self._archival_test_finished()
         self._log_callback("测量完成！")
 
     def clear_results(self) -> None:
-        """清空已显示的结果：图表、读数条、来源行与摘要一起回到空态。"""
+        """清空已显示的结果：图表、总览带、来源行与摘要一起回到空态。"""
         self._points.clear()
         clear_plot = getattr(self.cable_loss_plot, "clear_plots", None)
         if clear_plot is not None:
             clear_plot()
         self._set_source_filename(None)
         self._clear_archival_summary()
-        self._refresh_readout()
+        self._refresh_monitor()
         self._refresh_result_summary()
         self._refresh_stage_summary()
         self._log_callback("已清空上一次线损测量结果")
@@ -362,93 +348,38 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
     def stage_summary(self) -> StageSummary:
         """从已显示的频点取阶段条摘要，不读取结果 DTO 或文件。
 
-        频点数取页面保存的频点；没有数据时统一显示“未开始”。最新频点与四条线缆读数
-        由结果面读数条承担，阶段摘要不再保存第二份。
+        频点数取页面保存的频点；没有数据时统一显示“未开始”。四条线缆的累计统计
+        由结果面总览带承担，阶段摘要不再保存第二份。
         """
         count = len(self._points)
         if count <= 0:
             return StageSummary.not_started()
         return StageSummary(frequency_headline(count))
 
-    def _measurement_active(self) -> bool:
-        """当前 controller 是否表示本页测量正在进行；没有 controller 时按空闲处理。"""
-        controller = getattr(self, "controller", None)
-        if controller is None:
-            return False
-        return state_is_active(getattr(controller, "state", None))
-
-    def _idle_metrics(self) -> tuple[ReadoutMetric, ...]:
-        """读数条的占位读数：只写“未开始”，不伪造 0 值或单位。"""
-        return tuple(ReadoutMetric(label, "—") for label in _CABLE_LABELS)
-
-    def _readout_metrics(
-        self, point: _CableLossPoint | None
-    ) -> tuple[ReadoutMetric, ...]:
-        """当前（最新）频点的四条线缆读数；缺项写“—”，变化量相对上一频点。"""
-        if point is None:
-            return self._idle_metrics()
-        previous = self._previous_point(point)
-        metrics: list[ReadoutMetric] = []
-        for index, label in enumerate(_CABLE_LABELS, start=1):
-            value = point.losses.get(index)
-            if value is None:
-                metrics.append(ReadoutMetric(label, "—"))
-                continue
-            metrics.append(
-                ReadoutMetric(
-                    label,
-                    f"{value:.3f}",
-                    "dB",
-                    self._delta_text(value, previous, index),
-                )
-            )
-        return tuple(metrics)
-
-    def _previous_point(self, point: _CableLossPoint) -> _CableLossPoint | None:
-        """按到达顺序紧邻的上一个频点；没有或就是自己时返回 ``None``。"""
-        for index, candidate in enumerate(self._points):
-            if candidate is point and index > 0:
-                return self._points[index - 1]
-        return None
-
-    @staticmethod
-    def _delta_text(
-        current: float,
-        previous: _CableLossPoint | None,
-        cable_index: int,
-    ) -> str:
-        """相对上一频点的变化；只做展示，不判断变大是更好还是更差。"""
-        if previous is None:
-            return ""
-        before = previous.losses.get(cable_index)
-        if before is None:
-            return ""
-        delta = current - before
-        if abs(delta) < 0.0005:
-            return "±0.000"
-        arrow = "▲" if delta > 0 else "▼"
-        return f"{arrow} {abs(delta):.3f}"
-
-    def _refresh_readout(self) -> None:
-        """把最新频点的频点与四条线缆读数写进读数条；没有频点时保持“未开始”。"""
-        readout = getattr(self, "readout", None)
-        if readout is None:
-            return
-        point = self._points[-1] if self._points else None
-        if point is None:
-            readout.set_reading(
-                "—", "", self._idle_metrics(), active=self._measurement_active()
-            )
-            return
-        readout.set_reading(
-            point.text or "—",
-            "GHz" if point.text else "",
-            self._readout_metrics(point),
-            active=self._measurement_active(),
+    def _cable_stats(self) -> tuple[CableLossStats, ...]:
+        """按线缆汇总已显示频点：单次遍历分桶，缺项不按 0 计入。"""
+        samples: list[list[float]] = [[] for _ in _CABLE_LABELS]
+        for point in self._points:
+            for index, bucket in enumerate(samples, start=1):
+                value = point.losses.get(index)
+                if value is not None:
+                    bucket.append(value)
+        return tuple(
+            CableLossStats.from_values(bucket) for bucket in samples
         )
 
+    def _refresh_monitor(self) -> None:
+        """把四条线缆的累计统计写进总览带；清空后四格一起回到“—”。"""
+        monitor = getattr(self, "cable_loss_monitor", None)
+        if monitor is not None:
+            monitor.set_stats(self._cable_stats())
+
     def _refresh_result_summary(self) -> None:
-        """结果面底部一句话：频点数、每条线缆范围与最大损耗出现在哪个频点。"""
+        """结果面底部一句话：频点数与全局峰值出现在哪条线缆、哪个频点。
+
+        Max / Min / Avg 已经由顶部总览带按线缆给出，这里不再重复每条线缆的范围，
+        只补上总览带没有的信息：整轮测量最大值的位置。
+        """
         label = getattr(self, "cable_loss_summary_label", None)
         if label is None:
             return
@@ -457,31 +388,18 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
             label.hide()
             return
         parts = [f"{len(self._points)} 频点"]
-        maximum: float | None = None
-        maximum_text = ""
+        peak: float | None = None
+        peak_cable = ""
+        peak_text = ""
         for index, cable_label in enumerate(_CABLE_LABELS, start=1):
-            values = [
-                point.losses[index]
-                for point in self._points
-                if index in point.losses
-            ]
-            if not values:
-                continue
-            parts.append(
-                f"{cable_label} {min(values):.3f}–{max(values):.3f} dB"
-            )
-            highest = max(values)
-            if maximum is None or highest > maximum:
-                maximum = highest
-                owner = next(
-                    point
-                    for point in self._points
-                    if point.losses.get(index) == highest
-                )
-                maximum_text = owner.text
-        if maximum is not None:
-            suffix = f" @ {maximum_text} GHz" if maximum_text else ""
-            parts.append(f"最大 {maximum:.3f} dB{suffix}")
+            for point in self._points:
+                value = point.losses.get(index)
+                if value is None or (peak is not None and value <= peak):
+                    continue
+                peak, peak_cable, peak_text = value, cable_label, point.text
+        if peak is not None:
+            suffix = f" @ {peak_text} GHz" if peak_text else ""
+            parts.append(f"{peak_cable} 峰值 {peak:.3f} dB{suffix}")
         label.setText(" · ".join(parts))
         label.show()
 
@@ -505,9 +423,9 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         return series
 
     def _refresh_display(self) -> None:
-        """一次刷新图表、读数条、摘要与阶段条：数据到达与批量载入共用这一条路径。"""
+        """一次刷新图表、总览带、摘要与阶段条：数据到达与批量载入共用这一条路径。"""
         self._refresh_plot()
-        self._refresh_readout()
+        self._refresh_monitor()
         self._refresh_result_summary()
         self._refresh_stage_summary()
 

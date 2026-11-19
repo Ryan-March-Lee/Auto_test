@@ -5,6 +5,11 @@
 面板集合可以按页面收窄：驱动映射只测输入-输出与增益，效率与 DC 功耗没有测量数据，
 页面用 :data:`DRIVER_MAPPING_PANELS` 只画这两张图。
 
+线损页用 :data:`CABLE_LOSS_PANELS` 画另一种语义的四幅图：每幅一条线缆的
+“线损 vs 频率”，横轴是频率(GHz)、纵轴是线损(dB)。它的数据形状不是一次扫频，
+调用方通过 :meth:`RealTimePlotWidget.update_plot` 的 ``series`` 字段直接给出
+已累积的 ``(x, y)`` 序列。
+
 P2 在原有 2×2 布局上补三种“会说话”的读法，全部只消费调用方已经取好的数据：
 
 - **最新点标注**：每条曲线最后一个点加一个空心圆环，并在点旁标出数值；
@@ -55,6 +60,7 @@ logger = get_logger(__name__)
 
 __all__ = [
     "ALL_PANELS",
+    "CABLE_LOSS_PANELS",
     "DRIVER_MAPPING_PANELS",
     "PlotTargetBand",
     "RealTimePlotWidget",
@@ -232,11 +238,35 @@ _PLOT_PANELS = (
 
 _PANEL_SPECS = {spec.key: spec for spec in _PLOT_PANELS}
 
+#: 线损页的四幅图：每幅一条线缆，横轴频率(GHz)、纵轴线损(dB)。与功放页的四幅图
+#: 语义不同——那边是“同一频点的四个指标”，这边是“同一条缆随频率的完整曲线”。
+_CABLE_LOSS_PANELS = tuple(
+    _PanelSpec(
+        f"cable{index}",
+        f"线缆{index} 线损 vs 频率",
+        "频率 (GHz)",
+        "线损 (dB)",
+        TOKENS[f"series_{index}"],
+        f"线缆{index}",
+        "dB",
+        3,
+    )
+    for index in range(1, 5)
+)
+
+# 线损面板按同一份键名再次索引：默认面板组与线损面板组共享一个查询表。
+_PANEL_SPECS = {
+    **{spec.key: spec for spec in _PLOT_PANELS},
+    **{spec.key: spec for spec in _CABLE_LOSS_PANELS},
+}
+
 #: 默认面板集合：主功放页与历史可视化页的功放结果共用这一组。
 ALL_PANELS = tuple(spec.key for spec in _PLOT_PANELS)
 #: 驱动映射只测“信号源输入 -> 驱放输出”和增益；效率与 DC 功耗没有测量数据，
 #: 画出来只会是永远“等待数据”的空图，因此不请求这两面板。
 DRIVER_MAPPING_PANELS = ("input_output", "gain")
+#: 线损页的四幅图：线缆1–4 各一幅，横轴频率、纵轴线损。
+CABLE_LOSS_PANELS = tuple(spec.key for spec in _CABLE_LOSS_PANELS)
 
 
 def _panel_keys(panels: Sequence[str] | None) -> tuple[str, ...]:
@@ -747,10 +777,16 @@ class RealTimePlotWidget(QWidget):
 
     def update_plot(self, data: Dict[str, Any]):
         try:
-            sweep = data.get("sweep_data", {})
-            if not isinstance(sweep, Mapping):
-                sweep = {}
-            series, has_output = self._sweep_series(sweep)
+            series: dict[str, tuple[list[float], list[float]] | None]
+            has_output = False
+            if "series" in data:
+                # 调用方已经按面板键准备好 (x, y) 序列（线损页的“线损 vs 频率”）。
+                series = self._direct_series(data.get("series"))
+            else:
+                sweep = data.get("sweep_data", {})
+                if not isinstance(sweep, Mapping):
+                    sweep = {}
+                series, has_output = self._sweep_series(sweep)
             static_changed = False
             for panel in self._panels:
                 static_changed = (
@@ -769,6 +805,24 @@ class RealTimePlotWidget(QWidget):
         except Exception as error:  # noqa: BLE001 - 绘图失败不得中断测量线程
             # 绘图是展示副作用：失败记日志并保持上一帧，不向测量线程抛出。
             logger.warning("绘图更新失败: %s", error)
+
+    def _direct_series(
+        self, series: Any
+    ) -> dict[str, tuple[list[float], list[float]] | None]:
+        """把调用方给的面板→(x, y) 映射读成有限数值对；任何非法项按“无数据”处理。"""
+        if not isinstance(series, Mapping):
+            return {}
+        prepared: dict[str, tuple[list[float], list[float]] | None] = {}
+        for key in self._panel_keys:
+            value = series.get(key)
+            if isinstance(value, (str, bytes)) or not isinstance(value, (list, tuple)):
+                prepared[key] = None
+                continue
+            if len(value) != 2:
+                prepared[key] = None
+                continue
+            prepared[key] = _pair(_numeric_list(value[0]), _numeric_list(value[1]))
+        return prepared
 
     @staticmethod
     def _sweep_series(

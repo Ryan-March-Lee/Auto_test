@@ -191,11 +191,17 @@ def _page_forwarder(callback: Any) -> Any:
 
 def _build_cable_loss_page(context: PageContext) -> Any:
     from .cable_loss_page import CableLossPage
+    from .realtime_plot import RealTimePlotWidget
 
     page = CableLossPage(
         config_path_provider=context.config_path_provider,
         run_provider=context.run_provider,
         connection_dialog_factory=context.connection_dialog_factory,
+        # 线损页的横轴是频率，整条曲线一次看全，不需要频点胶片条：用同样的绘图
+        # 控件但不带导航行，面板组由页面自己收窄成“线缆1–4”。
+        plot_widget_factory=lambda parent: RealTimePlotWidget(
+            show_nav_buttons=False
+        ),
         log_callback=context.log_callback,
         progress_callback=_page_forwarder(context.progress_callback),
         error_callback=context.error_callback,

@@ -1134,11 +1134,8 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIsNotNone(summary)
         self.assertEqual(summary.headline, "2 频点")
 
-        # 选中行决定“当前频点”：读数条必须跟着选择走，而不是停在最新一行。
-        page.cable_loss_table.selectRow(0)
-        self.app.processEvents()
-
-        self.assertEqual(page.readout.frequency_text(), "2.4")
+        # 读数条跟随最新频点：图取代表格后不再有“选中行”，最新到达的频点就是当前读数。
+        self.assertEqual(page.readout.frequency_text(), "3.5")
 
         page.clear_results()
         self.app.processEvents()

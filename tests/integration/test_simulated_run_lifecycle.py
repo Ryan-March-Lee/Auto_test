@@ -246,7 +246,7 @@ class SimulatedRunLifecycleTests(unittest.TestCase):
         )
         window.cable_loss_page.start_measurement()
         self._wait_for_status(window, MeasurementStatus.COMPLETED)
-        self.assertEqual(window.cable_loss_page.cable_loss_table.rowCount(), 11)
+        self.assertEqual(window.cable_loss_page.point_count(), 11)
         logs = window.log_text.toPlainText()
         self.assertIn("线损阶段结果已自动归档", logs)
         self.assertNotIn("仅展示", logs)

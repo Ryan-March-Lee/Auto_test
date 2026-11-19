@@ -59,7 +59,7 @@ class MeasurementLeftPanelWidthTests(unittest.TestCase):
             error_callback=lambda _message: None,
         )
         self.pages = {
-            "cable_loss": CableLossPage(**common),
+            "cable_loss": CableLossPage(plot_widget_factory=_Plot, **common),
             "driver_mapping": DriverMappingPage(plot_widget_factory=_Plot, **common),
             "amplifier": AmplifierPage(
                 driver_mode_provider=lambda: True,

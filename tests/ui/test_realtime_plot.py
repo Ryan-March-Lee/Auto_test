@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QApplication
 
 from presentation.qt.realtime_plot import (
     ALL_PANELS,
+    CABLE_LOSS_PANELS,
     DRIVER_MAPPING_PANELS,
     PlotTargetBand,
     RealTimePlotWidget,
@@ -118,6 +119,50 @@ class PanelSelectionTests(_PlotCase):
         self.assertEqual(
             plot.figure.axes[0].get_subplotspec().get_gridspec().get_geometry(),
             (2, 2),
+        )
+
+    def test_cable_loss_panels_plot_one_curve_per_cable_against_frequency(self):
+        """线损面板组：四幅图各一条线缆，横轴频率(GHz)、纵轴线损(dB)。"""
+        widget = RealTimePlotWidget(panels=CABLE_LOSS_PANELS)
+        self.addCleanup(_destroy, widget)
+        self.addCleanup(widget._draw_timer.stop)
+        widget.update_plot(
+            {
+                "series": {
+                    "cable1": ([2.4, 3.5], [1.0, 1.2]),
+                    "cable2": ([2.4, 3.5], [0.5, 0.6]),
+                    "cable3": ([], []),
+                    "cable4": ([], []),
+                }
+            }
+        )
+
+        self.assertEqual(widget.panel_keys(), CABLE_LOSS_PANELS)
+        self.assertEqual(len(widget.figure.axes), 4)
+        legends = [
+            axis.get_legend().get_texts()[0].get_text()
+            for axis in widget.figure.axes
+        ]
+        self.assertEqual(legends, ["线缆1 — dB", "线缆2 — dB", "线缆3 — dB", "线缆4 — dB"])
+        self.assertEqual(widget.ax1.get_xlabel(), "频率 (GHz)")
+        self.assertEqual(widget.ax1.get_ylabel(), "线损 (dB)")
+        self.assertEqual(list(widget.ax1.lines[0].get_xdata()), [2.4, 3.5])
+        self.assertEqual(list(widget.ax1.lines[0].get_ydata()), [1.0, 1.2])
+        # 没有数据的线缆保持“等待数据”，不画一条空曲线。
+        self.assertEqual(
+            [text.get_text() for text in widget.ax3.texts], ["等待数据"]
+        )
+
+    def test_cable_loss_panels_ignore_malformed_series(self):
+        widget = RealTimePlotWidget(panels=CABLE_LOSS_PANELS)
+        self.addCleanup(_destroy, widget)
+        self.addCleanup(widget._draw_timer.stop)
+
+        widget.update_plot({"series": "not-a-mapping"})
+        widget.update_plot({"series": {"cable1": "bad"}})
+
+        self.assertEqual(
+            [text.get_text() for text in widget.ax1.texts], ["等待数据"]
         )
 
     def test_driver_panels_are_one_row_of_two(self):

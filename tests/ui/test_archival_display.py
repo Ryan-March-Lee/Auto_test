@@ -191,6 +191,7 @@ class MeasurementPagesHaveNoArchiveBoxTests(unittest.TestCase):
                 config_path_provider=lambda: "config.json",
                 run_provider=lambda: _run(),
                 connection_dialog_factory=lambda *_: Dialog(),
+                plot_widget_factory=lambda parent: Plot(parent),
             ),
             DriverMappingPage(
                 config_path_provider=lambda: "config.json",
@@ -448,6 +449,7 @@ class CableLossPageArchivalLogTests(unittest.TestCase):
             config_path_provider=lambda: "config.json",
             run_provider=lambda: _run(),
             connection_dialog_factory=lambda *_: Dialog(),
+            plot_widget_factory=lambda parent: Plot(parent),
             log_callback=self.logs.append,
             error_callback=lambda _message: None,
             archival_location_provider=_location_provider([]),

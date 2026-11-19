@@ -373,6 +373,9 @@ class DriverMappingPageTests(unittest.TestCase):
         self.assertEqual(
             self.page.driver_plot_widget.updated[-1]["sweep_data"]["output_power_driver"], [4.0]
         )
+        self.assertEqual(
+            self.page.driver_plot_widget.updated[-1]["sweep_data"]["gain"], [12.0]
+        )
         self.assertEqual(self.realtime[-1]["frequency"], "3.0")
 
     def test_invalid_result_rows_are_reported_and_skipped(self):

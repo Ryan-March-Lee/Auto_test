@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from typing import Any, Callable
 
@@ -356,6 +357,7 @@ class DriverMappingPage(
                     "frequency": point.frequency_ghz,
                     "input_power": point.source_power_dbm,
                     "output_power": point.driver_output_power_dbm,
+                    "gain": point.gain_db,
                 }
                 for point in value.raw_points
             )
@@ -383,11 +385,24 @@ class DriverMappingPage(
                     existing = {}
                 inputs = list(existing.get("input_power_sg", ()))
                 outputs = list(existing.get("output_power_driver", ()))
+                gains = list(existing.get("gain", ()))
                 inputs.append(input_power)
                 outputs.append(output_power)
+                # 正式结果的增益已经由 DTO 校验为“输出功率 - 源功率”；旧的
+                # 页面行数据没有 gain 字段时也在这里补算，保持历史结果显示兼容。
+                try:
+                    gain = float(row.get("gain", output_power - input_power))
+                except (TypeError, ValueError):
+                    invalid_rows = True
+                    continue
+                if not math.isfinite(gain):
+                    invalid_rows = True
+                    continue
+                gains.append(gain)
                 sweep["sweep_data"] = {
                     "input_power_sg": inputs,
                     "output_power_driver": outputs,
+                    "gain": gains,
                 }
                 self.update_realtime(sweep)
         finally:

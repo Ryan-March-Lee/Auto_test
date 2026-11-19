@@ -123,7 +123,7 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         layout.setContentsMargins(0, 4, 0, 0)
         layout.setSpacing(12)
 
-        # 左侧窄栏自上而下放控制面与运行状态；右侧整块留给结果面。
+        # 左侧窄栏自上而下放运行控制台、控制面与运行状态；右侧整块留给结果面。
         # 接线说明只由连接图承担。宽度与另三个左栏页面共用 theme 里的同一个固定值。
         left_panel = QWidget()
         left_panel.setFixedWidth(MEASUREMENT_LEFT_PANEL_WIDTH)
@@ -165,10 +165,10 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
             self.load_cable_results_btn,
         ):
             control_layout.addWidget(button)
-        left_layout.addWidget(control_surface)
-        # 运行控制台回答“这是哪次运行、开始前还缺什么”，紧挨控制面放在状态行上方。
+        # 运行控制台回答“这是哪次运行、开始前还缺什么”，放在左栏顶部、控制面上方。
         self.console = MeasurementRunConsole()
         left_layout.addWidget(self.console)
+        left_layout.addWidget(control_surface)
         self.archival_banner = self._build_archival_banner()
         left_layout.addWidget(self.archival_banner)
         # 运行状态由窗口挂进这块容器，固定一行。

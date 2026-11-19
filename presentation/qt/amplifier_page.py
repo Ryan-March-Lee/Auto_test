@@ -121,7 +121,7 @@ class AmplifierPage(
         layout.setContentsMargins(0, 4, 0, 0)
         layout.setSpacing(12)
 
-        # 左侧窄栏自上而下放控制面与运行状态；右侧整块留给结果面。
+        # 左侧窄栏自上而下放运行控制台、控制面与运行状态；右侧整块留给结果面。
         # 测量结果由频点浏览图按频点展示，页面不再重复列一份结果表。
         # 接线说明只保留连接图入口：测试者已知道仪器怎么接，按钮只用于防止忘记。
         # 宽度与另三个左栏页面共用 theme 里的同一个固定值。
@@ -180,10 +180,10 @@ class AmplifierPage(
             self.load_driver_mapping_btn, self.driver_mapping_source_label
         )
         control_layout.addWidget(self.driver_mapping_input_row)
-        left_layout.addWidget(control_surface)
-        # 运行控制台：运行时间、测试模式、两类校准输入、接线与归档位置。
+        # 运行控制台放在左栏顶部：运行时间、测试模式、两类校准输入、接线与归档位置。
         self.console = MeasurementRunConsole()
         left_layout.addWidget(self.console)
+        left_layout.addWidget(control_surface)
         self._sync_cable_loss_label()
         self._sync_driver_mapping_label()
         self._sync_driver_input_availability()

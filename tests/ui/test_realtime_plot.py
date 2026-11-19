@@ -469,6 +469,14 @@ class NavigationStateTests(_PlotCase):
 
 
 class FilmstripOnPlotTests(_PlotCase):
+    def test_realtime_page_uses_measured_frequency_entrypoint(self):
+        plot = self._plot(nav=True)
+
+        plot.set_measured_frequencies([1.0, 1.2], 1)
+
+        self.assertEqual(plot.frequency_filmstrip.frequencies(), (1.0, 1.2))
+        self.assertEqual(plot.frequency_filmstrip.current_index(), 1)
+
     def test_navigation_plot_carries_a_filmstrip(self):
         plot = self._plot(nav=True)
 

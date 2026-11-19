@@ -970,6 +970,18 @@ class RealTimePlotWidget(QWidget):
 
     # -- 频点浏览 -----------------------------------------------------------
 
+    def set_measured_frequencies(
+        self, frequencies: Sequence[float], current_index: int = 0
+    ) -> None:
+        """同步实时测量已经收到数据的频点。
+
+        这里的频点语义必须与配置中的“计划频点”区分开：实时测量页的胶片条只展示
+        ``RealtimeMeasurementBuffer`` 已经收到的频点，不能用测试计划预填。单独提供
+        这个命名入口，让实时页面的调用点表达并约束这一语义；历史可视化仍使用自己
+        的 ``FrequencyFilmstrip.set_frequencies``，不会被这条规则影响。
+        """
+        self.set_frequencies(frequencies, current_index)
+
     def set_frequencies(
         self, frequencies: Sequence[float], current_index: int = 0
     ) -> None:

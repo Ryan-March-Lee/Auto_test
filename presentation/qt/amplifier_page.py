@@ -509,6 +509,12 @@ class AmplifierPage(
             return False
         return state_is_active(getattr(controller, "state", None))
 
+    def _accept_realtime_data(self) -> bool:
+        """共享 controller 会广播所有阶段；主功放页只消费自己的数据。"""
+        controller = getattr(self, "controller", None)
+        kind = getattr(getattr(controller, "state", None), "kind", None)
+        return kind is None or kind is MeasurementKind.AMPLIFIER
+
     def _readout_metrics(
         self, data: Mapping[str, Any] | None = None
     ) -> tuple[ReadoutMetric, ...]:

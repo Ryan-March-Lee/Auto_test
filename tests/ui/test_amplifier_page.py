@@ -84,6 +84,9 @@ class Plot(QWidget):
     def set_frequencies(self, frequencies, current_index):
         self.frequency_rows.append((tuple(frequencies), current_index))
 
+    def set_measured_frequencies(self, frequencies, current_index):
+        self.frequency_rows.append((tuple(frequencies), current_index))
+
 
 class AmplifierPageTests(unittest.TestCase):
     @classmethod
@@ -422,6 +425,18 @@ class AmplifierPageTests(unittest.TestCase):
 
         self.assertEqual(self.page.amplifier_plot_widget.updated[-1]["frequency"], "4.0")
         self.assertEqual(self.page.realtime_buffer.frequencies, [4.0])
+
+    def test_data_from_another_measurement_stage_does_not_create_frequency_chips(self):
+        self.controller.state = type(
+            "State", (), {"kind": MeasurementKind.CABLE_LOSS, "is_active": True}
+        )()
+
+        self.controller.signals.data_update.emit(
+            {"frequency": "4.0", "sweep_data": {"output_power_dut": [10]}}
+        )
+
+        self.assertEqual(self.page.realtime_buffer.frequencies, [])
+        self.assertEqual(self.page.amplifier_plot_widget.frequency_rows, [])
 
     def test_filmstrip_tracks_measured_frequencies_and_selects_on_click(self):
         for frequency, output in (("1.0", 2.0), ("2.0", 3.0)):

@@ -52,6 +52,8 @@ class RealtimePageMixin:
     def update_realtime(self, data: Any) -> None:
         if not isinstance(data, Mapping) or "frequency" not in data:
             return
+        if not self._accept_realtime_data():
+            return
         if not self.realtime_buffer.store(data):
             return
         # 用户浏览某个已测频点时，新到达的频点只进缓存、更新胶片条，不抢占画面；
@@ -69,6 +71,10 @@ class RealtimePageMixin:
         self._update_readout(dict(data))
         self._update_navigation()
         self._realtime_data_callback(dict(data))
+
+    def _accept_realtime_data(self) -> bool:
+        """页面可覆盖的阶段过滤钩子；默认接受实时数据。"""
+        return True
 
     def _incoming_is_current(self, data: Mapping[str, Any]) -> bool:
         """到达的数据是否属于当前浏览的频点；频率无效时按“否”处理。"""
@@ -132,6 +138,11 @@ class RealtimePageMixin:
             )
         # 页面自己的绘图控件可能不是 RealTimePlotWidget（测试替身、历史页）：
         # 只有真正提供胶片条入口时才同步，缺失时静默跳过。
-        setter = getattr(widget, "set_frequencies", None)
+        # 实时测量页只能同步“已经收到数据”的频点。优先使用语义明确的入口，避免
+        # 调用方以后误把配置里的计划频点传进“已测频点”胶片条；测试替身/旧适配器
+        # 没有新入口时保留兼容回退。
+        setter = getattr(widget, "set_measured_frequencies", None)
+        if not callable(setter):
+            setter = getattr(widget, "set_frequencies", None)
         if callable(setter):
             setter(buffer.frequencies, buffer.current_index)

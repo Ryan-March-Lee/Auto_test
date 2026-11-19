@@ -248,6 +248,9 @@ class MainWindow(ConfigurationSnapshotActions, QMainWindow):
         return self.mode_badge
 
     def _enter_test_mode(self, driver_enabled: bool) -> None:
+        # 欢迎页开始的是一轮新的测试会话。实时频点属于上一轮测量事实，不能随配置
+        # 一起带入新会话，否则胶片条会在尚未开始驱动映射/主功放测量时显示旧频点。
+        self._clear_realtime_measurement_state()
         config = apply_test_mode(dict(self.coordinator.load_configuration()), driver_enabled)
         self.coordinator.config = config
         self.configuration_editor.apply_config(config)
@@ -634,10 +637,18 @@ class MainWindow(ConfigurationSnapshotActions, QMainWindow):
 
     def clear_real_time_data(self):
         """清除实时测量的历史数据（两个实时测量页面都提供同名缓存入口）。"""
+        self._clear_realtime_measurement_state()
+        self.add_log_message("已清除实时测量历史数据")
+
+    def _clear_realtime_measurement_state(self) -> None:
+        """清除本轮之外不可复用的实时数据，不产生用户日志。
+
+        页面缓存负责图表/胶片条，协调器缓存负责状态上下文；三处必须一起清空，且
+        新会话初始化时不能调用带日志的公开按钮动作。
+        """
         self.coordinator.clear_realtime_data()
         self.driver_mapping_page.clear_realtime_buffer()
         self.amplifier_page.clear_realtime_buffer()
-        self.add_log_message("已清除实时测量历史数据")
 
     def add_log_message(self, message: str):
         self.status_panel.add_log_message(message)

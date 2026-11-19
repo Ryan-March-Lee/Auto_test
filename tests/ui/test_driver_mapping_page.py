@@ -93,6 +93,9 @@ class Plot(QWidget):
     def set_frequencies(self, frequencies, current_index):
         self.frequency_rows.append((tuple(frequencies), current_index))
 
+    def set_measured_frequencies(self, frequencies, current_index):
+        self.frequency_rows.append((tuple(frequencies), current_index))
+
 
 class DriverMappingPageTests(unittest.TestCase):
     @classmethod
@@ -244,6 +247,18 @@ class DriverMappingPageTests(unittest.TestCase):
         self.assertEqual(self.page.realtime_buffer.current_index, 0)
         self.assertEqual(plot.updated[-1]["frequency"], 1.0)
         self.assertEqual(self.page.readout.frequency_text(), "1.0")
+
+    def test_data_from_another_measurement_stage_does_not_create_frequency_chips(self):
+        self.controller.state = type(
+            "State", (), {"kind": MeasurementKind.CABLE_LOSS, "is_active": True}
+        )()
+
+        self.controller.signals.data_update.emit(
+            {"frequency": "1.0", "sweep_data": {"input_power_sg": [-10]}}
+        )
+
+        self.assertEqual(self.page.realtime_buffer.frequencies, [])
+        self.assertEqual(self.page.driver_plot_widget.frequency_rows, [])
 
     def test_new_frequency_does_not_steal_a_pinned_completed_frequency(self):
         # 用户点了当时最新的 1.1 频点后，1.2 到达时画面必须继续停在 1.1。

@@ -4,7 +4,7 @@ P0–P2 之后左栏仍是“按钮 + 空档 + 折叠日志”：用户看得到
 哪次、结果会落到哪里、开始测量前还缺什么。本模块把这些**页面已经知道的事实**排成
 一块紧凑的控制台，放在左栏顶部、测量控制面上方：
 
-- 运行时间（本地时间）、测试模式、运行目录；
+- 运行时间（本地时间）、运行目录；
 - 前置检查：执行会话、校准输入、接线与归档位置，每行一个 LED；
 - 状态只有三种，且都不伪造测量结论：``READY``（已满足）、``WAITING``（还缺）、
   ``OPTIONAL``（这一步不使用或只能在开始时确认）。
@@ -165,9 +165,9 @@ class MeasurementRunConsole(QWidget):
         self._facts.setHorizontalSpacing(10)
         self._facts.setVerticalSpacing(2)
         self._run_caption, self._run_value = self._add_fact(0, "运行时间")
-        self._mode_caption, self._mode_value = self._add_fact(1, "测试模式")
+        # 测试模式由工作台页头右侧的徽标常驻展示，这里不再重复一行。
         self._directory_caption, self._directory_value = self._add_fact(
-            2, "运行目录"
+            1, "运行目录"
         )
         content.addLayout(self._facts)
 
@@ -182,7 +182,7 @@ class MeasurementRunConsole(QWidget):
         self._check_rows: list[tuple[QLabel, QLabel, QLabel]] = []
         self._checks: tuple[ConsoleCheck, ...] = ()
 
-        self.set_run_facts(run_id=None, mode=None, archive=None, archive_configured=False)
+        self.set_run_facts(run_id=None, archive=None, archive_configured=False)
         self.set_checks(())
 
     # ---- 构建 ---------------------------------------------------------------
@@ -211,16 +211,15 @@ class MeasurementRunConsole(QWidget):
         self,
         *,
         run_id: str | None,
-        mode: str | None,
         archive: str | None,
         archive_configured: bool = True,
     ) -> None:
-        """写入运行时间、测试模式与运行目录；``mode=None`` 隐藏模式行。
+        """写入运行时间与运行目录。
 
         ``run_id`` 是内部审计标识：这里只把它折成本地开始时间，完整值放进 tooltip。
         运行目录同理只显示可用状态，完整路径放进 tooltip，避免用户面对一串目录名。
         """
-        for name, value in (("run_id", run_id), ("mode", mode), ("archive", archive)):
+        for name, value in (("run_id", run_id), ("archive", archive)):
             if value is not None and not isinstance(value, str):
                 raise TypeError(f"{name} 必须是字符串或 None")
         if not isinstance(archive_configured, bool):
@@ -234,12 +233,6 @@ class MeasurementRunConsole(QWidget):
         else:
             self._run_value.setText("未连接")
         self._run_value.setToolTip(cleaned_run)
-
-        show_mode = isinstance(mode, str) and bool(mode.strip())
-        self._mode_caption.setVisible(show_mode)
-        self._mode_value.setVisible(show_mode)
-        self._mode_value.setText(mode.strip() if show_mode else "")
-        self._mode_value.setToolTip(mode.strip() if show_mode else "")
 
         cleaned_archive = archive.strip() if isinstance(archive, str) else ""
         if cleaned_archive:
@@ -259,10 +252,6 @@ class MeasurementRunConsole(QWidget):
     def run_id_tooltip(self) -> str:
         """完整运行标识；读取只读展示状态。"""
         return self._run_value.toolTip()
-
-    def mode_text(self) -> str | None:
-        """测试模式文本；模式行隐藏时返回 ``None``。"""
-        return self._mode_value.text() if not self._mode_value.isHidden() else None
 
     def directory_text(self) -> str:
         """运行目录的显示文本；完整路径在 tooltip。"""

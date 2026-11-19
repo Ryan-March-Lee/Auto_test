@@ -553,7 +553,6 @@ class CableLossPageTests(unittest.TestCase):
 
         self.assertEqual(console.run_time_text(), "已连接运行")
         self.assertEqual(console.run_id_tooltip(), "run-cable-loss")
-        self.assertIsNone(console.mode_text())
         self.assertEqual(console.directory_text(), "未配置")
         self.assertIs(console.check_state("执行会话"), CheckState.READY)
         self.assertIs(console.check_state("接线确认"), CheckState.OPTIONAL)

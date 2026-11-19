@@ -111,7 +111,6 @@ class MeasurementRunConsoleTests(unittest.TestCase):
         console = self._console()
 
         self.assertEqual(console.run_time_text(), "未连接")
-        self.assertIsNone(console.mode_text())
         self.assertEqual(console.directory_text(), "未配置")
         self.assertEqual(console.checks(), ())
 
@@ -121,7 +120,6 @@ class MeasurementRunConsoleTests(unittest.TestCase):
 
         console.set_run_facts(
             run_id=long_run,
-            mode="有驱放测试",
             archive=r"C:\runs\2026\run-1\artifacts",
             archive_configured=True,
         )
@@ -131,7 +129,6 @@ class MeasurementRunConsoleTests(unittest.TestCase):
         )
         self.assertNotEqual(console.run_time_text(), long_run)
         self.assertEqual(console.run_id_tooltip(), long_run)
-        self.assertEqual(console.mode_text(), "有驱放测试")
         self.assertEqual(console.directory_text(), "已创建")
         self.assertIn(
             "C:\\runs\\2026\\run-1\\artifacts",
@@ -141,35 +138,20 @@ class MeasurementRunConsoleTests(unittest.TestCase):
     def test_unparsable_run_id_falls_back_to_a_readable_state(self):
         console = self._console()
 
-        console.set_run_facts(
-            run_id="run-legacy", mode=None, archive=None
-        )
+        console.set_run_facts(run_id="run-legacy", archive=None)
 
         self.assertEqual(console.run_time_text(), "已连接运行")
         self.assertEqual(console.run_id_tooltip(), "run-legacy")
 
-    def test_mode_row_is_hidden_when_no_mode_is_known(self):
-        console = self._console()
-        console.set_run_facts(
-            run_id="run-1", mode="有驱放测试", archive=None
-        )
-        self.assertEqual(console.mode_text(), "有驱放测试")
-
-        console.set_run_facts(run_id="run-1", mode=None, archive=None)
-
-        self.assertIsNone(console.mode_text())
-        self.assertTrue(console._mode_value.isHidden())
-        self.assertTrue(console._mode_caption.isHidden())
-
     def test_directory_text_distinguishes_unready_from_unconfigured(self):
         console = self._console()
         console.set_run_facts(
-            run_id=None, mode=None, archive=None, archive_configured=True
+            run_id=None, archive=None, archive_configured=True
         )
         self.assertEqual(console.directory_text(), "等待运行")
 
         console.set_run_facts(
-            run_id=None, mode=None, archive=None, archive_configured=False
+            run_id=None, archive=None, archive_configured=False
         )
         self.assertEqual(console.directory_text(), "未配置")
 
@@ -177,7 +159,7 @@ class MeasurementRunConsoleTests(unittest.TestCase):
         console = self._console()
         path = r"D:\runs\20261114T201158Z_922f77f9"
 
-        console.set_run_facts(run_id=None, mode=None, archive=path)
+        console.set_run_facts(run_id=None, archive=path)
 
         self.assertEqual(console.directory_text(), "已创建")
         self.assertNotIn("20261114T201158Z", console.directory_text())
@@ -187,14 +169,12 @@ class MeasurementRunConsoleTests(unittest.TestCase):
         console = self._console()
 
         with self.assertRaises(TypeError):
-            console.set_run_facts(run_id=1, mode=None, archive=None)
+            console.set_run_facts(run_id=1, archive=None)
         with self.assertRaises(TypeError):
-            console.set_run_facts(run_id=None, mode=1, archive=None)
-        with self.assertRaises(TypeError):
-            console.set_run_facts(run_id=None, mode=None, archive=1)
+            console.set_run_facts(run_id=None, archive=1)
         with self.assertRaises(TypeError):
             console.set_run_facts(
-                run_id=None, mode=None, archive=None, archive_configured=1
+                run_id=None, archive=None, archive_configured=1
             )
 
     def test_checks_update_led_tones_and_reuse_rows(self):

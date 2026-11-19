@@ -284,7 +284,6 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         directory = self._archival_directory(run_id)
         console.set_run_facts(
             run_id=run_id,
-            mode=None,
             archive=directory,
             archive_configured=configured,
         )

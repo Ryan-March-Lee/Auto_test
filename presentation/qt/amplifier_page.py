@@ -180,7 +180,7 @@ class AmplifierPage(
             self.load_driver_mapping_btn, self.driver_mapping_source_label
         )
         control_layout.addWidget(self.driver_mapping_input_row)
-        # 运行控制台放在左栏顶部：运行时间、测试模式、两类校准输入、接线与归档位置。
+        # 运行控制台放在左栏顶部：运行时间、两类校准输入、接线与归档位置。
         self.console = MeasurementRunConsole()
         left_layout.addWidget(self.console)
         left_layout.addWidget(control_surface)
@@ -434,7 +434,7 @@ class AmplifierPage(
         self._refresh_console()
 
     def _refresh_console(self) -> None:
-        """把运行时间、测试模式、校准输入与归档位置写进左栏控制台。"""
+        """把运行时间、校准输入与归档位置写进左栏控制台。"""
         console = getattr(self, "console", None)
         if console is None:
             return
@@ -444,7 +444,6 @@ class AmplifierPage(
         directory = self._archival_directory(run_id)
         console.set_run_facts(
             run_id=run_id,
-            mode="有驱放测试" if driver_mode else "无驱放测试",
             archive=directory,
             archive_configured=configured,
         )

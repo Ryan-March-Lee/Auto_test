@@ -12,7 +12,6 @@ from presentation.qt.measurement_console import CheckState
 from presentation.qt.measurement_controller_contract import MeasurementCommand
 from presentation.qt.measurement_controls import MeasurementAction
 from presentation.qt.measurement_state import MeasurementKind, MeasurementStatus
-from presentation.qt.measurement_workspace import mode_text
 from presentation.qt.stage_summary import NOT_STARTED
 from presentation.qt.theme import MEASUREMENT_LEFT_PANEL_WIDTH
 
@@ -748,13 +747,11 @@ class AmplifierPageTests(unittest.TestCase):
 
         self.assertEqual(opened, ["amplifier_test", "amplifier_test_no_driver"])
 
-    def test_run_console_shows_the_driver_mode_and_all_prerequisites(self):
+    def test_run_console_shows_all_prerequisites(self):
         console = self.page.console
 
         self.assertEqual(console.run_time_text(), "已连接运行")
         self.assertEqual(console.run_id_tooltip(), "run-amplifier")
-        self.assertEqual(console.mode_text(), mode_text(True))
-        self.assertEqual(console.mode_text(), "有驱放测试")
         self.assertIs(console.check_state("执行会话"), CheckState.READY)
         self.assertIs(console.check_state("线损结果"), CheckState.WAITING)
         self.assertIs(console.check_state("驱动映射结果"), CheckState.WAITING)
@@ -778,8 +775,6 @@ class AmplifierPageTests(unittest.TestCase):
         self.page.on_activated()
 
         console = self.page.console
-        self.assertEqual(console.mode_text(), mode_text(False))
-        self.assertEqual(console.mode_text(), "无驱放测试")
         self.assertIs(console.check_state("驱动映射结果"), CheckState.OPTIONAL)
         self.assertIn("无驱放", [
             check.detail for check in console.checks()

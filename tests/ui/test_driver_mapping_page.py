@@ -591,7 +591,6 @@ class DriverMappingPageTests(unittest.TestCase):
 
         self.assertEqual(console.run_time_text(), "已连接运行")
         self.assertEqual(console.run_id_tooltip(), "run-driver")
-        self.assertIsNone(console.mode_text())
         self.assertIs(console.check_state("执行会话"), CheckState.READY)
         self.assertIs(console.check_state("线损结果"), CheckState.WAITING)
         self.assertIs(console.check_state("接线确认"), CheckState.OPTIONAL)

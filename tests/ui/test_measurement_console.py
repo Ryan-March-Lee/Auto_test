@@ -15,6 +15,7 @@ from presentation.qt.measurement_console import (
     archive_check,
     input_check,
     run_session_check,
+    run_started_text,
     wiring_check,
 )
 from presentation.qt.theme import build_stylesheet
@@ -58,6 +59,16 @@ class ConsoleCheckHelperTests(unittest.TestCase):
         self.assertIs(run_session_check("  ").state, CheckState.WAITING)
         self.assertEqual(run_session_check(None).label, "执行会话")
 
+    def test_run_started_text_only_decodes_generated_run_ids(self):
+        text = run_started_text("20261114T201158Z_922f77f9")
+
+        self.assertRegex(text, r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$")
+        self.assertNotIn("20261114T201158Z", text)
+        self.assertIsNone(run_started_text("run-1"))
+        self.assertIsNone(run_started_text("20261112T101010"))
+        self.assertIsNone(run_started_text(None))
+        self.assertIsNone(run_started_text(123))  # type: ignore[arg-type]
+
     def test_input_check_marks_the_missing_calibration_input(self):
         self.assertIs(input_check("线损结果", True).state, CheckState.READY)
         self.assertEqual(input_check("线损结果", False).detail, "待选择")
@@ -99,14 +110,14 @@ class MeasurementRunConsoleTests(unittest.TestCase):
     def test_starts_with_no_run_and_no_archive(self):
         console = self._console()
 
-        self.assertEqual(console.run_id_text(), "未连接")
+        self.assertEqual(console.run_time_text(), "未连接")
         self.assertIsNone(console.mode_text())
-        self.assertEqual(console.archive_text(), "未配置")
+        self.assertEqual(console.directory_text(), "未配置")
         self.assertEqual(console.checks(), ())
 
-    def test_run_facts_show_id_and_keep_the_full_value_in_the_tooltip(self):
+    def test_run_facts_show_local_start_time_and_keep_the_id_in_the_tooltip(self):
         console = self._console()
-        long_run = "run-20261114T010203Z-0123456789abcdef"
+        long_run = "20261114T010203Z_0123456789abcdef"
 
         console.set_run_facts(
             run_id=long_run,
@@ -115,12 +126,27 @@ class MeasurementRunConsoleTests(unittest.TestCase):
             archive_configured=True,
         )
 
-        self.assertEqual(len(console.run_id_text()), 36)
-        self.assertIn("…", console.run_id_text())
+        self.assertRegex(
+            console.run_time_text(), r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$"
+        )
+        self.assertNotEqual(console.run_time_text(), long_run)
         self.assertEqual(console.run_id_tooltip(), long_run)
         self.assertEqual(console.mode_text(), "有驱放测试")
-        self.assertEqual(console.archive_text(), "…/run-1/artifacts")
-        self.assertIn("C:\\runs\\2026\\run-1\\artifacts", console._archive_value.toolTip())
+        self.assertEqual(console.directory_text(), "已创建")
+        self.assertIn(
+            "C:\\runs\\2026\\run-1\\artifacts",
+            console._directory_value.toolTip(),
+        )
+
+    def test_unparsable_run_id_falls_back_to_a_readable_state(self):
+        console = self._console()
+
+        console.set_run_facts(
+            run_id="run-legacy", mode=None, archive=None
+        )
+
+        self.assertEqual(console.run_time_text(), "已连接运行")
+        self.assertEqual(console.run_id_tooltip(), "run-legacy")
 
     def test_mode_row_is_hidden_when_no_mode_is_known(self):
         console = self._console()
@@ -135,29 +161,27 @@ class MeasurementRunConsoleTests(unittest.TestCase):
         self.assertTrue(console._mode_value.isHidden())
         self.assertTrue(console._mode_caption.isHidden())
 
-    def test_archive_text_distinguishes_unready_from_unconfigured(self):
+    def test_directory_text_distinguishes_unready_from_unconfigured(self):
         console = self._console()
         console.set_run_facts(
             run_id=None, mode=None, archive=None, archive_configured=True
         )
-        self.assertEqual(console.archive_text(), "未就绪")
+        self.assertEqual(console.directory_text(), "等待运行")
 
         console.set_run_facts(
             run_id=None, mode=None, archive=None, archive_configured=False
         )
-        self.assertEqual(console.archive_text(), "未配置")
+        self.assertEqual(console.directory_text(), "未配置")
 
-    def test_archive_text_shows_a_long_run_directory_only_once_elided(self):
+    def test_long_run_directory_is_only_kept_in_the_tooltip(self):
         console = self._console()
-        path = (
-            r"D:\runs\20261114T201158Z_922f77f9"
-        )
+        path = r"D:\runs\20261114T201158Z_922f77f9"
 
         console.set_run_facts(run_id=None, mode=None, archive=path)
 
-        self.assertEqual(console.archive_text(), "…/20261114T201158Z_922f77f9")
-        self.assertEqual(console.archive_text().count("…"), 1)
-        self.assertEqual(console._archive_value.toolTip(), path)
+        self.assertEqual(console.directory_text(), "已创建")
+        self.assertNotIn("20261114T201158Z", console.directory_text())
+        self.assertEqual(console._directory_value.toolTip(), path)
 
     def test_run_facts_reject_non_string_values(self):
         console = self._console()

@@ -572,7 +572,8 @@ class DriverMappingPageTests(unittest.TestCase):
     def test_run_console_waits_for_the_cable_loss_input(self):
         console = self.page.console
 
-        self.assertEqual(console.run_id_text(), "run-driver")
+        self.assertEqual(console.run_time_text(), "已连接运行")
+        self.assertEqual(console.run_id_tooltip(), "run-driver")
         self.assertIsNone(console.mode_text())
         self.assertIs(console.check_state("执行会话"), CheckState.READY)
         self.assertIs(console.check_state("线损结果"), CheckState.WAITING)
@@ -595,7 +596,10 @@ class DriverMappingPageTests(unittest.TestCase):
 
         self.page.on_activated()
 
-        self.assertEqual(self.page.console.run_id_text(), "run-driver-2")
+        self.assertEqual(self.page.console.run_time_text(), "已连接运行")
+        self.assertEqual(
+            self.page.console.run_id_tooltip(), "run-driver-2"
+        )
 
 
 

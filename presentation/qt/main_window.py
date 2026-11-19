@@ -574,7 +574,7 @@ class MainWindow(ConfigurationSnapshotActions, QMainWindow):
             return
         self.add_log_message(self.coordinator.measurement_entry_message())
         self._restore_test_config_page()
-        # 提交成功后本次运行才成为当前运行：页头在这一刻显示 run id 与测试模式。
+        # 提交成功后本次运行才成为当前运行：控制台从这一刻读到运行时间，徽标显示测试模式。
         self.workspace_binding.bind_run_identity(
             self.coordinator.current_run_id(), self.coordinator.amplifier_driver_mode()
         )

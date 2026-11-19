@@ -175,7 +175,7 @@ class DriverMappingPage(
         self.cable_loss_source_label.setWordWrap(True)
         control_layout.addWidget(self.cable_loss_source_label)
         left_layout.addWidget(control_surface)
-        # 运行控制台：运行标识、线损输入是否已选、接线与归档位置。
+        # 运行控制台：运行时间、线损输入是否已选、接线与归档位置。
         self.console = MeasurementRunConsole()
         left_layout.addWidget(self.console)
         self._sync_cable_loss_label()
@@ -524,7 +524,7 @@ class DriverMappingPage(
         self._refresh_console()
 
     def _refresh_console(self) -> None:
-        """把运行标识、线损选择与归档位置写进左栏控制台。"""
+        """把运行时间、线损选择与归档位置写进左栏控制台。"""
         console = getattr(self, "console", None)
         if console is None:
             return

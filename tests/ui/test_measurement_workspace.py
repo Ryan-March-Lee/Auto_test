@@ -1,6 +1,6 @@
 """测量工作台外壳的功能契约。
 
-覆盖阶段同步、自定义阶段集合、阶段摘要、工具页、内容槽替换、运行标识与阶段状态委托。
+覆盖阶段同步、自定义阶段集合、阶段摘要、工具页、内容槽替换、右侧状态簇与阶段状态委托。
 动画方向、逐帧过渡和像素稳定性不再纳入默认回归。
 """
 
@@ -98,12 +98,10 @@ class ConstructionTests(_WorkspaceTestCase):
         )
 
 
-    def test_unset_run_identity_reads_as_unconnected(self):
-        self.assertEqual(self.workspace.run_identity(), (None, None))
-        self.assertEqual(
-            self.workspace.run_identity_label.text(),
-            "未连接",
-            "没有运行时不能拼成“本次运行 未连接”这种自相矛盾的文案",
+    def test_top_bar_does_not_repeat_the_run_identity(self):
+        self.assertFalse(
+            hasattr(self.workspace, "run_identity_label"),
+            "运行标识不进入顶栏：运行时间由测量页左栏控制台表达",
         )
 
 
@@ -330,7 +328,7 @@ class RightStatusAreaTests(_WorkspaceTestCase):
         self.app.processEvents()
 
         self.assertEqual(self.workspace.right_widgets(), (badge, hint))
-        status_area = self.workspace.run_identity_label.parentWidget()
+        status_area = self.workspace.header
         layout = status_area.layout()
         self.assertIs(badge.parentWidget(), status_area)
         self.assertIs(hint.parentWidget(), status_area)
@@ -360,30 +358,6 @@ class ModeTextTests(unittest.TestCase):
     def test_simulation_mode_has_its_own_label(self):
         self.assertEqual(mode_text(True, simulation=True), "仿真运行")
         self.assertEqual(mode_text(None, simulation=True), "仿真运行")
-
-
-
-class RunIdentityTests(_WorkspaceTestCase):
-    def test_run_identity_shows_the_run_id_while_mode_stays_in_the_badge(self):
-        self.workspace.set_run_identity("20261112T101010", "有驱放测试")
-
-        self.assertEqual(
-            self.workspace.run_identity(),
-            ("20261112T101010", "有驱放测试"),
-        )
-        text = self.workspace.run_identity_label.text()
-        self.assertIn("20261112T101010", text)
-        self.assertNotIn("有驱放测试", text, "模式只由徽标显示")
-        self.assertNotIn("未连接", text)
-
-    def test_clearing_run_identity_falls_back_to_unconnected(self):
-        self.workspace.set_run_identity("20261112T101010", "无驱放测试")
-
-        self.workspace.set_run_identity(None, None)
-
-        self.assertEqual(self.workspace.run_identity(), (None, None))
-        self.assertEqual(self.workspace.run_identity_label.text(), "未连接")
-
 
 
 

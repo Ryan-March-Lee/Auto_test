@@ -534,9 +534,10 @@ class CableLossPageTests(unittest.TestCase):
     def test_run_console_shows_the_run_and_the_remaining_prerequisites(self):
         console = self.page.console
 
-        self.assertEqual(console.run_id_text(), "run-cable-loss")
+        self.assertEqual(console.run_time_text(), "已连接运行")
+        self.assertEqual(console.run_id_tooltip(), "run-cable-loss")
         self.assertIsNone(console.mode_text())
-        self.assertEqual(console.archive_text(), "未配置")
+        self.assertEqual(console.directory_text(), "未配置")
         self.assertIs(console.check_state("执行会话"), CheckState.READY)
         self.assertIs(console.check_state("接线确认"), CheckState.OPTIONAL)
         self.assertIs(console.check_state("结果归档"), CheckState.WAITING)
@@ -550,7 +551,10 @@ class CableLossPageTests(unittest.TestCase):
 
         self.page.on_activated()
 
-        self.assertEqual(self.page.console.run_id_text(), "run-cable-loss-2")
+        self.assertEqual(self.page.console.run_time_text(), "已连接运行")
+        self.assertEqual(
+            self.page.console.run_id_tooltip(), "run-cable-loss-2"
+        )
 
     def test_console_archive_check_turns_ready_when_a_location_is_configured(self):
         self.page._archival_location_provider = (
@@ -560,7 +564,13 @@ class CableLossPageTests(unittest.TestCase):
         self.page._refresh_console()
 
         self.assertEqual(
-            self.page.console.archive_text(), "runs/run-cable-loss"
+            self.page.console.directory_text(), "已创建"
+        )
+        self.assertEqual(
+            self.page.console._directory_value.toolTip(), "runs/run-cable-loss"
+        )
+        self.assertIs(
+            self.page.console.check_state("结果归档"), CheckState.READY
         )
 
 

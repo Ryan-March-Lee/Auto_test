@@ -186,7 +186,7 @@ class AmplifierPage(
         )
         control_layout.addWidget(self.driver_mapping_input_row)
         left_layout.addWidget(control_surface)
-        # 运行控制台：运行标识、测试模式、两类校准输入、接线与归档位置。
+        # 运行控制台：运行时间、测试模式、两类校准输入、接线与归档位置。
         self.console = MeasurementRunConsole()
         left_layout.addWidget(self.console)
         self._sync_cable_loss_label()
@@ -439,7 +439,7 @@ class AmplifierPage(
         self._refresh_console()
 
     def _refresh_console(self) -> None:
-        """把运行标识、测试模式、校准输入与归档位置写进左栏控制台。"""
+        """把运行时间、测试模式、校准输入与归档位置写进左栏控制台。"""
         console = getattr(self, "console", None)
         if console is None:
             return

@@ -275,7 +275,7 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         self._refresh_console()
 
     def _refresh_console(self) -> None:
-        """把运行标识、归档位置与前置检查写进左栏控制台。
+        """把运行时间、归档位置与前置检查写进左栏控制台。
 
         所有输入都是无副作用的纯查询：``_current_run_id()`` 不回退到会弹窗的
         ``resolve_measurement_run()``；归档目录只做文案定位，不读文件。

@@ -741,7 +741,8 @@ class AmplifierPageTests(unittest.TestCase):
     def test_run_console_shows_the_driver_mode_and_all_prerequisites(self):
         console = self.page.console
 
-        self.assertEqual(console.run_id_text(), "run-amplifier")
+        self.assertEqual(console.run_time_text(), "已连接运行")
+        self.assertEqual(console.run_id_tooltip(), "run-amplifier")
         self.assertEqual(console.mode_text(), mode_text(True))
         self.assertEqual(console.mode_text(), "有驱放测试")
         self.assertIs(console.check_state("执行会话"), CheckState.READY)

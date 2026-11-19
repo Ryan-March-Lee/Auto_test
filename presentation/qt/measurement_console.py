@@ -4,10 +4,14 @@ P0–P2 之后左栏仍是“按钮 + 空档 + 折叠日志”：用户看得到
 哪次、结果会落到哪里、开始测量前还缺什么。本模块把这些**页面已经知道的事实**排成
 一块紧凑的控制台，放在测量控制面与状态面板之间：
 
-- 运行标识、测试模式、结果归档位置；
+- 运行时间（本地时间）、测试模式、运行目录；
 - 前置检查：执行会话、校准输入、接线与归档位置，每行一个 LED；
 - 状态只有三种，且都不伪造测量结论：``READY``（已满足）、``WAITING``（还缺）、
   ``OPTIONAL``（这一步不使用或只能在开始时确认）。
+
+原始 ``run_id``（``<UTC 时间戳>_<随机串>``）只作为审计标识：日常界面把它折成本地
+开始时间，完整值留在 tooltip 与日志/报告里，不再让用户面对一串只有程序友好的字符。
+运行目录同理只显示“已创建 / 等待运行 / 未配置”，完整路径放在 tooltip。
 
 控制台只读：不连接 controller、不启动测量、不读文件、不弹窗。所有值都来自页面构造
 时注入的 provder 与页面自己保存的选择；LED 表达的是页面**现有判据**，不是第二套
@@ -20,6 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from enum import Enum
 
 from PySide6.QtCore import Qt
@@ -45,6 +50,7 @@ __all__ = [
     "archive_check",
     "input_check",
     "run_session_check",
+    "run_started_text",
     "wiring_check",
 ]
 
@@ -74,35 +80,31 @@ class ConsoleCheck:
             raise TypeError("检查说明必须是字符串")
 
 
-def _middle_elide(text: str, limit: int = 36) -> str:
-    """从中间省略长文本：保留开头与结尾（例如运行标识的时间戳）。"""
-    if len(text) <= limit:
-        return text
-    if limit <= 1:
-        return "…"
-    head = (limit - 1) // 2
-    tail = limit - 1 - head
-    return f"{text[:head]}…{text[-tail:]}"
+_RUN_ID_TIMESTAMP_FORMAT = "%Y%m%dT%H%M%SZ"
 
 
-def _shorten_path(value: str | None) -> str:
-    """归档目录只展示末尾目录；运行标识这类长目录名不再叠加第二层省略。
+def run_started_text(run_id: str | None) -> str | None:
+    """把生成的运行标识折成本地开始时间；不是生成型标识时返回 ``None``。
 
-    ``…/`` 已经说明这是路径后缀，因此长运行目录直接显示最后一段（完整路径在
-    tooltip）；短目录名则保留最后两段，帮助区分 ``run-1/artifacts`` 这类结构。
+    ``run_id`` 的契约是 ``<UTC 时间戳>_<随机串>``（见 :func:`domain.run.models.generate_run_id`）。
+    日常界面只需要“哪一次、什么时候”，因此这里只取前 16 位解析时间并转成本地时区；
+    随机串不参与展示。历史目录名或测试替身里的非生成型标识无法可靠解析，返回
+    ``None``，由调用方显示“已连接运行”，完整值仍留在 tooltip。
     """
-    if not value:
-        return ""
-    normalized = value.replace("\\", "/")
-    parts = [part for part in normalized.split("/") if part]
-    if len(parts) <= 2:
-        return _middle_elide(normalized, 28)
-    last = parts[-1]
-    if len(last) >= 20:
-        text = f"…/{last}"
-    else:
-        text = f"…/{parts[-2]}/{last}"
-    return _middle_elide(text, 28)
+    if not isinstance(run_id, str):
+        return None
+    cleaned = run_id.strip()
+    if len(cleaned) < 16:
+        return None
+    try:
+        moment = datetime.strptime(cleaned[:16], _RUN_ID_TIMESTAMP_FORMAT)
+    except ValueError:
+        return None
+    return (
+        moment.replace(tzinfo=timezone.utc)
+        .astimezone()
+        .strftime("%Y-%m-%d %H:%M")
+    )
 
 
 def run_session_check(run_id: str | None) -> ConsoleCheck:
@@ -162,9 +164,11 @@ class MeasurementRunConsole(QWidget):
         self._facts.setContentsMargins(0, 0, 0, 0)
         self._facts.setHorizontalSpacing(10)
         self._facts.setVerticalSpacing(2)
-        self._run_caption, self._run_value = self._add_fact(0, "运行标识")
+        self._run_caption, self._run_value = self._add_fact(0, "运行时间")
         self._mode_caption, self._mode_value = self._add_fact(1, "测试模式")
-        self._archive_caption, self._archive_value = self._add_fact(2, "结果归档")
+        self._directory_caption, self._directory_value = self._add_fact(
+            2, "运行目录"
+        )
         content.addLayout(self._facts)
 
         content.addWidget(hairline())
@@ -211,7 +215,11 @@ class MeasurementRunConsole(QWidget):
         archive: str | None,
         archive_configured: bool = True,
     ) -> None:
-        """写入运行标识、测试模式与归档目录；``mode=None`` 隐藏模式行。"""
+        """写入运行时间、测试模式与运行目录；``mode=None`` 隐藏模式行。
+
+        ``run_id`` 是内部审计标识：这里只把它折成本地开始时间，完整值放进 tooltip。
+        运行目录同理只显示可用状态，完整路径放进 tooltip，避免用户面对一串目录名。
+        """
         for name, value in (("run_id", run_id), ("mode", mode), ("archive", archive)):
             if value is not None and not isinstance(value, str):
                 raise TypeError(f"{name} 必须是字符串或 None")
@@ -219,7 +227,12 @@ class MeasurementRunConsole(QWidget):
             raise TypeError("归档配置状态必须是 bool")
 
         cleaned_run = run_id.strip() if isinstance(run_id, str) else ""
-        self._run_value.setText(_middle_elide(cleaned_run) if cleaned_run else "未连接")
+        if cleaned_run:
+            self._run_value.setText(
+                run_started_text(cleaned_run) or "已连接运行"
+            )
+        else:
+            self._run_value.setText("未连接")
         self._run_value.setToolTip(cleaned_run)
 
         show_mode = isinstance(mode, str) and bool(mode.strip())
@@ -230,17 +243,17 @@ class MeasurementRunConsole(QWidget):
 
         cleaned_archive = archive.strip() if isinstance(archive, str) else ""
         if cleaned_archive:
-            self._archive_value.setText(_shorten_path(cleaned_archive))
-            self._archive_value.setToolTip(cleaned_archive)
+            self._directory_value.setText("已创建")
+            self._directory_value.setToolTip(cleaned_archive)
         elif archive_configured:
-            self._archive_value.setText("未就绪")
-            self._archive_value.setToolTip("")
+            self._directory_value.setText("等待运行")
+            self._directory_value.setToolTip("")
         else:
-            self._archive_value.setText("未配置")
-            self._archive_value.setToolTip("")
+            self._directory_value.setText("未配置")
+            self._directory_value.setToolTip("")
 
-    def run_id_text(self) -> str:
-        """运行标识的显示文本（可能已中间省略）。"""
+    def run_time_text(self) -> str:
+        """运行时间的显示文本；未连接或无法解析时是状态文案。"""
         return self._run_value.text()
 
     def run_id_tooltip(self) -> str:
@@ -251,9 +264,9 @@ class MeasurementRunConsole(QWidget):
         """测试模式文本；模式行隐藏时返回 ``None``。"""
         return self._mode_value.text() if not self._mode_value.isHidden() else None
 
-    def archive_text(self) -> str:
-        """归档目录的显示文本（可能已缩短）。"""
-        return self._archive_value.text()
+    def directory_text(self) -> str:
+        """运行目录的显示文本；完整路径在 tooltip。"""
+        return self._directory_value.text()
 
     # ---- 前置检查 -----------------------------------------------------------
 

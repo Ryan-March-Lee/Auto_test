@@ -1629,8 +1629,8 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIsNone(window.workspace_binding.run_state().run_id())
         self.assertIs(rail.state_for("cable_loss"), StageState.PENDING)
 
-    def test_connected_run_shows_its_identity_in_the_header(self):
-        """步骤 6：连接成功后顶栏显示本次 run 与测试模式，而不只是徽标。"""
+    def test_connected_run_shows_a_readable_start_time_in_the_console(self):
+        """连接成功后用户看到运行时间；原始 run_id 不再进入顶栏。"""
         self._silence_dialogs()
         window = self._window()
         window._enter_test_mode(False)
@@ -1639,19 +1639,16 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         window.on_instrument_controller_ready(_ConnectedPort())
         window.on_instrument_connected()
 
-        workspace = window.measurement_workspace
+        page = window.cable_loss_page
+        window.tab_widget.setCurrentIndex(window.tab_widget.indexOf(page))
+        self.app.processEvents()
+
         self.assertIs(window.prepared_run, prepared)
-        self.assertEqual(
-            workspace.run_identity(), (prepared.run_id, "无驱放测试")
+        self.assertFalse(
+            hasattr(window.measurement_workspace, "run_identity_label")
         )
-        self.assertIn(
-            prepared.run_id, workspace.run_identity_label.full_text()
-        )
-        self.assertNotIn(
-            "无驱放测试",
-            workspace.run_identity_label.full_text(),
-            "模式只由徽标显示，运行标识不再重复拼一遍",
-        )
+        self.assertNotEqual(page.console.run_time_text(), prepared.run_id)
+        self.assertEqual(page.console.run_id_tooltip(), prepared.run_id)
         self.assertEqual(window.mode_badge.text(), "无驱放测试")
 
     def test_measurement_console_shows_the_connected_run_and_archive(self):
@@ -1664,28 +1661,26 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         run_id = window.coordinator.current_run_id()
 
         self.assertIsNotNone(run_id)
-        self.assertEqual(page.console.run_id_text(), run_id)
+        self.assertNotEqual(page.console.run_time_text(), run_id)
+        self.assertEqual(page.console.run_id_tooltip(), run_id)
         self.assertIs(page.console.check_state("执行会话"), CheckState.READY)
         self.assertIs(page.console.check_state("结果归档"), CheckState.READY)
-        self.assertIn(run_id, page.console._archive_value.toolTip())
+        self.assertIn(run_id, page.console._directory_value.toolTip())
 
-    def test_returning_to_welcome_clears_the_header_identity_and_mode(self):
-        """回到欢迎页后页头不能继续挂着上一轮的 run 与模式。"""
+    def test_returning_to_welcome_clears_the_session_identity_and_mode(self):
+        """回到欢迎页后不能再挂着上一轮的 run 与模式。"""
         self._silence_dialogs()
         window = self._window()
         window._enter_test_mode(False)
         self._finalize_with_fake_worker(window)
         window.on_instrument_controller_ready(_ConnectedPort())
         window.on_instrument_connected()
-        self.assertIsNotNone(window.measurement_workspace.run_identity()[0])
+        self.assertIsNotNone(window.coordinator.current_run_id())
 
         window._return_to_welcome()
 
         self.assertIs(window.view_stack.currentWidget(), window.welcome_page)
-        self.assertEqual(window.measurement_workspace.run_identity(), (None, None))
-        self.assertEqual(
-            window.measurement_workspace.run_identity_label.text(), "未连接"
-        )
+        self.assertIsNone(window.coordinator.current_run_id())
         self.assertEqual(window.mode_badge.text(), "未选择测试模式")
 
     def test_returning_to_welcome_resets_the_driver_mode_state(self):
@@ -1712,7 +1707,6 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertFalse(window.tab_widget.isTabVisible(index))
         self.assertFalse(rail.is_stage_enabled("driver_mapping"))
         self.assertEqual(window.mode_badge.text(), "未选择测试模式")
-        self.assertEqual(window.measurement_workspace.run_identity(), (None, None))
 
     def test_new_mode_selection_is_not_overridden_by_the_previous_run(self):
         """返回欢迎页后选择新模式，旧运行的驱动模式不能把界面改回去。"""
@@ -1738,7 +1732,6 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertTrue(window.tab_widget.isTabVisible(index))
         self.assertTrue(rail.is_stage_enabled("driver_mapping"))
         self.assertEqual(window.mode_badge.text(), "有驱放测试")
-        self.assertEqual(window.measurement_workspace.run_identity(), (None, None))
 
     def test_new_no_driver_mode_reaches_the_rack_and_amplifier_pages(self):
         """步骤 1 验收：旧运行 A 之后选相反模式 B，排布页与功放页都按 B 呈现。
@@ -1825,7 +1818,6 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIsNone(window.coordinator.prepared_run)
         self.assertIsNone(window.coordinator.instrument_ctrl)
         self.assertIs(window.coordinator.state, RunFlowState.DEVICE_SELECTION)
-        self.assertEqual(window.measurement_workspace.run_identity(), (None, None))
         self.assertEqual(window.mode_badge.text(), "未选择测试模式")
         self.assertTrue(old_run.run_directory.is_dir(), "放弃会话不能删掉运行目录")
 
@@ -2173,7 +2165,6 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIsNone(window.coordinator.prepared_run)
         self.assertNotEqual(window.coordinator.current_run_id(), prepared.run_id)
         self.assertIs(window.coordinator.state, RunFlowState.DEVICE_SELECTION)
-        self.assertEqual(window.measurement_workspace.run_identity(), (None, None))
 
     def test_failed_port_cleanup_keeps_the_setup_page_and_the_session(self):
         """步骤 6：端口清理失败不能进入欢迎页，旧运行与端口引用都要保留。"""
@@ -2199,10 +2190,6 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertEqual(window.coordinator.unreleased_port_count(), 1)
         self.assertIs(
             window.coordinator.state, RunFlowState.MANUAL_CLEANUP_REQUIRED
-        )
-        self.assertNotEqual(
-            window.measurement_workspace.run_identity(), (None, None),
-            "没有进入新会话时，当前运行身份仍属于用户停留的流程",
         )
         dialogs["warning"].assert_called()
         self.assertEqual(dialogs["warning"].call_args.args[1], "无法返回欢迎页")

@@ -6,11 +6,11 @@
 
 锁定的行为：
 
-- ``navigate`` 只切页，不写页头；页头由切页后的 ``sync`` 写入；
+- ``navigate`` 只切页，不写顶栏；顶栏由切页后的 ``sync`` 写入；
 - 未知 key、非字符串、不可见标签页都静默忽略，绝不抛异常打断信号分发；
 - 阶段页点亮阶段；其余**已登记**页面按工具页显示自己的标签标题（不再抛
   ``KeyError``，新增报告/历史页无需改窗口）；
-- 完全未登记的 widget 不改变页头，外壳留在上一个一致状态；
+- 完全未登记的 widget 不改变顶栏，外壳留在上一个一致状态；
 - 驱动映射的启用状态写穿到阶段条。
 """
 
@@ -171,7 +171,7 @@ class WorkspaceBindingTests(unittest.TestCase):
         self.assertIs(self.tabs.currentWidget(), self.amplifier_page)
         self.assertTrue(
             self.workspace.is_utility_view(),
-            "导航只切页；页头要等切页后的 sync 才更新",
+            "导航只切页；顶栏要等切页后的 sync 才更新",
         )
 
         self.binding.sync()
@@ -307,7 +307,7 @@ class WorkspaceBindingTests(unittest.TestCase):
         self.assertFalse(self.workspace.configuration_btn.isEnabled())
 
     def test_a_registered_non_stage_page_becomes_a_utility_page(self):
-        """新增报告/历史这类页面时，顶栏只保留运行身份，不能抛 KeyError。"""
+        """新增报告/历史这类页面时，顶栏只保留工具页状态，不能抛 KeyError。"""
         self._select(self.report_page)
 
         self.binding.sync()
@@ -321,7 +321,6 @@ class WorkspaceBindingTests(unittest.TestCase):
         before = (
             self.workspace.current_stage(),
             self.workspace.stage_rail().current_key(),
-            self.workspace.run_identity_label.text(),
         )
 
         stranger = QWidget()
@@ -335,7 +334,6 @@ class WorkspaceBindingTests(unittest.TestCase):
             (
                 self.workspace.current_stage(),
                 self.workspace.stage_rail().current_key(),
-                self.workspace.run_identity_label.text(),
             ),
             before,
             "完全未登记的 widget 不能让外壳停在半更新的状态",
@@ -388,7 +386,7 @@ class WorkspaceBindingTests(unittest.TestCase):
         self.assertIs(rail.state_for("cable_loss"), StageState.COMPLETED)
         self.assertIsNone(
             self.workspace.current_stage(),
-            "阶段状态变化不改页头或导航",
+            "阶段状态变化不改顶栏或导航",
         )
         self.assertEqual(binding.run_state().run_id(), None)
 
@@ -515,7 +513,6 @@ class WorkspaceBindingTests(unittest.TestCase):
 
         binding.sync_run_identity("run-old")
 
-        self.assertEqual(self.workspace.run_identity(), (None, None))
         self.assertIsNone(binding.run_state().run_id())
         self.assertIs(rail.state_for("cable_loss"), StageState.PENDING)
         self.assertTrue(
@@ -536,7 +533,7 @@ class WorkspaceBindingTests(unittest.TestCase):
         self.assertIsNone(binding.run_state().run_id())
         self.assertIs(rail.state_for("cable_loss"), StageState.PENDING)
 
-    # ---- 会话模式与运行身份 -------------------------------------------------
+    # ---- 会话模式与运行边界 -------------------------------------------------
 
     def _driver_tab_visible(self):
         return self.tabs.isTabVisible(self.tabs.indexOf(self.driver_mapping_page))
@@ -550,7 +547,6 @@ class WorkspaceBindingTests(unittest.TestCase):
         self.assertFalse(self._driver_tab_visible())
         self.assertFalse(rail.is_stage_enabled("driver_mapping"))
         self.assertIs(self.binding.driver_mode(), False)
-        self.assertEqual(self.workspace.run_identity(), (None, None))
 
         self.binding.start_session(True)
 
@@ -565,7 +561,6 @@ class WorkspaceBindingTests(unittest.TestCase):
         self.binding.set_session_mode(True)
 
         self.assertIs(self.binding.driver_mode(), True)
-        self.assertEqual(self.workspace.run_identity(), (None, None))
         self.assertEqual(self.mode_badge.text(), "有驱放测试")
         self.assertTrue(self._driver_tab_visible())
 
@@ -612,30 +607,27 @@ class WorkspaceBindingTests(unittest.TestCase):
         self.assertFalse(self._driver_tab_visible())
         self.assertFalse(rail.is_stage_enabled("driver_mapping"))
         self.assertIsNone(self.binding.driver_mode())
-        self.assertEqual(self.workspace.run_identity(), (None, None))
-        self.assertEqual(self.workspace.run_identity_label.text(), "未连接")
+        self.assertIsNone(self.binding.run_state().run_id())
 
-    def test_start_session_clears_a_previous_run_identity(self):
+    def test_start_session_clears_a_previous_run_boundary(self):
         self.binding.bind_run_identity("run-1", True)
 
         self.binding.start_session(False)
 
-        self.assertEqual(self.workspace.run_identity(), (None, None))
+        self.assertIsNone(self.binding.run_state().run_id())
         self.assertIs(self.binding.driver_mode(), False)
 
-    def test_sync_run_identity_only_writes_the_associated_run(self):
+    def test_sync_run_identity_only_keeps_the_associated_run(self):
         self.binding.bind_run_identity("run-1", True)
 
         self.binding.sync_run_identity("run-1")
-        self.assertEqual(
-            self.workspace.run_identity(), ("run-1", "有驱放测试")
-        )
+        self.assertEqual(self.binding.run_state().run_id(), "run-1")
 
         self.binding.sync_run_identity("run-old")
-        self.assertEqual(self.workspace.run_identity(), (None, None))
+        self.assertIsNone(self.binding.run_state().run_id())
         self.assertTrue(
             self._driver_tab_visible(),
-            "刷新页头身份不能改变会话模式或驱动映射标签页",
+            "刷新运行边界不能改变会话模式或驱动映射标签页",
         )
         self.assertIs(self.binding.driver_mode(), True)
 
@@ -649,7 +641,7 @@ class WorkspaceBindingTests(unittest.TestCase):
         binding.reset_identity()
 
         self.assertIsNone(binding.driver_mode())
-        self.assertEqual(self.workspace.run_identity(), (None, None))
+        self.assertIsNone(binding.run_state().run_id())
 
 
 if __name__ == "__main__":

@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 from domain.measurement.calculations import (
     calculate_cable_losses,
+    calculate_path1_cable_losses,
     compensate_amplifier_output_power,
     compensate_driver_output_power,
     calculate_gain,
@@ -383,6 +384,43 @@ class CalculateCableLossesTests(unittest.TestCase):
             calculate_cable_losses(32.3, 33.21, 30.0)  # type: ignore[arg-type]
         with self.assertRaises(TypeError):
             calculate_cable_losses(dbm(32.3), db(33.21), db(30.0))  # type: ignore[arg-type]
+
+
+class CalculatePath1CableLossesTests(unittest.TestCase):
+    """测试 calculate_path1_cable_losses() —— 路径1 单独测量的线损分摊。
+
+    路径2 尚未测量时不得把 cable3/cable4 伪装成 0 发布：实时事件只携带
+    真实测得的 cable1/cable2 与 total_path1，其余字段保持缺失。
+    """
+
+    def test_cable12_follows_the_shared_formula(self):
+        """cable12 = (path1 - atten) / 2，与完整公式同值。"""
+        result = calculate_path1_cable_losses(db(32.3), db(30.0))
+        self.assertAlmostEqual(result.cable1.db, 1.15, places=10)
+        self.assertAlmostEqual(result.cable2.db, 1.15, places=10)
+        self.assertAlmostEqual(result.total_path1.db, 32.3)
+
+    def test_unmeasured_fields_are_absent_not_zero(self):
+        """cable3/cable4/total_path2 缺失——to_mapping() 不输出占位键。"""
+        result = calculate_path1_cable_losses(db(10.0), db(5.0))
+        self.assertEqual(
+            set(result.to_mapping()), {"cable1", "cable2", "total_path1"}
+        )
+        self.assertIsNone(result.cable3)
+        self.assertIsNone(result.cable4)
+        self.assertIsNone(result.total_path2)
+
+    def test_cable1_equals_cable2(self):
+        """线①和线②假设相等。"""
+        result = calculate_path1_cable_losses(db(25.0), db(20.0))
+        self.assertEqual(result.cable1, result.cable2)
+
+    def test_raw_numbers_and_wrong_units_are_rejected(self):
+        """裸浮点数与错误单位不能静默进入线损计算。"""
+        with self.assertRaises(TypeError):
+            calculate_path1_cable_losses(32.3, 30.0)  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            calculate_path1_cable_losses(dbm(32.3), db(30.0))  # type: ignore[arg-type]
 
 
 class CompensateAmplifierOutputPowerTests(unittest.TestCase):

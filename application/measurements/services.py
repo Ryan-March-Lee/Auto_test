@@ -56,6 +56,7 @@ from application.dto.measurement_results import DriverMappingInput
 from application.measurements.driver_target_grid import require_driver_target_grid
 from domain.measurement.calculations import (
     calculate_cable_losses,
+    calculate_path1_cable_losses,
     calculate_compression_result,
     calculate_efficiency,
     calculate_gain,
@@ -457,8 +458,9 @@ class CableLossService(_Service):
                 for index, frequency in enumerate(frequencies):
                     path1[frequency.ghz] = self.measure_path_loss(frequency.ghz)
                     self._path1_losses = dict(path1)
-                    profile = calculate_cable_losses(
-                        Decibels(path1[frequency.ghz]),
+                    # 路径1 只测得线①/线②；线③/线④要等路径2 才能分摊，这里
+                    # 不发占位 0，缺项让页面显示“等待数据”。
+                    profile = calculate_path1_cable_losses(
                         Decibels(path1[frequency.ghz]),
                         self.attenuator_value,
                     )

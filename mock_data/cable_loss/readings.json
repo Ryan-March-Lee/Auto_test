@@ -4,7 +4,7 @@
   "measurement_type": "cable_loss",
   "source": {
     "scenario": "scenario.json",
-    "scenario_sha256": "227caa4294521b761bb00d4a5fc2ef20fdc01ca927316c7d42ae8570fa26e579",
+    "scenario_sha256": "7200f64b21b0f5359a4892c511d2dde76f137e479e98f7fe525df7fadb7d1c6e",
     "cable_loss_result": null,
     "cable_loss_sha256": null,
     "driver_mapping_result": null,

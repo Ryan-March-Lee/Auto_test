@@ -70,6 +70,11 @@ class CableLossServiceTests(unittest.TestCase):
 
         realtime = [event for event in events.events if isinstance(event, RealtimeDataEvent)]
         self.assertEqual([event.data["path"] for event in realtime], [1, 2])
+        # 路径1 只发布真实测得的线缆1/2；线缆3/4 等路径2 分摊，不发占位 0。
+        path1_losses = realtime[0].data["cable_losses"]
+        self.assertEqual(
+            set(path1_losses), {"cable1", "cable2", "total_path1"}
+        )
         self.assertEqual(realtime[-1].data["cable_losses"]["cable1"], 0.0)
 
 

@@ -67,10 +67,7 @@
                         "cable_losses": {
                             "cable1": 0.921,
                             "cable2": 0.921,
-                            "cable3": 0.0,
-                            "cable4": 0.0,
-                            "total_path1": 41.842,
-                            "total_path2": 41.842
+                            "total_path1": 41.842
                         }
                     }
                 },
@@ -90,10 +87,7 @@
                         "cable_losses": {
                             "cable1": 0.944,
                             "cable2": 0.944,
-                            "cable3": 0.0,
-                            "cable4": 0.0,
-                            "total_path1": 41.888,
-                            "total_path2": 41.888
+                            "total_path1": 41.888
                         }
                     }
                 },
@@ -113,10 +107,7 @@
                         "cable_losses": {
                             "cable1": 0.968,
                             "cable2": 0.968,
-                            "cable3": 0.0,
-                            "cable4": 0.0,
-                            "total_path1": 41.936,
-                            "total_path2": 41.936
+                            "total_path1": 41.936
                         }
                     }
                 },
@@ -136,10 +127,7 @@
                         "cable_losses": {
                             "cable1": 0.993,
                             "cable2": 0.993,
-                            "cable3": 0.0,
-                            "cable4": 0.0,
-                            "total_path1": 41.986,
-                            "total_path2": 41.986
+                            "total_path1": 41.986
                         }
                     }
                 },
@@ -159,10 +147,7 @@
                         "cable_losses": {
                             "cable1": 1.019,
                             "cable2": 1.019,
-                            "cable3": 0.0,
-                            "cable4": 0.0,
-                            "total_path1": 42.038,
-                            "total_path2": 42.038
+                            "total_path1": 42.038
                         }
                     }
                 },
@@ -182,10 +167,7 @@
                         "cable_losses": {
                             "cable1": 1.046,
                             "cable2": 1.046,
-                            "cable3": 0.0,
-                            "cable4": 0.0,
-                            "total_path1": 42.092,
-                            "total_path2": 42.092
+                            "total_path1": 42.092
                         }
                     }
                 },
@@ -205,10 +187,7 @@
                         "cable_losses": {
                             "cable1": 1.074,
                             "cable2": 1.074,
-                            "cable3": 0.0,
-                            "cable4": 0.0,
-                            "total_path1": 42.148,
-                            "total_path2": 42.148
+                            "total_path1": 42.148
                         }
                     }
                 },
@@ -228,10 +207,7 @@
                         "cable_losses": {
                             "cable1": 1.103,
                             "cable2": 1.103,
-                            "cable3": 0.0,
-                            "cable4": 0.0,
-                            "total_path1": 42.206,
-                            "total_path2": 42.206
+                            "total_path1": 42.206
                         }
                     }
                 },
@@ -251,10 +227,7 @@
                         "cable_losses": {
                             "cable1": 1.133,
                             "cable2": 1.133,
-                            "cable3": 0.0,
-                            "cable4": 0.0,
-                            "total_path1": 42.266,
-                            "total_path2": 42.266
+                            "total_path1": 42.266
                         }
                     }
                 },
@@ -274,10 +247,7 @@
                         "cable_losses": {
                             "cable1": 1.164,
                             "cable2": 1.164,
-                            "cable3": 0.0,
-                            "cable4": 0.0,
-                            "total_path1": 42.328,
-                            "total_path2": 42.328
+                            "total_path1": 42.328
                         }
                     }
                 },
@@ -297,10 +267,7 @@
                         "cable_losses": {
                             "cable1": 1.196,
                             "cable2": 1.196,
-                            "cable3": 0.0,
-                            "cable4": 0.0,
-                            "total_path1": 42.392,
-                            "total_path2": 42.392
+                            "total_path1": 42.392
                         }
                     }
                 },

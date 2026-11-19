@@ -32,6 +32,7 @@ from domain.measurement.values import (
 __all__ = [
     "calculate_cable_losses", "compensate_amplifier_output_power",
     "compensate_driver_output_power",
+    "calculate_path1_cable_losses",
     "calculate_gain", "calculate_efficiency",
     "calculate_compression_result",
 ]
@@ -84,6 +85,34 @@ def calculate_cable_losses(path1_loss: Decibels,
         cable4=Decibels(cable34_loss),
         total_path1=path1_loss,
         total_path2=path2_loss,
+    )
+
+
+def calculate_path1_cable_losses(path1_loss: Decibels,
+                                 attenuator_value: Decibels) -> CableLossProfile:
+    """路径1 单独测量时的线损分摊：只有线①/线②，线③/线④保持缺失。
+
+    复用 :func:`calculate_cable_losses` 的分摊公式（``cable12 =
+    (path1_loss - attenuator_value) / 2``），但丢弃以 path1 顶替 path2 产生的
+    ``cable3``/``cable4``/``total_path2`` 占位值：路径2 尚未测量，缺项就缺项，
+    不得伪装成 0 发布给实时曲线。
+
+    Args:
+        path1_loss: 路径1总损耗（线①+衰减器+线②）。
+        attenuator_value: 衰减器损耗值。
+
+    Returns:
+        只含 ``cable1``/``cable2``/``total_path1`` 的 :class:`CableLossProfile`。
+    """
+    full = calculate_cable_losses(
+        _require(path1_loss, Decibels, "path1_loss"),
+        _require(path1_loss, Decibels, "path1_loss"),
+        _require(attenuator_value, Decibels, "attenuator_value"),
+    )
+    return CableLossProfile(
+        cable1=full.cable1,
+        cable2=full.cable2,
+        total_path1=full.total_path1,
     )
 
 

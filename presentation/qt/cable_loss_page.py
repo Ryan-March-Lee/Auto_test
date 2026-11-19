@@ -91,7 +91,6 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         connection_dialog_factory: Callable[[str, QWidget], Any],
         plot_widget_factory: Callable[[QWidget], QWidget],
         log_callback: Callable[[str], Any] | None = None,
-        progress_callback: Callable[[int], Any] | None = None,
         error_callback: Callable[[str], Any] | None = None,
         archival_location_provider: Callable[[str, str | None], str | None] | None = None,
         archival_run_id_provider: Callable[[], str | None] | None = None,
@@ -105,7 +104,6 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         )
         self._connection_dialog_factory = connection_dialog_factory
         self._log_callback = log_callback or (lambda _message: None)
-        self._progress_callback = progress_callback or (lambda _value: None)
         self._error_callback = error_callback or self._show_error
         # 批量载入结果期间先不逐点重算摘要，循环结束后只刷新一次。
         self._suspend_stage_summary = False
@@ -126,7 +124,7 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         layout.setContentsMargins(0, 4, 0, 0)
         layout.setSpacing(12)
 
-        # 左侧窄栏自上而下放控制面与状态面板（进度 + 实时日志）；右侧整块留给结果面。
+        # 左侧窄栏自上而下放控制面与运行状态；右侧整块留给结果面。
         # 接线说明只由连接图承担。宽度与另两个测量页共用 theme 里的同一组常量。
         left_panel = QWidget()
         left_panel.setMinimumWidth(MEASUREMENT_LEFT_PANEL_MIN_WIDTH)
@@ -172,12 +170,12 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
             secondary_actions.addWidget(button, 1)
         control_layout.addLayout(secondary_actions)
         left_layout.addWidget(control_surface)
-        # 运行控制台回答“这是哪次运行、开始前还缺什么”，紧挨控制面放在日志上方。
+        # 运行控制台回答“这是哪次运行、开始前还缺什么”，紧挨控制面放在状态行上方。
         self.console = MeasurementRunConsole()
         left_layout.addWidget(self.console)
         self.archival_banner = self._build_archival_banner()
         left_layout.addWidget(self.archival_banner)
-        # 进度与实时日志由窗口挂进这块容器，占满控制面以下的剩余高度。
+        # 运行状态由窗口挂进这块容器，固定一行。
         self.status_slot = StatusSlot()
         left_layout.addWidget(self.status_slot, 1)
         self.control_panel = left_panel
@@ -214,7 +212,6 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
 
     def _connect_controller_signals(self, controller: Any) -> None:
         signals = controller.signals
-        self._connect_signal(signals.progress, self._progress_callback)
         self._connect_archival_signals(controller)
         self._connect_signal(signals.data_update, self.update_realtime)
         self._connect_signal(signals.result, self.show_result)
@@ -240,7 +237,6 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
             return
         self._log_callback("线损路径1现场接线已确认")
         self.clear_results()
-        self._log_callback("开始线损测量...")
         self._archival_try_start(
             lambda: decision.launch(),
             "线损测量未能启动，未开始测量",
@@ -268,7 +264,6 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
             self.controller.continue_cable_loss_stage2()
         else:
             self.controller.stop()
-            self._log_callback("线损测量已停止")
 
     def _on_state_changed(self, state: Any) -> None:
         self.controls.apply(state)
@@ -317,16 +312,12 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
             return
         self.controls.show_idle()
         self._archival_test_stopped(reason, self._partial_result_path())
-        self._log_callback(f"测量已停止: {reason}")
-        self._progress_callback(0)
 
     def _on_finished(self) -> None:
         if not self._archival_is_for_this_page():
             return
         self.controls.show_idle()
-        self._progress_callback(100)
         self._archival_test_finished()
-        self._log_callback("测量完成！")
 
     def clear_results(self) -> None:
         """清空已显示的结果：图表、总览带、来源行与摘要一起回到空态。"""

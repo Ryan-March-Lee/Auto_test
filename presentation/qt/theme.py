@@ -954,22 +954,6 @@ QTextEdit, QPlainTextEdit {
 QTextEdit:focus, QPlainTextEdit:focus {
     border-color: $primary;
 }
-/* 实时日志：与卡片同一套浅色表面（浅灰底 + 细边 + 深色字），保留等宽字体让
-   时间戳与数值对齐；它是一块“凹进去”的阅读区，不再使用深色终端配色。 */
-QTextEdit#logView {
-    background-color: $surface_sunken;
-    border: 1px solid $border;
-    border-radius: 10px;
-    color: $text;
-    font-family: "$font_mono";
-    font-size: $font_small;
-    padding: 8px 10px;
-    selection-background-color: $primary;
-    selection-color: #FFFFFF;
-}
-QTextEdit#logView:focus {
-    border-color: $primary;
-}
 /* ===== 按钮：凸起的“操作元件”，层级由 variant 声明 =====
    默认（次要）按钮是白色面 + 极轻竖向渐变 + 稍深的下边，看上去被托起一格；
    悬停转主色描边与主色文字，按下填充浅主色并下沉。与输入框的差别因此来自表面

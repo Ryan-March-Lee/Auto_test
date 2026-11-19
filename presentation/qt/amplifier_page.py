@@ -85,7 +85,6 @@ class AmplifierPage(
         realtime_data_callback: Callable[[Mapping[str, Any]], Any] | None = None,
         clear_realtime_callback: Callable[[], Any] | None = None,
         log_callback: Callable[[str], Any] | None = None,
-        progress_callback: Callable[[int], Any] | None = None,
         error_callback: Callable[[str], Any] | None = None,
         archival_location_provider: Callable[[str, str | None], str | None] | None = None,
         archival_run_id_provider: Callable[[], str | None] | None = None,
@@ -106,7 +105,6 @@ class AmplifierPage(
         self._realtime_data_callback = realtime_data_callback or (lambda _data: None)
         self._clear_realtime_callback = clear_realtime_callback or (lambda: None)
         self._log_callback = log_callback or (lambda _message: None)
-        self._progress_callback = progress_callback or (lambda _value: None)
         self._error_callback = error_callback or self._show_error
         self._setup_archival(
             MeasurementKind.AMPLIFIER,
@@ -124,7 +122,7 @@ class AmplifierPage(
         layout.setContentsMargins(0, 4, 0, 0)
         layout.setSpacing(12)
 
-        # 左侧窄栏自上而下放控制面与状态面板（进度 + 实时日志）；右侧整块留给结果面。
+        # 左侧窄栏自上而下放控制面与运行状态；右侧整块留给结果面。
         # 测量结果由频点浏览图按频点展示，页面不再重复列一份结果表。
         # 接线说明只保留连接图入口：测试者已知道仪器怎么接，按钮只用于防止忘记。
         # 宽度与另两个测量页共用 theme 里的同一组常量。
@@ -197,7 +195,7 @@ class AmplifierPage(
         self._refresh_console()
         self.archival_banner = self._build_archival_banner()
         left_layout.addWidget(self.archival_banner)
-        # 进度与实时日志由窗口挂进这块容器，占满控制面以下的剩余高度。
+        # 运行状态由窗口挂进这块容器，固定一行。
         self.status_slot = StatusSlot()
         left_layout.addWidget(self.status_slot, 1)
         self.control_panel = left_panel
@@ -228,7 +226,6 @@ class AmplifierPage(
 
     def _connect_controller_signals(self, controller: Any) -> None:
         signals = controller.signals
-        self._connect_signal(signals.progress, self._progress_callback)
         self._connect_archival_signals(controller)
         self._connect_signal(signals.data_update, self.update_realtime)
         self._connect_signal(signals.state_changed, self._on_state_changed)
@@ -271,7 +268,6 @@ class AmplifierPage(
             return
         self._log_callback("主功放现场接线已确认")
         self.reset_realtime_data()
-        self._log_callback("开始主功放测试...")
         # “等待归档”只在 controller 接受启动之后出现。
         self._archival_try_start(
             lambda: decision.launch(),
@@ -593,9 +589,7 @@ class AmplifierPage(
         self.controls.show_idle()
         if getattr(self, "readout", None) is not None:
             self.readout.set_active(False)
-        self._progress_callback(0)
         self._archival_test_stopped(reason, self._partial_result_path())
-        self._log_callback(f"测量已停止: {reason}")
 
     def _on_finished(self) -> None:
         if not self._archival_is_for_this_page():
@@ -603,10 +597,8 @@ class AmplifierPage(
         self.controls.show_idle()
         if getattr(self, "readout", None) is not None:
             self.readout.set_active(False)
-        self._progress_callback(100)
         # 测试确实完成了，但没有收到归档结果时如实提示状态未知。
         self._archival_test_finished()
-        self._log_callback("测量完成！")
 
     def _show_error(self, message: str) -> None:
         QMessageBox.critical(self, "错误", message)

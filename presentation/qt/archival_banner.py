@@ -49,7 +49,7 @@ class ArchivalBanner(QFrame):
         self.show()
 
     def clear(self) -> None:
-        """收起提示条；不清空日志，历史提示仍保留在实时日志里。"""
+        """收起提示条；不清空状态历史，最近一条仍保留在状态面板里。"""
         self._run_id = None
         self.message.clear()
         self.hide()

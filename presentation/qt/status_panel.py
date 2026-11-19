@@ -1,60 +1,52 @@
-"""状态面板及日志滚动行为。
+"""测量页左栏的一行运行状态。
 
-面板是全局唯一的进度与日志区域，挂在**当前测量页左栏的“测量控制”下方**：一眼看到
-“测量到哪一步”和“刚刚发生了什么”，右侧整块宽度则留给测量结果表与频点浏览图。它只
-消费主题层的语义属性（按钮层级由 ``variant`` 声明），不在本地写死颜色。
+测量事实（频点、曲线、读数、进度）已经由结果面、频点胶片条与阶段条表达，这里不再
+复制一份数值或进度条。面板只保留**最近一条状态**：接线确认、仪器连接、归档结果，
+以及那些“不能打断测量、又不能静默”的失败。完整历史留在消息列表里（tooltip 显示
+最近几条），不再占用左栏高度。
 
-日志默认折叠：标题行显示“实时日志”、最后一条消息、条数与展开/收起箭头，日志框
-只在展开时出现，左栏因此保持紧凑。折叠时面板只占标题行高度，并由 :class:`StatusSlot`
-钉在槽顶部；展开后清除对齐、继续填满槽的剩余高度。折叠只是显示状态——``add_log_message``、
-滚动跟随与清除逻辑都不变，日志仍全部进入同一个控件；展开状态属于面板本身，切页时
-由主窗口连同面板一起挂到下一个测量页，所以本次会话内保持用户的选择。
-
-面板只有一份，由主窗口在标签页切换时移入对应测量页的 :class:`StatusSlot`：日志历史、
-进度值和“清除日志”跟着当前页走，不会三份各说各话。测试配置、数据可视化和历史运行
-页面不显示它，但面板在此期间仍是全部日志的接收方，切回测量页时原样出现。
+面板只有一份，由主窗口在标签页切换时移入对应测量页的 :class:`StatusSlot`：状态
+文本与消息历史跟着当前页走，不会三份各说各话。测试配置、数据可视化和历史运行页面
+不显示它，但面板在此期间仍是全部消息的接收方，切回测量页时原样出现。
 """
 
 from __future__ import annotations
 
+from collections import deque
 from html import escape
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QProgressBar,
-    QPushButton,
     QSizePolicy,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
-from .theme import set_button_variant
+__all__ = ["StatusPanel", "StatusSlot"]
 
-#: 还没有日志时的摘要文案；它不参与日志计数，也不写入 ``log_text``。
-_NO_LOG_TEXT = "暂无日志"
+#: 还没有任何消息时的占位：面板始终占着这一行，不因第一条消息而跳高。
+_NO_STATUS_TEXT = "暂无状态"
 
-#: 一条消息全部为空白时的摘要占位：仍然计为一条，但不让标题行看起来是空的。
+#: 一条消息全部为空白时的显示占位：仍然算一条，但这一行不能看起来是空的。
 _EMPTY_MESSAGE_TEXT = "—"
 
-#: 折叠时预览最近几条消息；超过这个数目的更早消息只留在展开的日志框里。
-_LOG_PREVIEW_LINES = 3
+#: tooltip 里保留的最近消息条数：完整内容还能查到，但不增加面板高度。
+_TOOLTIP_HISTORY = 6
 
-#: 展开/收起按钮的文案与无障碍描述；按钮只有箭头，含义由这里给出。
-_LOG_TOGGLE_EXPANDED_TEXT = "▴"
-_LOG_TOGGLE_COLLAPSED_TEXT = "▾"
-_LOG_TOGGLE_EXPANDED_ACTION = "收起实时日志"
-_LOG_TOGGLE_COLLAPSED_ACTION = "展开实时日志"
+#: 会话内保留的消息条数；只用于 tooltip 与测试读取，超出后丢弃最早的。
+_MAX_MESSAGES = 200
 
 
-def _preview_tooltip(messages: tuple[str, ...]) -> str:
-    """把最近几条日志压成只显示文本的 tooltip；消息之间空一行。"""
-    if not messages:
-        return ""
+def _single_line(message: str) -> str:
+    """把多行消息压成一行：换行与连续空白折叠成单个空格。"""
+    return " ".join(message.split()) or _EMPTY_MESSAGE_TEXT
+
+
+def _tooltip(messages: list[str]) -> str:
+    """把最近几条消息压成只显示文本的 tooltip；消息之间空一行。"""
     blocks: list[str] = []
     for message in messages:
         normalized = message.replace("\r\n", "\n").replace("\r", "\n")
@@ -66,93 +58,54 @@ def _preview_tooltip(messages: tuple[str, ...]) -> str:
     return f"<qt>{'<br><br>'.join(blocks)}</qt>"
 
 
-class _LogPreview(QWidget):
-    """折叠日志的最近三条预览：每行按可用宽度省略，完整内容在 tooltip。
+class _StatusLine(QLabel):
+    """单行状态：按可用宽度尾部省略，完整内容在 tooltip。
 
-    QLabel 不会自己省略超长文本；直接放进左栏会把面板撑宽。这里每行一个固定高度的
-    标签，在宽度变化时用 ``elidedText`` 重写显示文本。``text()`` 仍返回未省略的原文，
-    供测试与无障碍读取；视觉上的省略只发生在每个子标签里。
+    ``text()`` 返回当前显示的省略文本，``full_text()`` 返回未省略的原文；布局按
+    完整文本申请空间，窗口不够宽时再由 ``resizeEvent`` 收敛。
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setObjectName("logPreview")
-        self.setSizePolicy(
-            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
+        super().__init__("", parent)
+        self._full_text = ""
+        self.setTextFormat(Qt.TextFormat.PlainText)
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
         )
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        self._messages: tuple[str, ...] = ()
-        self._labels: list[QLabel] = []
-        for _ in range(_LOG_PREVIEW_LINES):
-            label = QLabel(self)
-            label.setObjectName("logSummary")
-            label.setProperty("role", "hint")
-            label.setTextFormat(Qt.TextFormat.PlainText)
-            label.setSizePolicy(
-                QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
-            )
-            label.setMinimumWidth(0)
-            label.setFixedHeight(label.fontMetrics().lineSpacing())
-            label.hide()
-            layout.addWidget(label)
-            self._labels.append(label)
+        self.set_full_text(_NO_STATUS_TEXT)
 
-    def set_messages(self, messages: list[str]) -> None:
-        """写入最近消息（最多三条），并立即刷新预览。"""
-        self._messages = tuple(messages)[-_LOG_PREVIEW_LINES:]
-        self._relayout()
+    def set_full_text(self, text: str) -> None:
+        """写入完整文本；显示文本在可用宽度里省略，完整值留在 tooltip 里。"""
+        self._full_text = text
+        self._apply_elision()
 
-    def messages(self) -> tuple[str, ...]:
-        """最近三条消息的原文。"""
-        return self._messages
-
-    def text(self) -> str:
-        """未省略的预览原文；每条消息压成一行，消息之间用换行分隔。"""
-        if not self._messages:
-            return _NO_LOG_TEXT
-        lines = [
-            " ".join(message.split()) or _EMPTY_MESSAGE_TEXT
-            for message in self._messages
-        ]
-        return "\n".join(lines)
-
-    def _relayout(self) -> None:
-        combined = _preview_tooltip(self._messages)
-        self.setToolTip(combined)
-        visible = self._messages or (_NO_LOG_TEXT,)
-        for index, label in enumerate(self._labels):
-            if index < len(visible):
-                raw = visible[index]
-                if raw == _NO_LOG_TEXT:
-                    text = _NO_LOG_TEXT
-                else:
-                    text = " ".join(raw.split()) or _EMPTY_MESSAGE_TEXT
-                width = label.width()
-                if width > 0 and text != _NO_LOG_TEXT:
-                    text = label.fontMetrics().elidedText(
-                        text, Qt.TextElideMode.ElideRight, width
-                    )
-                label.setText(text)
-                label.setToolTip(combined)
-                label.show()
-            else:
-                label.hide()
-        self.updateGeometry()
+    def full_text(self) -> str:
+        """未省略的原文。"""
+        return self._full_text
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt 覆盖方法
         super().resizeEvent(event)
-        self._relayout()
+        self._apply_elision()
 
+    def _apply_elision(self) -> None:
+        width = self.contentsRect().width()
+        if width <= 0:
+            QLabel.setText(self, self._full_text)
+            return
+        shown = self.fontMetrics().elidedText(
+            self._full_text, Qt.TextElideMode.ElideRight, width
+        )
+        QLabel.setText(self, shown)
 
 
 class StatusSlot(QWidget):
     """测量页左栏里留给状态面板的位置。
 
-    页面只负责在“测量控制”下方留出这块容器，不创建也不持有进度与日志控件；窗口在
-    页面成为当前页时把唯一的状态面板挂进来，离开时再收回。折叠时由
-    :meth:`sync_panel_alignment` 把面板钉在槽顶部，展开时恢复填满剩余高度。
+    页面只负责在“测量控制”下方留出这块容器，不创建也不持有状态控件；窗口在页面
+    成为当前页时把唯一的面板挂进来，离开时再收回。面板固定一行高，槽里多出的高度
+    留在面板下方，不再做折叠/展开的布局切换。
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -161,33 +114,15 @@ class StatusSlot(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
+        # 槽通常比面板高：默认会把唯一子项垂直居中，这里显式钉在顶部。
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
     def mount(self, panel: QWidget) -> None:
-        """挂上状态面板；已经挂在本容器时只恢复可见并重新对齐。"""
+        """挂上状态面板；已经挂在本容器时只恢复可见。"""
         layout = self.layout()
         if layout.indexOf(panel) < 0:
             layout.addWidget(panel)
-        # 面板的展开状态属于它自己，切页重挂时必须按当前状态重新应用对齐，
-        # 否则新槽的默认布局会把折叠面板垂直居中。
-        self.sync_panel_alignment(panel)
         panel.show()
-
-    def sync_panel_alignment(self, panel: QWidget) -> None:
-        """折叠时把面板钉在槽顶部；展开时清除对齐，让它填满剩余高度。
-
-        只把面板的纵向尺寸策略收成 ``Maximum`` 还不够：槽里只有这一个不可增长的
-        控件时，``QBoxLayout`` 会把剩余高度平均分到上下，进度与日志会浮在左栏中间。
-        因此位置必须由槽显式给出；展开后清除对齐，面板才能继续占满整个槽。
-        """
-        layout = self.layout()
-        if layout is None or layout.indexOf(panel) < 0:
-            return
-        expanded = getattr(panel, "is_log_expanded", lambda: True)()
-        layout.setAlignment(
-            panel,
-            Qt.Alignment() if expanded else Qt.AlignmentFlag.AlignTop,
-        )
-        layout.invalidate()
 
     def unmount(self, panel: QWidget) -> None:
         """收回状态面板：先移出布局再隐藏，等待挂到下一个测量页。"""
@@ -196,171 +131,67 @@ class StatusSlot(QWidget):
 
 
 class StatusPanel(QFrame):
-    """拥有全局进度和日志 UI，窗口只消费其公开控件。"""
+    """一行运行状态：最近一条消息 + 最近几条的 tooltip 历史。"""
 
-    #: 面板最小宽度：再窄进度条与“清除日志”按钮就挤在一起了。
+    #: 面板最小宽度：再窄状态文本就只剩几个字了。
     MINIMUM_WIDTH = 300
 
     def __init__(self, *, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("statusPanel")
         self.setMinimumWidth(self.MINIMUM_WIDTH)
-        self.log_user_scrolling = False
-        # 摘要与条数由面板自己按“接收过几次消息”记账，不回头解析日志控件文本：
-        # 一条消息可能包含多行，blockCount 不能当条数用。最近三条原文保留下来，
-        # 折叠时逐行预览；tooltip 仍能给出完整内容。
-        self._log_message_count = 0
-        self._recent_log_messages: list[str] = []
-        self._log_expanded = False
-        status_layout = QVBoxLayout(self)
-        # 面板本身不再画外框：它嵌在测量页左栏里，左边缘与“测量控制”分组框对齐。
-        status_layout.setContentsMargins(0, 0, 0, 0)
+        self.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
+        )
+        # 面板只展示最后一条；历史留在内存里供 tooltip 与测试读取，不回头解析
+        # 控件文本。一条消息可能包含多行，压缩显示只发生在这里。
+        self._messages: deque[str] = deque(maxlen=_MAX_MESSAGES)
+
+        status_layout = QHBoxLayout(self)
+        # 面板嵌在测量页左栏里，左边缘与“测量控制”分组框对齐，不画自己的外框。
+        # 上下各留 4px：单行文字不会贴着控制面或归档提示条。
+        status_layout.setContentsMargins(0, 4, 0, 4)
         status_layout.setSpacing(8)
 
-        progress_layout = QHBoxLayout()
-        progress_layout.setSpacing(8)
-        progress_label = QLabel("测量进度")
-        progress_label.setObjectName("statusCaption")
-        progress_layout.addWidget(progress_label)
-        progress_layout.addStretch(1)
-        self.progress_value_label = QLabel("0%")
-        self.progress_value_label.setObjectName("statusCaption")
-        self.progress_value_label.setMinimumWidth(40)
-        self.progress_value_label.setAlignment(
-            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-        )
-        progress_layout.addWidget(self.progress_value_label)
-        status_layout.addLayout(progress_layout)
+        self.caption = QLabel("最近状态", self)
+        self.caption.setObjectName("statusCaption")
+        status_layout.addWidget(self.caption)
 
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setTextVisible(False)
-        self.progress_bar.setMinimumWidth(0)
-        self.progress_bar.valueChanged.connect(self._on_progress_value_changed)
-        status_layout.addWidget(self.progress_bar)
+        self.status_line = _StatusLine(self)
+        self.status_line.setObjectName("statusLine")
+        status_layout.addWidget(self.status_line, 1)
 
-        log_header = QHBoxLayout()
-        log_header.setSpacing(8)
-        log_title = QLabel("实时日志")
-        log_title.setObjectName("statusCaption")
-        log_header.addWidget(log_title)
-        log_header.addStretch(1)
-
-        self.log_count_label = QLabel("0 条")
-        self.log_count_label.setObjectName("statusCaption")
-        self.log_count_label.setAlignment(
-            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-        )
-        log_header.addWidget(self.log_count_label)
-
-        clear_button = QPushButton("清除日志")
-        set_button_variant(clear_button, "ghost")
-        clear_button.clicked.connect(self.clear_log)
-        log_header.addWidget(clear_button)
-
-        self.log_toggle_btn = QPushButton(_LOG_TOGGLE_COLLAPSED_TEXT)
-        self.log_toggle_btn.setObjectName("logToggle")
-        self.log_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        set_button_variant(self.log_toggle_btn, "ghost")
-        self.log_toggle_btn.clicked.connect(self.toggle_log)
-        log_header.addWidget(self.log_toggle_btn)
-        status_layout.addLayout(log_header)
-
-        # 折叠时仍要看得见“刚刚发生了什么”：最近三条消息各占一行，完整内容在
-        # 日志框里；展开后预览隐藏，避免和日志框重复。
-        self.log_summary_label = _LogPreview(self)
-        status_layout.addWidget(self.log_summary_label)
-
-        self.log_text = QTextEdit()
-        self.log_text.setObjectName("logView")
-        self.log_text.setReadOnly(True)
-        self.log_text.setMinimumHeight(180)
-        self.log_text.setToolTip("实时日志：测量进度、仪器连接与归档结果")
-        self.log_text.verticalScrollBar().valueChanged.connect(self.on_log_scroll_changed)
-        status_layout.addWidget(self.log_text, 1)
-
-        self._sync_log_summary()
-        self.set_log_expanded(False)
-
-    def _on_progress_value_changed(self, value: int) -> None:
-        """进度条旁的百分比文字：只做展示，不改变进度语义。"""
-        self.progress_value_label.setText(f"{int(value)}%")
-
-    def is_log_expanded(self) -> bool:
-        """日志框当前是否展开；默认折叠，用户的展开选择在本次会话内保持。"""
-        return self._log_expanded
-
-    def set_log_expanded(self, expanded: bool) -> None:
-        """展开/收起日志框；只切换可见性，不改变已接收的消息与滚动跟随。"""
-        if not isinstance(expanded, bool):
-            raise TypeError("日志展开状态必须是 bool")
-        self._log_expanded = expanded
-        self.log_text.setVisible(expanded)
-        # 展开时日志框已经给出全部内容，预览不再重复；折叠时恢复最近三条。
-        self.log_summary_label.setVisible(not expanded)
-        # 折叠时不要再占满左栏剩余高度：把纵向尺寸策略收成“最多到 sizeHint”，
-        # 左栏才会随日志收起而明显变短；展开后恢复可扩展，日志继续吃满剩余空间。
-        policy = self.sizePolicy()
-        policy.setVerticalPolicy(
-            QSizePolicy.Policy.Preferred
-            if expanded
-            else QSizePolicy.Policy.Maximum
-        )
-        self.setSizePolicy(policy)
-        self.updateGeometry()
-        if expanded:
-            self.log_toggle_btn.setText(_LOG_TOGGLE_EXPANDED_TEXT)
-            self.log_toggle_btn.setAccessibleName(_LOG_TOGGLE_EXPANDED_ACTION)
-            self.log_toggle_btn.setToolTip(_LOG_TOGGLE_EXPANDED_ACTION)
-        else:
-            self.log_toggle_btn.setText(_LOG_TOGGLE_COLLAPSED_TEXT)
-            self.log_toggle_btn.setAccessibleName(_LOG_TOGGLE_COLLAPSED_ACTION)
-            self.log_toggle_btn.setToolTip(_LOG_TOGGLE_COLLAPSED_ACTION)
-        # 位置由宿主槽决定：折叠时贴顶，展开时填满；面板单独使用时没有槽，
-        # 只保留尺寸策略，不额外依赖父控件类型。
-        host = self.parentWidget()
-        if isinstance(host, StatusSlot):
-            host.sync_panel_alignment(self)
-
-    def toggle_log(self) -> None:
-        """在展开与折叠之间切换；等价于用户点击标题行右侧的箭头。"""
-        self.set_log_expanded(not self._log_expanded)
-
-    def _sync_log_summary(self) -> None:
-        """把条数与最近三条消息写进预览；摘要不写入日志控件。"""
-        self.log_count_label.setText(f"{self._log_message_count} 条")
-        self.log_summary_label.set_messages(self._recent_log_messages)
+    # ---- 消息 ---------------------------------------------------------------
 
     def add_log_message(self, message: str) -> None:
+        """接收一条消息：写入历史，并把最后一条放到这一行。"""
         text = str(message)
-        self.log_text.append(text)
-        self._log_message_count += 1
-        # tooltip 保留最近三条原始文本，预览逐行压平并省略；完整内容仍在 log_text。
-        self._recent_log_messages.append(text)
-        del self._recent_log_messages[:-_LOG_PREVIEW_LINES]
-        self._sync_log_summary()
-        if not self.log_user_scrolling:
-            cursor = self.log_text.textCursor()
-            cursor.movePosition(QTextCursor.End)
-            self.log_text.setTextCursor(cursor)
-            scrollbar = self.log_text.verticalScrollBar()
-            scrollbar.setValue(scrollbar.maximum())
+        self._messages.append(text)
+        self.status_line.set_full_text(_single_line(text))
+        self._sync_tooltip()
 
-    def on_log_scroll_changed(self, value: int) -> None:
-        scrollbar = self.log_text.verticalScrollBar()
-        if value >= scrollbar.maximum() - 5:
-            self.log_user_scrolling = False
-        elif value < scrollbar.maximum() - 10:
-            self.log_user_scrolling = True
+    def messages(self) -> tuple[str, ...]:
+        """本次会话收到的消息原文（按到达顺序，最多 ``_MAX_MESSAGES`` 条）。"""
+        return tuple(self._messages)
+
+    def latest_message(self) -> str | None:
+        """最近一条消息原文；还没有消息时为 ``None``。"""
+        return self._messages[-1] if self._messages else None
+
+    def status_text(self) -> str:
+        """当前一行的完整文本（未按宽度省略）。"""
+        return self.status_line.full_text()
 
     def clear_log(self) -> None:
-        self.log_text.clear()
-        self.log_user_scrolling = False
-        self._log_message_count = 0
-        self._recent_log_messages.clear()
-        self._sync_log_summary()
+        """清空消息历史并回到占位文本。"""
+        self._messages.clear()
+        self.status_line.set_full_text(_NO_STATUS_TEXT)
+        self._sync_tooltip()
+
+    def _sync_tooltip(self) -> None:
+        recent = list(self._messages)[-_TOOLTIP_HISTORY:]
+        tooltip = _tooltip(recent)
+        self.status_line.setToolTip(tooltip)
 
     def update_status(self) -> None:
         """保留定时器扩展点，当前无额外轮询状态。"""
-
-
-__all__ = ["StatusPanel", "StatusSlot"]

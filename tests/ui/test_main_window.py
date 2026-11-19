@@ -397,7 +397,7 @@ class StatusPanelPlacementTests(unittest.TestCase):
         window._sync_status_panel_visibility()
 
         self.assertTrue(panel.isHidden())
-        self.assertIn("配置页日志", panel.log_text.toPlainText())
+        self.assertIn("配置页日志", panel.messages())
         self.assertEqual(slot.layout().count(), 0)
 
     def test_switching_measurement_pages_moves_the_same_panel(self):

@@ -1062,7 +1062,6 @@ class MainWindowCompositionTests(unittest.TestCase):
 
         window = MainWindow.__new__(MainWindow)
         window.connection_page = MagicMock()
-        window.progress_bar = MagicMock()
         window.add_log_message = MagicMock()
         window.coordinator = MagicMock()
 

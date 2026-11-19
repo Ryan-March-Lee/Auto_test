@@ -247,7 +247,7 @@ class SimulatedRunLifecycleTests(unittest.TestCase):
         window.cable_loss_page.start_measurement()
         self._wait_for_status(window, MeasurementStatus.COMPLETED)
         self.assertEqual(window.cable_loss_page.point_count(), 11)
-        logs = window.log_text.toPlainText()
+        logs = "\n".join(window.status_panel.messages())
         self.assertIn("线损阶段结果已自动归档", logs)
         self.assertNotIn("仅展示", logs)
         self.assertNotIn("模拟回放", logs)
@@ -272,7 +272,7 @@ class SimulatedRunLifecycleTests(unittest.TestCase):
         self._wait_for_status(window, MeasurementStatus.COMPLETED)
         driver_page = window.driver_mapping_page
         self.assertEqual(driver_page.realtime_buffer.frequencies, EXPECTED_FREQUENCIES)
-        self.assertIn("驱动映射阶段结果已自动归档", window.log_text.toPlainText())
+        self.assertIn("驱动映射阶段结果已自动归档", "\n".join(window.status_panel.messages()))
         mapping_dir = Path(
             coordinator.current_result_paths().driver_mapping_results_dir
         )
@@ -294,7 +294,7 @@ class SimulatedRunLifecycleTests(unittest.TestCase):
         )
         # 主功放阶段结果按正式阶段记录保存；交付产物只生成在仿真阶段目录，
         # 页面不会收到运行级归档 DTO（与正式链路一致）。
-        self.assertIn("主功放结果已保存", window.log_text.toPlainText())
+        self.assertIn("主功放结果已保存", "\n".join(window.status_panel.messages()))
         amplifier_dir = Path(
             coordinator.current_result_paths().amplifier_results_dir
         )

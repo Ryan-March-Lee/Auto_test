@@ -158,7 +158,6 @@ class PageContext:
     connection_dialog_factory: Callable[[str, Any], Any]
     plot_widget_factory: Callable[[Any], Any]
     log_callback: Callable[[str], Any]
-    progress_callback: Callable[[int], Any]
     error_callback: Callable[[str], Any]
     archival_location_provider: Callable[[str, str | None], str | None]
     archival_run_id_provider: Callable[[], str | None]
@@ -176,19 +175,6 @@ class PageDefinition:
     builder: Callable[[Any], Any]
 
 
-def _page_forwarder(callback: Any) -> Any:
-    """把共享回调包成页面私有的转发器。
-
-    Qt 的 ``signal.disconnect(callable)`` 会移除该可调用对象的**全部**连接，之后重复
-    断开还会打印 ``Failed to disconnect`` 警告。三个测量页面共享同一个窗口进度回调时，
-    任意页面关闭都会顺带摘掉其他页面的进度连接。每个页面用自己的转发器连接，生命周期
-    互不影响。
-    """
-    if callback is None:
-        return None
-    return lambda *args, **kwargs: callback(*args, **kwargs)
-
-
 def _build_cable_loss_page(context: PageContext) -> Any:
     from .cable_loss_page import CableLossPage
     from .realtime_plot import RealTimePlotWidget
@@ -203,7 +189,6 @@ def _build_cable_loss_page(context: PageContext) -> Any:
             show_nav_buttons=False
         ),
         log_callback=context.log_callback,
-        progress_callback=_page_forwarder(context.progress_callback),
         error_callback=context.error_callback,
         archival_location_provider=context.archival_location_provider,
         archival_run_id_provider=context.archival_run_id_provider,
@@ -223,7 +208,6 @@ def _build_driver_mapping_page(context: PageContext) -> Any:
         realtime_data_callback=context.driver_realtime_data_callback,
         clear_realtime_callback=context.clear_realtime_callback,
         log_callback=context.log_callback,
-        progress_callback=_page_forwarder(context.progress_callback),
         error_callback=context.error_callback,
         archival_location_provider=context.archival_location_provider,
         archival_run_id_provider=context.archival_run_id_provider,
@@ -244,7 +228,6 @@ def _build_amplifier_page(context: PageContext) -> Any:
         realtime_data_callback=context.amplifier_realtime_data_callback,
         clear_realtime_callback=context.clear_realtime_callback,
         log_callback=context.log_callback,
-        progress_callback=_page_forwarder(context.progress_callback),
         error_callback=context.error_callback,
         archival_location_provider=context.archival_location_provider,
         archival_run_id_provider=context.archival_run_id_provider,

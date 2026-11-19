@@ -90,7 +90,6 @@ class DriverMappingPage(
         realtime_data_callback: Callable[[Mapping[str, Any]], Any] | None = None,
         clear_realtime_callback: Callable[[], Any] | None = None,
         log_callback: Callable[[str], Any] | None = None,
-        progress_callback: Callable[[int], Any] | None = None,
         error_callback: Callable[[str], Any] | None = None,
         archival_location_provider: Callable[[str, str | None], str | None] | None = None,
         archival_run_id_provider: Callable[[], str | None] | None = None,
@@ -108,7 +107,6 @@ class DriverMappingPage(
         self._realtime_data_callback = realtime_data_callback or (lambda _data: None)
         self._clear_realtime_callback = clear_realtime_callback or (lambda: None)
         self._log_callback = log_callback or (lambda _message: None)
-        self._progress_callback = progress_callback or (lambda _value: None)
         self._error_callback = error_callback or self._show_error
         # 批量载入结果期间先不逐行重算摘要，循环结束后只刷新一次。
         self._suspend_stage_summary = False
@@ -128,7 +126,7 @@ class DriverMappingPage(
         layout.setContentsMargins(0, 4, 0, 0)
         layout.setSpacing(12)
 
-        # 左侧窄栏自上而下放控制面与状态面板（进度 + 实时日志）；右侧整块留给四张图。
+        # 左侧窄栏自上而下放控制面与运行状态；右侧整块留给四张图。
         # 接线说明只保留连接图入口：测试者已知道仪器怎么接，按钮只用于防止忘记。
         # 宽度与另两个测量页共用 theme 里的同一组常量。
         left_panel = QWidget()
@@ -184,7 +182,7 @@ class DriverMappingPage(
         self._refresh_console()
         self.archival_banner = self._build_archival_banner()
         left_layout.addWidget(self.archival_banner)
-        # 进度与实时日志由窗口挂进这块容器，占满控制面以下的剩余高度。
+        # 运行状态由窗口挂进这块容器，固定一行。
         self.status_slot = StatusSlot()
         left_layout.addWidget(self.status_slot, 1)
         self.control_panel = left_panel
@@ -223,7 +221,6 @@ class DriverMappingPage(
 
     def _connect_controller_signals(self, controller: Any) -> None:
         signals = controller.signals
-        self._connect_signal(signals.progress, self._progress_callback)
         self._connect_archival_signals(controller)
         self._connect_signal(signals.data_update, self.update_realtime)
         self._connect_signal(signals.result, self.show_result)
@@ -265,7 +262,6 @@ class DriverMappingPage(
             return
         self._log_callback("驱动映射现场接线已确认")
         self.reset_realtime_data()
-        self._log_callback("开始驱动功放映射...")
         self._archival_try_start(
             lambda: decision.launch(),
             "驱动映射测试未能启动，未开始测量",
@@ -570,8 +566,6 @@ class DriverMappingPage(
         if getattr(self, "readout", None) is not None:
             self.readout.set_active(False)
         self._archival_test_stopped(reason, self._partial_result_path())
-        self._log_callback(f"测量已停止: {reason}")
-        self._progress_callback(0)
 
     def _on_finished(self) -> None:
         if not self._archival_is_for_this_page():
@@ -579,9 +573,7 @@ class DriverMappingPage(
         self.controls.show_idle()
         if getattr(self, "readout", None) is not None:
             self.readout.set_active(False)
-        self._progress_callback(100)
         self._archival_test_finished()
-        self._log_callback("测量完成！")
 
     def _show_error(self, message: str) -> None:
         QMessageBox.critical(self, "错误", message)

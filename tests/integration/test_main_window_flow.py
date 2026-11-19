@@ -732,7 +732,10 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         workspace = window.measurement_workspace
         self.assertIs(window.tab_widget.currentWidget(), window.cable_loss_page)
         self.assertEqual(workspace.current_stage(), "cable_loss")
-        self.assertIn("已进入线损测量", window.log_text.toPlainText())
+        self.assertIs(
+            window.status_panel.parentWidget(),
+            window.cable_loss_page.status_slot,
+        )
         self.assertFalse(
             window.measurement_controller.state.is_active,
             "交接不能自动开始测量",
@@ -2454,8 +2457,8 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertFalse(window.measurement_controller.state.is_active)
         self.assertIsNone(page.cable_loss_selection)
 
-    def test_configuration_page_hides_progress_and_log_panel(self):
-        """测试配置页只做配置与连接：进度与实时日志不出现，切页后挂回测量页左栏。"""
+    def test_configuration_page_hides_the_status_panel(self):
+        """测试配置页只做配置与连接：运行状态不出现，切页后挂回测量页左栏。"""
         self._silence_dialogs()
         window = self._window()
         window._enter_test_mode(True)
@@ -2463,9 +2466,9 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIs(window.tab_widget.currentWidget(), window.test_config_page)
         self.assertTrue(window.status_panel.isHidden())
 
-        # 面板隐藏期间仍是全部日志的接收方：配置页的日志不会因为看不见而丢。
+        # 面板隐藏期间仍是全部消息的接收方：配置页的消息不会因为看不见而丢。
         window.add_log_message("配置页日志")
-        self.assertIn("配置页日志", window.log_text.toPlainText())
+        self.assertIn("配置页日志", window.status_panel.messages())
 
         cable_loss = window.pages["cable_loss"]
         window.tab_widget.setCurrentIndex(window.tab_widget.indexOf(cable_loss))
@@ -2475,8 +2478,8 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         window.tab_widget.setCurrentIndex(window.tab_widget.indexOf(window.test_config_page))
         self.assertTrue(window.status_panel.isHidden())
 
-    def test_progress_and_log_follow_the_active_measurement_page(self):
-        """三个测量页共用同一份状态面板：切页时移入新页左栏，日志历史不丢。"""
+    def test_status_panel_follows_the_active_measurement_page(self):
+        """三个测量页共用同一份状态面板：切页时移入新页左栏，消息历史不丢。"""
         self._silence_dialogs()
         window = self._window()
         window._enter_test_mode(True)
@@ -2491,7 +2494,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
 
         self.assertFalse(window.status_panel.isHidden())
         self.assertIs(window.status_panel.parentWidget(), window.amplifier_page.status_slot)
-        self.assertIn("线损页日志", window.log_text.toPlainText())
+        self.assertIn("线损页日志", window.status_panel.messages())
         self.assertEqual(window.pages["cable_loss"].status_slot.layout().count(), 0)
 
     def test_config_page_save_signal_writes_the_official_configuration(self):

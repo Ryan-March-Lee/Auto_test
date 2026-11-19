@@ -183,11 +183,11 @@ def summarize_archival_missing(
     """测试已完成但没收到归档结果：如实说明状态未知，并给出可定位的运行 ID。"""
     label = _kind_label(kind)
     if run_id is None:
-        detail = "交付产物状态未知；请查看日志确认运行是否已完成。"
+        detail = "交付产物状态未知；请到运行目录确认运行是否已完成。"
     else:
         detail = (
             f"运行 {run_id} 的交付产物状态未知；"
-            "请查看日志或“历史运行”页确认；正式结果以其保存位置为准。"
+            "请到运行目录确认，正式结果以其保存位置为准。"
         )
     return ArchivalSummary(
         headline=f"{label}结果已保存，但未收到归档结果",

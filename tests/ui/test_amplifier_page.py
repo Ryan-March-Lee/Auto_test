@@ -290,7 +290,7 @@ class AmplifierPageTests(unittest.TestCase):
             ["请先加载主功放使用的线损测量结果和驱动映射测量结果"],
         )
         self.assertIn("未选择主功放必需的校准输入，主功放测试未启动", self.logs)
-        self.assertNotIn("开始主功放测试...", self.logs)
+        self.assertNotIn("测量结束后将自动归档结果", self.logs)
 
     def test_data_shows_gain_efficiency_and_dc_power(self):
         self._select_both_inputs()

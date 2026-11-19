@@ -142,7 +142,7 @@ class MainWindow(ConfigurationSnapshotActions, QMainWindow):
         return self.coordinator.realtime_buffer.current_index
 
     def init_ui(self):
-        """初始化用户界面：欢迎页/工作区堆栈；进度与日志在测量页左栏内。"""
+        """初始化用户界面：欢迎页/工作区堆栈；运行状态在测量页左栏内。"""
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
 
@@ -237,7 +237,7 @@ class MainWindow(ConfigurationSnapshotActions, QMainWindow):
         central_layout.addWidget(self.view_stack)
 
         self.view_stack.setCurrentWidget(self.welcome_page)
-        # 初始标签页就是“测试配置”：进入工作区后右侧不应出现进度与日志。
+        # 初始标签页就是“测试配置”：进入工作区后右侧不应出现运行状态。
         self._sync_status_panel_visibility()
         self.workspace_binding.sync()
 
@@ -356,7 +356,6 @@ class MainWindow(ConfigurationSnapshotActions, QMainWindow):
             connection_dialog_factory=lambda kind, parent: ConnectionDialog(kind, parent),
             plot_widget_factory=lambda _parent: RealTimePlotWidget(show_nav_buttons=True),
             log_callback=self.add_log_message,
-            progress_callback=self._set_progress,
             error_callback=lambda message: self.on_measurement_error(message),
             archival_location_provider=self.coordinator.archival_location,
             archival_run_id_provider=self.coordinator.current_run_id,
@@ -424,11 +423,11 @@ class MainWindow(ConfigurationSnapshotActions, QMainWindow):
         self.workspace_binding.sync()
 
     def _sync_status_panel_visibility(self) -> None:
-        """把唯一的进度与日志面板挂到当前测量页左栏。
+        """把唯一的运行状态面板挂到当前测量页左栏。
 
-        只有三个测量页有 ``status_slot``：面板展开时占满“测量控制”以下的剩余高度，折叠时
-        只占标题行并贴在槽顶部。其它页面没有这块位置，面板在那里收起；它仍是全部日志的
-        接收方，日志照常入队，切回任一测量页时原样出现（历史、进度与清除操作都只有一份）。
+        只有三个测量页有 ``status_slot``：面板固定一行，贴在“测量控制”以下的槽
+        顶部。其它页面没有这块位置，面板在那里收起；它仍是全部消息的接收方，
+        消息照常入队，切回任一测量页时原样出现。
         """
         panel = getattr(self, "status_panel", None)
         if panel is None:
@@ -506,14 +505,13 @@ class MainWindow(ConfigurationSnapshotActions, QMainWindow):
         return self.visualization_page
 
     def create_status_panel(self):
-        """创建唯一的进度与日志面板，并暴露进度条与日志控件。
+        """创建唯一的运行状态面板。
 
         面板先隐藏；页面切换时由 :meth:`_sync_status_panel_visibility` 挂进当前
-        测量页左栏的 ``status_slot``。
+        测量页左栏的 ``status_slot``。测量进度由频点数据与阶段条表达，面板不再
+        提供第二条进度条。
         """
         self.status_panel = StatusPanel(parent=self)
-        self.progress_bar = self.status_panel.progress_bar
-        self.log_text = self.status_panel.log_text
         self.status_panel.hide()
         self._status_panel_slot = None
 
@@ -558,7 +556,6 @@ class MainWindow(ConfigurationSnapshotActions, QMainWindow):
         worker.signals.stopped.connect(self.on_instrument_stopped)
         worker.signals.error.connect(self.on_instrument_error)
         worker.signals.message.connect(self.add_log_message)
-        worker.signals.progress.connect(self.progress_bar.setValue)
 
     def on_instrument_controller_ready(self, controller):
         """连接结果：由协调器原子提交新端口与待提交运行。"""
@@ -571,7 +568,6 @@ class MainWindow(ConfigurationSnapshotActions, QMainWindow):
         正式连接与模拟会话共用这一条交接路径，但都不自动开始测量；模拟模式只把
         状态写成“模拟会话已就绪”，不打开任何端口。
         """
-        self.progress_bar.setValue(0)
         if not self.coordinator.measurement_session_ready():
             self._restore_test_config_page()
             self.add_log_message("仪器连接结束但最终动作未提交；配置页保留，可重试")
@@ -595,18 +591,15 @@ class MainWindow(ConfigurationSnapshotActions, QMainWindow):
         if index < 0:
             return
         self.tab_widget.setCurrentIndex(index)
-        self.add_log_message("已进入线损测量")
 
     def on_instrument_error(self, error_message):
         self.add_log_message(f"错误: {error_message}")
         QMessageBox.critical(self, "错误", error_message)
-        self.progress_bar.setValue(0)
         self.coordinator.fail_finalization(error_message)
         self._restore_test_config_page()
 
     def on_instrument_stopped(self, reason):
         self.add_log_message(f"仪器连接线程已停止: {reason}")
-        self.progress_bar.setValue(0)
         self.coordinator.cancel_finalization(reason)
         self._restore_test_config_page()
 
@@ -652,12 +645,6 @@ class MainWindow(ConfigurationSnapshotActions, QMainWindow):
 
     def add_log_message(self, message: str):
         self.status_panel.add_log_message(message)
-
-    def _set_progress(self, value: int) -> None:
-        """把测量进度写到状态面板进度条；控件可能尚未创建。"""
-        progress_bar = getattr(self, "progress_bar", None)
-        if progress_bar is not None:
-            progress_bar.setValue(value)
 
     def update_status(self):
         self.status_panel.update_status()

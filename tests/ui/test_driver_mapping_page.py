@@ -174,7 +174,7 @@ class DriverMappingPageTests(unittest.TestCase):
         self.assertEqual(self.controller.calls, [])
         self.assertEqual(self.errors, ["请先加载驱动映射使用的线损测量结果"])
         self.assertIn("未选择线损测量结果，驱动映射未启动", self.logs)
-        self.assertNotIn("开始驱动功放映射...", self.logs)
+        self.assertNotIn("测量结束后将自动归档结果", self.logs)
 
     def test_data_updates_the_realtime_plot_and_readout(self):
         self._select_cable_loss()
@@ -433,14 +433,15 @@ class DriverMappingPageTests(unittest.TestCase):
         self.page.stop_measurement()
         self.assertEqual(self.controller.calls, [("stop",)])
         self.controller.signals.stopped.emit("用户停止")
-        self.assertIn("测量已停止: 用户停止", self.logs)
+        self.assertIn("停止原因：用户停止", "\n".join(self.logs))
         self.controller.signals.error.emit("测量失败")
         self.assertEqual(self.errors, ["测量失败"])
         self.controller.state = type(
             "State", (), {"kind": MeasurementKind.DRIVER_MAPPING, "is_active": True}
         )()
         self.controller.signals.finished.emit()
-        self.assertIn("测量完成！", self.logs)
+        self.assertTrue(self.page.driver_mapping_btn.isEnabled())
+        self.assertFalse(self.page.driver_stop_btn.isEnabled())
 
 
     def test_other_measurement_terminal_events_are_ignored(self):

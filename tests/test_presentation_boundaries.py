@@ -148,7 +148,6 @@ PAGE_CONTEXT_FIELDS = (
     "connection_dialog_factory",
     "plot_widget_factory",
     "log_callback",
-    "progress_callback",
     "error_callback",
     "archival_location_provider",
     "archival_run_id_provider",

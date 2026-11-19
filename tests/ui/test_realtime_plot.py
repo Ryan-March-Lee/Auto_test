@@ -449,17 +449,17 @@ class NavigationStateTests(_PlotCase):
 
         return Host(plot)
 
-    def test_pinned_last_frequency_keeps_next_enabled_to_resume_following(self):
+    def test_pinned_historical_frequency_keeps_next_enabled_to_resume_following(self):
         plot = self._plot(nav=True)
         host = self._host(plot)
         for frequency in (1.0, 1.1):
             host.realtime_buffer.store({"frequency": frequency})
 
-        host.realtime_buffer.select(1)
+        host.realtime_buffer.select(0)
         host._update_navigation()
 
         self.assertTrue(plot.nav_next_btn.isEnabled())
-        self.assertIn("跟随", plot.nav_next_btn.toolTip())
+        self.assertEqual(plot.nav_next_btn.toolTip(), "下一个频点")
 
         host.next_frequency()
 

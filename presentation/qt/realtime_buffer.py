@@ -93,17 +93,16 @@ class RealtimeMeasurementBuffer:
     def select(self, index: int) -> bool:
         """直接切到指定频点；越界索引返回 ``False``，不抛异常打断点击。
 
-        点击是明确的“我要看这个频点”，因此任何一次选择都进入用户浏览状态：
-        即使点到的是当前最新的频点，后续新到达的频点也不会把画面顶掉。要回到
-        自动跟随，用户在最后一个频点上再点“下一个”，或调用
-        :meth:`follow_latest`。
+        点击历史频点表示“我要固定查看这个频点”，而点击当前最新频点表示“回到
+        实时测量视图”。后者会恢复自动跟随，使后续到达的新频点像用户没有手动浏览
+        过一样自动成为当前显示频点。
         """
         if isinstance(index, bool) or not isinstance(index, int):
             raise TypeError("频点索引必须是整数")
         if not 0 <= index < len(self._frequencies):
             return False
         self.current_index = index
-        self.user_browsing = True
+        self.user_browsing = index != len(self._frequencies) - 1
         return True
 
     def follow_latest(self) -> None:

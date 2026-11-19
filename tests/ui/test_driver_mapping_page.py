@@ -261,7 +261,39 @@ class DriverMappingPageTests(unittest.TestCase):
         self.assertEqual(self.page.driver_plot_widget.frequency_rows, [])
 
     def test_new_frequency_does_not_steal_a_pinned_completed_frequency(self):
-        # 用户点了当时最新的 1.1 频点后，1.2 到达时画面必须继续停在 1.1。
+        # 用户点了历史的 1.0 频点后，1.2 到达时画面必须继续停在 1.0。
+        emit = self.controller.signals.data_update.emit
+        emit(
+            {
+                "frequency": "1.0",
+                "sweep_data": {"input_power_sg": [-10], "output_power_driver": [2]},
+            }
+        )
+        emit(
+            {
+                "frequency": "1.1",
+                "sweep_data": {"input_power_sg": [-9], "output_power_driver": [3]},
+            }
+        )
+        plot = self.page.driver_plot_widget
+
+        plot.frequency_selected.emit(1.0)
+        updated = len(plot.updated)
+        emit(
+            {
+                "frequency": "1.2",
+                "sweep_data": {"input_power_sg": [-8], "output_power_driver": [4]},
+            }
+        )
+
+        self.assertEqual(self.page.realtime_buffer.current().get("frequency"), 1.0)
+        self.assertEqual(plot.frequency_rows[-1], ((1.0, 1.1, 1.2), 0))
+        self.assertEqual(
+            len(plot.updated), updated, "被固定浏览的频点不能被新到达的频点重画"
+        )
+        self.assertEqual(self.page.readout.frequency_text(), "1.0")
+
+    def test_clicking_latest_frequency_resumes_following_new_frequency(self):
         emit = self.controller.signals.data_update.emit
         emit(
             {
@@ -278,7 +310,9 @@ class DriverMappingPageTests(unittest.TestCase):
         plot = self.page.driver_plot_widget
 
         plot.frequency_selected.emit(1.1)
+        self.assertFalse(self.page.realtime_buffer.user_browsing)
         updated = len(plot.updated)
+
         emit(
             {
                 "frequency": "1.2",
@@ -286,12 +320,10 @@ class DriverMappingPageTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(self.page.realtime_buffer.current().get("frequency"), 1.1)
-        self.assertEqual(plot.frequency_rows[-1], ((1.0, 1.1, 1.2), 1))
-        self.assertEqual(
-            len(plot.updated), updated, "被固定浏览的频点不能被新到达的频点重画"
-        )
-        self.assertEqual(self.page.readout.frequency_text(), "1.1")
+        self.assertEqual(self.page.realtime_buffer.current().get("frequency"), 1.2)
+        self.assertEqual(len(plot.updated), updated + 1)
+        self.assertEqual(plot.updated[-1]["frequency"], "1.2")
+        self.assertEqual(self.page.readout.frequency_text(), "1.2")
 
     def test_pinned_frequency_still_refreshes_when_its_own_data_changes(self):
         emit = self.controller.signals.data_update.emit

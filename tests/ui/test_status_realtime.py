@@ -54,7 +54,7 @@ class RealtimeBufferTests(unittest.TestCase):
         self.assertEqual(buffer.frequencies, [])
         self.assertFalse(buffer.user_browsing)
 
-    def test_select_pins_the_view_even_on_the_newest_frequency(self):
+    def test_select_latest_frequency_resumes_following(self):
         buffer = RealtimeMeasurementBuffer()
         for frequency in (1.0, 2.0, 3.0):
             buffer.store({"frequency": frequency, "value": frequency})
@@ -65,13 +65,10 @@ class RealtimeBufferTests(unittest.TestCase):
 
         self.assertTrue(buffer.select(2))
         self.assertEqual(buffer.current()["value"], 3.0)
-        self.assertTrue(
-            buffer.user_browsing,
-            "点最新频点也是明确选择：新频点到达时不能把画面顶掉",
-        )
+        self.assertFalse(buffer.user_browsing)
 
         buffer.store({"frequency": 4.0, "value": 4.0})
-        self.assertEqual(buffer.current()["value"], 3.0)
+        self.assertEqual(buffer.current()["value"], 4.0)
 
     def test_next_at_the_last_frequency_resumes_following(self):
         buffer = RealtimeMeasurementBuffer()

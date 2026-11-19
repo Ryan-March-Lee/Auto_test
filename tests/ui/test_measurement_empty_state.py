@@ -1,4 +1,4 @@
-"""测量结果空态：线稿、标题/说明与主题选择器。"""
+"""测量结果空态：标题/说明与主题选择器。"""
 
 import os
 import unittest
@@ -6,7 +6,7 @@ import unittest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QCoreApplication, QEvent
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
 from presentation.qt.measurement_empty_state import MeasurementEmptyState
 from presentation.qt.theme import build_stylesheet
@@ -46,6 +46,15 @@ class MeasurementEmptyStateTests(unittest.TestCase):
         empty = self._track(MeasurementEmptyState("   ", "说明"))
 
         self.assertEqual(empty.title(), "尚无测量结果")
+
+    def test_empty_state_is_text_only(self):
+        """空态只剩标题与说明：不再画仪器与线缆的线稿，那块图形解释不了任何数据。"""
+        empty = self._track(MeasurementEmptyState("尚无测量结果", "说明"))
+
+        self.assertEqual(
+            sorted(child.objectName() for child in empty.findChildren(QWidget)),
+            ["measurementEmptyStateDescription", "measurementEmptyStateTitle"],
+        )
 
     def test_widget_can_be_shown_and_grab_rendered(self):
         empty = self._track(

@@ -1317,7 +1317,7 @@ QFrame#measurementReadoutChip {
     border: 1px solid $readout_chip_border;
     border-radius: 8px;
 }
-/* 空态：结果面里的线稿 + 一句说明。它不画外框，避免“卡片里再套一张卡”。 */
+/* 空态：结果面里的标题与一句说明。它不画外框，避免“卡片里再套一张卡”。 */
 QWidget#measurementEmptyState {
     background: transparent;
     border: none;

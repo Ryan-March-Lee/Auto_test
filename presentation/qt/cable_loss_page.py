@@ -30,7 +30,6 @@ from .measurement_console import (
     run_session_check,
     wiring_check,
 )
-from .measurement_empty_state import MeasurementEmptyState
 from .measurement_readout import MeasurementReadout, ReadoutMetric
 from .measurement_start_facade import MeasurementStartFacade, StartMeasurementRequest
 from application.dto import CableLossMeasurementResult
@@ -185,8 +184,8 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         self.control_panel = left_panel
         layout.addWidget(left_panel)
 
-        # 结果面与功放页同构：读数条在上，来源行与空态依次向下，四幅线缆曲线占满剩余
-        # 高度。读数条回答“最新频点、四条线缆各是多少”，四幅图回答“损耗随频率怎么走”。
+        # 结果面与功放页同构：读数条在上，来源行依次向下，四幅线缆曲线占满剩余高度。
+        # 读数条回答“最新频点、四条线缆各是多少”，四幅图回答“损耗随频率怎么走”。
         result_surface = build_surface(RESULT_SURFACE, title="测量结果")
         result_layout = result_surface.layout()
         self.readout = MeasurementReadout(result_surface)
@@ -196,12 +195,6 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         self.cable_loss_source_label.setObjectName("emptyHint")
         self.cable_loss_source_label.hide()
         result_layout.addWidget(self.cable_loss_source_label)
-        self.cable_loss_empty_hint = MeasurementEmptyState(
-            "尚无测量结果",
-            "开始测量后，每条线缆的损耗曲线会画在这里；也可以先加载一份历史结果。",
-            result_surface,
-        )
-        result_layout.addWidget(self.cable_loss_empty_hint)
         # 线缆曲线：绘图控件按 CABLE_LOSS_PANELS 建四幅“线损 vs 频率”子图。
         self.cable_loss_plot = self._plot_widget_factory(result_surface)
         set_panels = getattr(self.cable_loss_plot, "set_panels", None)
@@ -283,7 +276,6 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         readout = getattr(self, "readout", None)
         if readout is not None:
             readout.set_active(self._measurement_active())
-        self._sync_empty_hint()
         self._refresh_console()
 
     def on_activated(self) -> None:
@@ -327,7 +319,6 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         self.controls.show_idle()
         if getattr(self, "readout", None) is not None:
             self.readout.set_active(False)
-        self._sync_empty_hint()
         self._archival_test_failed(message)
         self._error_callback(message)
 
@@ -337,7 +328,6 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         self.controls.show_idle()
         if getattr(self, "readout", None) is not None:
             self.readout.set_active(False)
-        self._sync_empty_hint()
         self._archival_test_stopped(reason, self._partial_result_path())
         self._log_callback(f"测量已停止: {reason}")
         self._progress_callback(0)
@@ -348,7 +338,6 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         self.controls.show_idle()
         if getattr(self, "readout", None) is not None:
             self.readout.set_active(False)
-        self._sync_empty_hint()
         self._progress_callback(100)
         self._archival_test_finished()
         self._log_callback("测量完成！")
@@ -361,7 +350,6 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
             clear_plot()
         self._set_source_filename(None)
         self._clear_archival_summary()
-        self._sync_empty_hint()
         self._refresh_readout()
         self._refresh_result_summary()
         self._refresh_stage_summary()
@@ -517,11 +505,10 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         return series
 
     def _refresh_display(self) -> None:
-        """一次刷新图表、读数条、空态与阶段摘要：数据到达与批量载入共用这一条路径。"""
+        """一次刷新图表、读数条、摘要与阶段条：数据到达与批量载入共用这一条路径。"""
         self._refresh_plot()
         self._refresh_readout()
         self._refresh_result_summary()
-        self._sync_empty_hint()
         self._refresh_stage_summary()
 
     def _refresh_stage_summary(self) -> None:
@@ -550,30 +537,6 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         else:
             label.clear()
             label.hide()
-
-    def _sync_empty_hint(self) -> None:
-        """没有频点时给出说明，避免用户把空图当成“数据没显示出来”。
-
-        测量进行中时改成“等待第一个频点”，不说“开始测量后”；两种文案都只说明
-        当前可见状态，不修改图表或测量流程。
-        """
-        hint = getattr(self, "cable_loss_empty_hint", None)
-        if hint is None:
-            return
-        empty = not self._points
-        hint.setVisible(empty)
-        if not empty:
-            return
-        if self._measurement_active():
-            hint.set_texts(
-                "等待第一个频点",
-                "测量进行中，结果到达后会在此画出线缆损耗曲线。",
-            )
-        else:
-            hint.set_texts(
-                "尚无测量结果",
-                "开始测量后，每条线缆的损耗曲线会画在这里；也可以先加载一份历史结果。",
-            )
 
     def show_loaded_result(self, reference: Any, *, filename: str | None = None) -> None:
         """显示由窗口/结果服务提供的结构化结果，不读取文件。

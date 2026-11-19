@@ -347,16 +347,14 @@ class CableLossPageTests(unittest.TestCase):
         self.assertFalse(hasattr(self.page, "show_path2_btn"))
         self.assertEqual(self.page.findChildren(QTextEdit), [])
 
-    def test_result_surface_holds_the_plot_source_and_empty_state(self):
+    def test_result_surface_holds_the_plot_source_and_source_label(self):
         from PySide6.QtWidgets import QFrame
 
         result = self.page.findChild(QFrame, "measurementResultSurface")
         self.assertIs(self.page.cable_loss_plot.parentWidget(), result)
-        self.assertIs(self.page.cable_loss_empty_hint.parentWidget(), result)
         self.assertIs(self.page.cable_loss_source_label.parentWidget(), result)
         self.assertIs(self.page.readout.parentWidget(), result)
         self.assertFalse(self.page.cable_loss_plot.isHidden())
-        self.assertFalse(self.page.cable_loss_empty_hint.isHidden())
 
     def test_view_diagram_button_opens_the_combined_diagram(self):
         self.page.show_cable_loss_diagram_btn.click()

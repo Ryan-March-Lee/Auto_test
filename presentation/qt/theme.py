@@ -1317,20 +1317,6 @@ QFrame#measurementReadoutChip {
     border: 1px solid $readout_chip_border;
     border-radius: 8px;
 }
-/* 空态：结果面里的标题与一句说明。它不画外框，避免“卡片里再套一张卡”。 */
-QWidget#measurementEmptyState {
-    background: transparent;
-    border: none;
-}
-QLabel#measurementEmptyStateTitle {
-    color: $text;
-    font-size: $font_section;
-    font-weight: 600;
-}
-QLabel#measurementEmptyStateDescription {
-    color: $text_secondary;
-    font-size: $font_small;
-}
 /* 面内分隔：只是一条 1px 的线，不加边距，也不使用 QFrame 的立体边框。 */
 QFrame#measurementHairline {
     background-color: $border;

@@ -10,19 +10,20 @@
 调用方通过 :meth:`RealTimePlotWidget.update_plot` 的 ``series`` 字段直接给出
 已累积的 ``(x, y)`` 序列。
 
-P2 在原有 2×2 布局上补三种“会说话”的读法，全部只消费调用方已经取好的数据：
+P2 在原有 2×2 布局上补两种“会说话”的读法，全部只消费调用方已经取好的数据：
 
 - **最新点标注**：每条曲线最后一个点加一个空心圆环，并在点旁标出数值；
-- **静态图例**：每个子图右上角一个紧凑图例，只显示“指标 — 单位”，颜色与曲线一致；
-  最新值由点旁标注与页面读数条承担，图例不参与每个频点的重绘；
 - **目标带**：调用方明确给出目标范围时才画一条淡色水平带。没有目标值时不画，
   这里不发明任何业务语义。
+
+每个子图只有一条曲线，指标与单位已经写在纵轴标签上，因此不再画图例：
+一个色块加一段重复的文字只会占掉曲线右上角的位置。
 
 图里不再画加粗标题：子图的语义由黑色加大的横纵轴标签表达，纵轴标签直接写明
 被测对象（例如线损页的“线缆1 线损 (dB)”），小面板里省下的标题高度留给坐标区。
 
 性能约束：一张 2×2、带中文轴标签和刻度的图整图 Agg 绘制要 300–500ms。因此本控件把
-“静态背景”（坐标轴、刻度、网格、轴标签、图例、目标带、等待提示）只画
+“静态背景”（坐标轴、刻度、网格、轴标签、目标带、等待提示）只画
 一次并缓存在 ``_background``，每个数据点只用背景缓存 + ``restore_region`` 重画曲线、
 最新点圆环与数值标注，再一次 ``blit`` 上屏；单点更新从数百毫秒降到十几毫秒。背景只在
 首次显示、尺寸变化、量程扩展或静态内容变化时重建。隐藏页面只记录待办，显示后要么
@@ -70,14 +71,19 @@ __all__ = [
 ]
 
 #: 量程滞回：数据仍在视窗内时只 blit；越界才扩界并重建背景。
-#: 一次扩界要整图重绘（百毫秒级），所以新视窗必须给“后面还会到的点”留出余量：
-#: 按 span 的 35% 留白，再向外取整到刻度友好的边界。只按 8% 留白时，每个新
-#: 扫频点都会再次越界，整条扫频曲线几乎每个点都要重画一遍，页面看上去一直在闪。
-_VIEW_PAD_RATIO = 0.35
-#: 常数序列（例如整条增益都等于 11dB）没有 span，至少留这么多上下余量。
-_VIEW_MIN_PAD = 0.5
-#: 扩界取整后的视窗希望容纳的刻度数；太少会让刻度挤在一起，太多会浪费画面。
-_VIEW_TICK_COUNT = 5
+#:
+#: 余量按“一个测量步长”而不是 span 的固定比例计算：扫频每多一个点，数据范围只
+#: 向外推进一格，留 1.5 格就够覆盖接下来的一两个点；点越多数值越密，视窗就越贴
+#: 合数据。按 span 的 35% 留白时，一条十点的扫频四周各空出近 1/5 的画面，静止
+#: 时看起来像一张没画满的图，所以改成步长尺度，并给余量加上下限与上限。
+_VIEW_PAD_STEPS = 1.5
+#: 步长余量的下限（占 span 的比例）：步长极小时也留一点，数据不贴边框。
+_VIEW_MIN_PAD_RATIO = 0.04
+#: 步长余量的上限（占 span 的比例）：点很少时（例如两点）不把视窗撑成大片空白。
+_VIEW_MAX_PAD_RATIO = 0.10
+#: 常数序列（例如整条增益都等于 11dB）没有 span 也没有步长，按量级留余量。
+_VIEW_FLAT_PAD_RATIO = 0.05
+_VIEW_FLAT_MIN_PAD = 0.05
 #: 背景重建防抖：拖拽窗口时只重建一次，而不是每个 resize 事件都整图绘制。
 _BACKGROUND_DEBOUNCE_MS = 160
 #: 页面显示后延迟重建：等切页过渡播完，再付这一次整图绘制的钱。
@@ -181,30 +187,35 @@ _TICK_COLOR = TOKENS["text_secondary"]
 #: 横纵轴标签统一用主题最深的一档文字色（近黑），比刻度更醒目。
 _AXIS_LABEL_COLOR = TOKENS["text"]
 _AXIS_LABEL_SIZE = 10.0
+#: 最新值标注相对最新点的偏移（points）；视窗收紧后点常贴着边，方向要可换。
+_ANNOTATION_OFFSET = (7.0, 6.0)
+#: 标注候选方向，按优先级排列：右上 → 右下 → 左上 → 左下。
+_ANNOTATION_SIDES = (
+    ("left", "bottom"),
+    ("left", "top"),
+    ("right", "bottom"),
+    ("right", "top"),
+)
 
 
 @dataclass(frozen=True)
 class _PanelSpec:
-    """一个子图的固定语义：面板名、轴标签、系列色与最新值读数。"""
+    """一个子图的固定语义：面板名、轴标签、系列色与最新值小数位。"""
 
     key: str
     xlabel: str
     ylabel: str
     color: str
-    metric: str
-    unit: str
     digits: int
 
 
-# 四张图固定顺序：面板名、X 轴、Y 轴、曲线颜色、读数标签、单位与小数位。
+# 四张图固定顺序：面板名、X 轴、Y 轴、曲线颜色、最新值小数位。
 _PLOT_PANELS = (
     _PanelSpec(
         "input_output",
         "输入功率 (dBm)",
         "输出功率 (dBm)",
         TOKENS["series_1"],
-        "输出功率",
-        "dBm",
         1,
     ),
     _PanelSpec(
@@ -212,8 +223,6 @@ _PLOT_PANELS = (
         "输出功率 (dBm)",
         "增益 (dB)",
         TOKENS["series_2"],
-        "增益",
-        "dB",
         1,
     ),
     _PanelSpec(
@@ -221,8 +230,6 @@ _PLOT_PANELS = (
         "输出功率 (dBm)",
         "效率 (%)",
         TOKENS["series_3"],
-        "效率",
-        "%",
         1,
     ),
     _PanelSpec(
@@ -230,8 +237,6 @@ _PLOT_PANELS = (
         "测量点",
         "DC功耗 (W)",
         TOKENS["series_4"],
-        "DC功耗",
-        "W",
         2,
     ),
 )
@@ -240,15 +245,13 @@ _PANEL_SPECS = {spec.key: spec for spec in _PLOT_PANELS}
 
 #: 线损页的四幅图：每幅一条线缆，横轴频率(GHz)、纵轴线损(dB)。与功放页的四幅图
 #: 语义不同——那边是“同一频点的四个指标”，这边是“同一条缆随频率的完整曲线”。
-#: 图里没有标题，线缆编号直接写进纵轴标签，读数时不必再对照面板名。
+#: 图里没有标题也没有图例，线缆编号与指标直接写进纵轴标签。
 _CABLE_LOSS_PANELS = tuple(
     _PanelSpec(
         f"cable{index}",
         "频率 (GHz)",
         f"线缆{index} 线损 (dB)",
         TOKENS[f"series_{index}"],
-        f"线缆{index}",
-        "dB",
         3,
     )
     for index in range(1, 5)
@@ -293,7 +296,7 @@ class _PanelArtists:
     """一个子图的艺术家集合：静态件只建一次，动态件每个频点只改数据。
 
     动态件（曲线、最新点圆环、数值标注）在重建背景时临时隐藏，所以背景缓存里不会
-    夹带上一个频点的曲线；静态件（坐标轴、刻度、轴标签、图例、目标带、等待提示）
+    夹带上一个频点的曲线；静态件（坐标轴、刻度、轴标签、目标带、等待提示）
     留在背景里，blit 更新不重排、也不重新测量文字。
     """
 
@@ -301,7 +304,6 @@ class _PanelArtists:
     spec: _PanelSpec
     line: Any
     marker: Any
-    legend: Any
     hint: Any | None
     annotation: Any | None = None
     bands: list[Any] = field(default_factory=list)
@@ -379,58 +381,55 @@ def _pair(
     return (xs[:length], ys[:length]) if length else None
 
 
-def _nice_step(span: float, tick_count: int = _VIEW_TICK_COUNT) -> float:
-    """返回 1/2/2.5/5 乘以十的整数次幂的“好看”步长，让边界落在刻度上。"""
-    span = abs(float(span))
-    if not math.isfinite(span) or span <= 0.0:
-        return 1.0
-    raw = span / max(1, int(tick_count))
-    magnitude = 1.0
-    # 用乘除十把 ``raw`` 归一到 [1, 10)，避免引入单位换算里被禁止的幂与对数。
-    while raw >= 10.0:
-        raw /= 10.0
-        magnitude *= 10.0
-    while raw < 1.0:
-        raw *= 10.0
-        magnitude /= 10.0
-    for factor in (1.0, 2.0, 2.5, 5.0, 10.0):
-        if raw <= factor * (1.0 + 1e-12):
-            return factor * magnitude
-    return 10.0 * magnitude
-
-
 def _padded_bounds(
     values: Sequence[float],
     *,
-    pad_ratio: float = _VIEW_PAD_RATIO,
-    min_pad: float = _VIEW_MIN_PAD,
+    steps: float = _VIEW_PAD_STEPS,
     current: tuple[float, float] | None = None,
 ) -> tuple[float, float]:
-    """给数据范围留出余量并向外取整，让后续若干个点不用再次扩界。
+    """按“一个测量步长”给数据范围留余量，让后续一两个点不用再次扩界。
 
-    ``pad_ratio`` 按 span 留白（常数序列改用数值比例与 ``min_pad`` 取较大者），
-    再把上下界向外取整到一个好看的刻度步长：一次扩界就能覆盖后面一段扫描，
-    而不是每个新点都触发一次整图重绘。``current`` 是当前视窗，扩界只增不减：
-    新频点的数据范围比旧视窗更窄时，坐标轴不会突然缩回去再弹开。
+    扫频每多一个点，数据只向外推进一格；所以余量取 ``steps`` 个平均步长即可，
+    不必按 span 的固定比例留白——那会让点很多的曲线四周都空出一大块。余量夹在
+    :data:`_VIEW_MIN_PAD_RATIO` 与 :data:`_VIEW_MAX_PAD_RATIO` 之间：前者避免数据
+    贴着边框，后者避免两三个点时把视窗撑成以空白为主。
+
+    ``current`` 是当前视窗，扩界只增不减：新频点的数据范围比旧视窗更窄时，
+    坐标轴不会突然缩回去再弹开。
     """
     low = float(min(values))
     high = float(max(values))
     span = high - low
-    if span <= 0.0:
-        pad = max(abs(high) * 0.2, min_pad)
+    count = len(values)
+    if span > 0.0:
+        step = span / (count - 1) if count > 1 else span
+        pad = min(
+            max(steps * step, span * _VIEW_MIN_PAD_RATIO),
+            span * _VIEW_MAX_PAD_RATIO,
+        )
     else:
-        pad = max(span * pad_ratio, min_pad)
+        pad = max(abs(high) * _VIEW_FLAT_PAD_RATIO, _VIEW_FLAT_MIN_PAD)
     low -= pad
     high += pad
     if current is not None:
         low = min(low, float(current[0]))
         high = max(high, float(current[1]))
-    step = _nice_step(high - low)
-    low = math.floor(low / step) * step
-    high = math.ceil(high / step) * step
     if high <= low:  # 极端浮点退化时的兜底，matplotlib 不接受零宽视窗。
-        high = low + step
+        high = low + 1.0
     return low, high
+
+
+def _align_annotation(annotation: Any, horizontal: str, vertical: str) -> None:
+    """按选定的方向摆放数值标注：偏移量以点为单位，方向决定正负号。"""
+    dx, dy = _ANNOTATION_OFFSET
+    annotation.set_horizontalalignment(horizontal)
+    annotation.set_verticalalignment(vertical)
+    # ``Annotation`` 的文本位置属性是 ``xyann``（``get_position`` 同一份值）；
+    # 直接写 ``xytext`` 只会留下一个没人读的实例属性。
+    annotation.xyann = (
+        dx if horizontal == "left" else -dx,
+        dy if vertical == "bottom" else -dy,
+    )
 
 
 class RealTimePlotWidget(QWidget):
@@ -634,7 +633,7 @@ class RealTimePlotWidget(QWidget):
         )
 
     def setup_empty_plots(self):
-        """建立当前面板集合的子图：轴、图例和“等待数据”只建一次，之后只改数据。"""
+        """建立当前面板集合的子图：轴和“等待数据”只建一次，之后只改数据。"""
         self._apply_layout()
         self._panels = [
             self._build_panel(key, axis)
@@ -645,7 +644,10 @@ class RealTimePlotWidget(QWidget):
         self.canvas.draw_idle()
 
     def _build_panel(self, key: str, axis) -> _PanelArtists:
-        """一个面板的静态件与空动态件；动态件先隐藏，有数据后再显示。"""
+        """一个面板的静态件与空动态件；动态件先隐藏，有数据后再显示。
+
+        每个子图只有一条曲线，指标与单位由纵轴标签表达，不建图例。
+        """
         panel_spec = _PANEL_SPECS[key]
         self._style_axis(axis, panel_spec.xlabel, panel_spec.ylabel)
         axis.set_xlim(0.0, 1.0)
@@ -657,7 +659,6 @@ class RealTimePlotWidget(QWidget):
             marker="o",
             markersize=3,
             linewidth=1.6,
-            label=f"{panel_spec.metric} ({panel_spec.unit})",
             zorder=2,
         )[0]
         marker = axis.plot(
@@ -671,24 +672,6 @@ class RealTimePlotWidget(QWidget):
             markeredgewidth=1.4,
             zorder=5,
         )[0]
-        legend = axis.legend(
-            [line],
-            [f"{panel_spec.metric} — {panel_spec.unit}"],
-            loc="upper right",
-            fontsize=7.2,
-            frameon=True,
-            facecolor=TOKENS["surface"],
-            edgecolor=TOKENS["border"],
-            # 不透明：图例盖住曲线时，blit 恢复的图例区域与整图绘制逐像素一致。
-            framealpha=1.0,
-            handlelength=1.1,
-            handletextpad=0.4,
-            borderpad=0.3,
-            labelspacing=0.2,
-        )
-        for text in legend.get_texts():
-            text.set_color(TOKENS["text_secondary"])
-            text.set_fontfamily(_CJK)
         line.set_visible(False)
         marker.set_visible(False)
         return _PanelArtists(
@@ -696,7 +679,6 @@ class RealTimePlotWidget(QWidget):
             spec=panel_spec,
             line=line,
             marker=marker,
-            legend=legend,
             hint=self._add_waiting_hint(axis),
         )
 
@@ -909,15 +891,74 @@ class RealTimePlotWidget(QWidget):
         for artist in (panel.line, panel.marker, panel.annotation):
             if not artist.get_visible():
                 artist.set_visible(True)
-        return self._expand_view(panel, xs, ys) or static_changed
+        static_changed = self._expand_view(panel, xs, ys) or static_changed
+        self._place_annotation(panel)
+        return static_changed
+
+    def _place_annotation(self, panel: _PanelArtists) -> None:
+        """给最新值标注挑一个不超出画布的方向。
+
+        视窗按测量步长收紧后，最后一个点常常贴着右上角；继续按“右上”偏移会把
+        数字画到画布外面。依次尝试右上、右下、左上、左下，取第一个完整落在画布
+        内的方向；量不到渲染器时退回右上，让标注至少跟着点走。
+        """
+        annotation = panel.annotation
+        if annotation is None:
+            return
+        renderer = self._renderer()
+        if renderer is None:
+            _align_annotation(annotation, *_ANNOTATION_SIDES[0])
+            return
+        try:
+            text_box = annotation.get_window_extent(renderer)
+        except (AttributeError, RuntimeError, ValueError):
+            _align_annotation(annotation, *_ANNOTATION_SIDES[0])
+            return
+        width = float(text_box.width)
+        height = float(text_box.height)
+        x, y = (float(value) for value in annotation.xy)
+        point_x, point_y = panel.axis.transData.transform((x, y))
+        scale = float(self.figure.dpi) / 72.0
+        pad_x, pad_y = _ANNOTATION_OFFSET[0] * scale, _ANNOTATION_OFFSET[1] * scale
+        # 圆角框与抗锯齿比文字包围盒多出约 2px，边界也按外扩后的框判断。
+        frame = self.figure.bbox
+        low_x, high_x = frame.x0 + 2.0, frame.x1 - 2.0
+        low_y, high_y = frame.y0 + 2.0, frame.y1 - 2.0
+        for horizontal, vertical in _ANNOTATION_SIDES:
+            left = (
+                point_x + pad_x
+                if horizontal == "left"
+                else point_x - pad_x - width
+            )
+            bottom = (
+                point_y + pad_y
+                if vertical == "bottom"
+                else point_y - pad_y - height
+            )
+            if left < low_x or left + width > high_x:
+                continue
+            if bottom < low_y or bottom + height > high_y:
+                continue
+            _align_annotation(annotation, horizontal, vertical)
+            return
+        _align_annotation(annotation, "left", "top")
+
+    def _renderer(self) -> Any | None:
+        """取画布渲染器；拿不到时返回 ``None``（标注退回默认方向）。"""
+        try:
+            return self.canvas.get_renderer()
+        except (AttributeError, RuntimeError):
+            return None
 
     def _add_annotation(self, panel: _PanelArtists):
         """最新点旁的数值标注；没有数据的面板上不存在这个艺术家。"""
         return panel.axis.annotate(
             "",
             xy=(0.0, 0.0),
-            xytext=(7, 6),
+            xytext=_ANNOTATION_OFFSET,
             textcoords="offset points",
+            horizontalalignment="left",
+            verticalalignment="bottom",
             fontsize=7.2,
             fontweight="bold",
             color=panel.spec.color,
@@ -939,10 +980,11 @@ class RealTimePlotWidget(QWidget):
         xs: list[float],
         ys: list[float],
     ) -> bool:
-        """数据越出当前视窗才扩界；扩界一次就覆盖后面一段扫描。
+        """数据越出当前视窗才扩界；新视窗只比数据多出一个测量步长。
 
-        视窗只增不减：新频点的数据范围更窄时坐标轴不会缩回去。因此一条扫频曲线
-        的早期扩张只重绘两三次，之后的新点都在同一视窗里 blit。
+        视窗只增不减：新频点的数据范围更窄时坐标轴不会缩回去。扫频推进时每个新
+        点仍可能落在视窗外，此时重建一次背景；但视窗贴着数据，不会因为预留大块
+        空白而让整张图看起来没画满。测量点之间有秒级间隔，一次整图绘制来得及。
         """
         x_low, x_high = panel.xlim
         y_low, y_high = panel.ylim
@@ -1068,10 +1110,10 @@ class RealTimePlotWidget(QWidget):
         self._blit()
 
     def _capture_overlays(self) -> list[Any]:
-        """截取静态层里压在数据之上的元素（图例、目标带标签）。
+        """截取静态层里压在数据之上的元素（目标带标签）。
 
         这些元素留在背景缓存里，但按 zorder 必须盖住曲线；blit 时先画曲线，再把
-        它们各自的区域恢复一次，既不需要每帧重画图例文字，也不会让曲线穿过图例。
+        它们各自的区域恢复一次，既不需要每帧重画文字，也不会让曲线穿过标签。
         区域比元素包围盒多留 1px，避免圆角与抗锯齿在边界留下旧像素。
         """
         try:
@@ -1080,10 +1122,6 @@ class RealTimePlotWidget(QWidget):
             return []
         boxes: list[Any] = []
         for panel in self._panels:
-            try:
-                boxes.append(panel.legend.get_window_extent(renderer).padded(1.0))
-            except (AttributeError, RuntimeError, ValueError):
-                pass
             for artist in panel.bands:
                 if not isinstance(artist, Text) or not artist.get_visible():
                     continue
@@ -1118,8 +1156,8 @@ class RealTimePlotWidget(QWidget):
             for artist in (panel.line, panel.marker):
                 if artist.get_visible():
                     self.figure.draw_artist(artist)
-        # 图例/目标带标签在完整绘制里盖住曲线：先画曲线，再恢复它们的区域，
-        # 避免曲线穿过图例；数值标注的 zorder 更高，最后画在它们之上。
+        # 目标带标签在完整绘制里盖住曲线：先画曲线，再恢复它们的区域，
+        # 避免曲线穿过标签；数值标注的 zorder 更高，最后画在它们之上。
         for region in self._overlay_regions:
             self.canvas.restore_region(region)
         for panel in self._panels:

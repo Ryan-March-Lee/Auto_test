@@ -1,4 +1,4 @@
-"""实时图表的 P2 编码：最新点、图例、目标带、节流、blit 与胶片条。"""
+"""实时图表的 P2 编码：最新点、目标带、节流、blit 与胶片条。"""
 
 import os
 import unittest
@@ -52,22 +52,15 @@ class _PlotCase(unittest.TestCase):
 
 
 class LatestPointTests(_PlotCase):
-    def test_each_subplot_shows_a_static_metric_legend(self):
+    def test_each_subplot_has_no_legend_for_its_single_curve(self):
         plot = self._plot()
 
         plot.update_plot(dict(_SWEEP))
 
-        # 图例只显示指标与单位，属于背景缓存；最新值在点旁标注与页面读数条里。
-        legends = [axis.get_legend().get_texts()[0].get_text() for axis in plot.figure.axes]
-        self.assertEqual(
-            legends,
-            [
-                "输出功率 — dBm",
-                "增益 — dB",
-                "效率 — %",
-                "DC功耗 — W",
-            ],
-        )
+        # 每张图只有一条曲线，指标与单位写在纵轴标签上；图例只会占用曲线右上角。
+        for axis in plot.figure.axes:
+            self.assertIsNone(axis.get_legend())
+            self.assertEqual(len(axis.get_lines()), 2, "只有曲线与最新点圆环")
 
     def test_latest_point_is_ringed_and_annotated(self):
         plot = self._plot()
@@ -79,6 +72,47 @@ class LatestPointTests(_PlotCase):
             self.assertEqual(len(axis.texts), 1, "最新点旁的数值标注")
         self.assertEqual(plot.ax2.texts[0].get_text(), "28.3")
         self.assertEqual(plot.ax4.texts[0].get_text(), "58.80")
+
+    def test_latest_value_tag_stays_inside_the_canvas(self):
+        plot = self._plot()
+
+        # 最后一个点落在右上角：标注不会画到画布外面。
+        plot.update_plot(
+            {
+                "frequency": 1.0,
+                "sweep_data": {
+                    "input_power_dut": [-20.0, 0.0],
+                    "output_power_dut": [10.0, 28.0],
+                },
+            }
+        )
+
+        renderer = plot.canvas.get_renderer()
+        annotation = plot.ax1.texts[0]
+        tag = annotation.get_window_extent(renderer)
+        frame = plot.figure.bbox
+        self.assertGreaterEqual(tag.x0, frame.x0)
+        self.assertLessEqual(tag.x1, frame.x1)
+        self.assertGreaterEqual(tag.y0, frame.y0)
+        self.assertLessEqual(tag.y1, frame.y1)
+
+    def test_latest_value_tag_stays_above_a_point_in_the_middle(self):
+        plot = self._plot()
+
+        plot.update_plot(
+            {
+                "frequency": 1.0,
+                "sweep_data": {
+                    "input_power_dut": [-20.0, -10.0, 0.0],
+                    "output_power_dut": [10.0, 20.0, 14.0],
+                },
+            }
+        )
+
+        annotation = plot.ax1.texts[0]
+        self.assertEqual(annotation.get_horizontalalignment(), "left")
+        self.assertEqual(annotation.get_verticalalignment(), "bottom")
+        self.assertEqual(annotation.get_position(), (7, 6))
 
     def test_empty_panels_explain_the_waiting_state(self):
         plot = self._plot()
@@ -139,11 +173,10 @@ class PanelSelectionTests(_PlotCase):
 
         self.assertEqual(widget.panel_keys(), CABLE_LOSS_PANELS)
         self.assertEqual(len(widget.figure.axes), 4)
-        legends = [
-            axis.get_legend().get_texts()[0].get_text()
-            for axis in widget.figure.axes
-        ]
-        self.assertEqual(legends, ["线缆1 — dB", "线缆2 — dB", "线缆3 — dB", "线缆4 — dB"])
+        # 每张图只有一条线缆，编号与指标写在纵轴标签里，不画图例。
+        self.assertTrue(
+            all(axis.get_legend() is None for axis in widget.figure.axes)
+        )
         self.assertEqual(widget.ax1.get_xlabel(), "频率 (GHz)")
         self.assertEqual(widget.ax1.get_ylabel(), "线缆1 线损 (dB)")
         self.assertEqual(widget.ax4.get_ylabel(), "线缆4 线损 (dB)")
@@ -178,11 +211,6 @@ class PanelSelectionTests(_PlotCase):
             widget.figure.axes[0].get_subplotspec().get_gridspec().get_geometry(),
             (1, 2),
         )
-        legends = [
-            axis.get_legend().get_texts()[0].get_text()
-            for axis in widget.figure.axes
-        ]
-        self.assertEqual(legends, ["输出功率 — dBm", "增益 — dB"])
         self.assertFalse(hasattr(widget, "ax3"), "收窄后不保留多余坐标轴")
 
     def test_switching_panels_rebuilds_the_figure_and_waits_for_new_data(self):
@@ -390,8 +418,26 @@ class BlitRenderTests(_PlotCase):
 
         self.assertLess(float(np.mean(blitted != full)), 0.001)
 
-    def test_growing_sweep_settles_instead_of_rebuilding_per_point(self):
-        """一条扫频曲线越扫越长时只扩界几次，不每个点都整图重绘一遍。"""
+    def test_axis_view_hugs_the_data_instead_of_padding_by_a_fixed_share(self):
+        """视窗按测量步长留余量：数据占满坐标区的大部分，不再四周一大片空白。"""
+        plot = self._shown_plot()
+        plot.update_plot(dict(_SWEEP))
+        plot._render()
+
+        pins = _SWEEP["sweep_data"]["input_power_dut"]
+        pouts = _SWEEP["sweep_data"]["output_power_dut"]
+        x_low, x_high = plot.ax1.get_xlim()
+        y_low, y_high = plot.ax1.get_ylim()
+
+        self.assertLess(x_high - x_low, (max(pins) - min(pins)) * 1.25)
+        self.assertLess(y_high - y_low, (max(pouts) - min(pouts)) * 1.25)
+
+    def test_growing_sweep_rebuilds_at_most_once_per_point(self):
+        """扫频每来一个点最多重建一次背景；测量点之间有一整个测量间隔。
+
+        视窗为了贴合数据会随点推进而扩界，因此点数少时相对余量大一点；这里约束的
+        是“同一个点不重复重建”，而不是把所有点都塞进一个按 span 留白的宽视窗。
+        """
         plot = self._shown_plot()
         powers = [-30, -24, -20.5, -17.4, -14.8, -12.6, -10.7, -9.1, -7.7, -6.5]
 
@@ -413,8 +459,10 @@ class BlitRenderTests(_PlotCase):
                 plot._render()
 
         self.assertLessEqual(
-            rebuild.call_count, 4, "扩界要为后续扫描点留余量，不能逐点重建"
+            rebuild.call_count, len(powers), "每个新点最多扩界一次，不能同一帧反复重建"
         )
+        low, high = plot.ax1.get_xlim()
+        self.assertLess(high - low, (max(powers) - min(powers)) * 1.3, "视窗要贴着数据")
 
     def test_new_frequency_does_not_shrink_the_view(self):
         plot = self._shown_plot()

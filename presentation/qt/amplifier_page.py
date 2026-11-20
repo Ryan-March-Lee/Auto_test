@@ -133,7 +133,7 @@ class AmplifierPage(
 
         control_surface = build_surface(CONTROL_SURFACE, title="测量控制")
         control_layout = control_surface.layout()
-        self.amplifier_test_btn = QPushButton("开始功放测试")
+        self.amplifier_test_btn = QPushButton("开始测试")
         set_button_variant(self.amplifier_test_btn, "primary")
         self.amplifier_test_btn.clicked.connect(self.start_measurement)
         self.stop_btn = QPushButton("停止测量")
@@ -158,10 +158,15 @@ class AmplifierPage(
             },
         )
         self.controls.show_idle()
-        # 开始是控制面唯一的主操作；停止与连接图纵向排列，一行一个。
-        control_layout.addWidget(self.amplifier_test_btn)
-        for button in (self.stop_btn, self.show_amp_diagram_btn):
-            control_layout.addWidget(button)
+        # 开始与停止是同一组运行控制：并排一行，开始仍是唯一的主操作；
+        # 连接图等其余动作仍纵向排列，一行一个。
+        action_row = QHBoxLayout()
+        action_row.setContentsMargins(0, 0, 0, 0)
+        action_row.setSpacing(8)
+        action_row.addWidget(self.amplifier_test_btn, 1)
+        action_row.addWidget(self.stop_btn, 1)
+        control_layout.addLayout(action_row)
+        control_layout.addWidget(self.show_amp_diagram_btn)
         # 两类校准输入是主功放测量的前置条件：合并成同一个“校准输入”区块，每行是
         # 来源文件、测量时间和加载动作。驱动关闭时不需要驱动映射，整行随模式隐藏。
         control_layout.addWidget(hairline())

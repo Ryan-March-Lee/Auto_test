@@ -136,7 +136,7 @@ class DriverMappingPage(
 
         control_surface = build_surface(CONTROL_SURFACE, title="测量控制")
         control_layout = control_surface.layout()
-        self.driver_mapping_btn = QPushButton("开始驱动映射")
+        self.driver_mapping_btn = QPushButton("开始测试")
         set_button_variant(self.driver_mapping_btn, "primary")
         self.driver_mapping_btn.clicked.connect(self.start_measurement)
         self.driver_stop_btn = QPushButton("停止测量")
@@ -156,10 +156,15 @@ class DriverMappingPage(
             },
         )
         self.controls.show_idle()
-        # 开始是控制面唯一的主操作；停止与连接图纵向排列，一行一个。
-        control_layout.addWidget(self.driver_mapping_btn)
-        for button in (self.driver_stop_btn, self.show_driver_diagram_btn):
-            control_layout.addWidget(button)
+        # 开始与停止是同一组运行控制：并排一行，开始仍是唯一的主操作；
+        # 连接图等其余动作仍纵向排列，一行一个。
+        action_row = QHBoxLayout()
+        action_row.setContentsMargins(0, 0, 0, 0)
+        action_row.setSpacing(8)
+        action_row.addWidget(self.driver_mapping_btn, 1)
+        action_row.addWidget(self.driver_stop_btn, 1)
+        control_layout.addLayout(action_row)
+        control_layout.addWidget(self.show_driver_diagram_btn)
         # 线损是驱动映射的前置输入：加载入口与来源文件、测量时间同属“校准输入”区块。
         # 未选择时这里给出明确空态，但“是否允许启动”的判断仍留在 start_measurement。
         control_layout.addWidget(hairline())

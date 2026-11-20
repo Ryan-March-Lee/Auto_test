@@ -141,7 +141,7 @@ class CableLossPageTests(unittest.TestCase):
         self.page.bind_controller(self.controller)
         self.addCleanup(_destroy_widget, self.page)
 
-        self.assertTrue(self.page.start_measurement_btn.text() == "开始测量")
+        self.assertEqual(self.page.start_measurement_btn.text(), "开始测试")
         self.assertFalse(self.page.stop_cable_loss_btn.isEnabled())
         self.assertFalse(hasattr(self.page, "stage2_measurement_btn"))
         self.assertFalse(hasattr(self.page, "cable_loss_table"))
@@ -347,21 +347,24 @@ class CableLossPageTests(unittest.TestCase):
         self.assertFalse(hasattr(self.page, "show_path2_btn"))
         self.assertEqual(self.page.findChildren(QTextEdit), [])
 
-    def test_actions_stack_vertically_one_per_row(self):
+    def test_start_and_stop_share_a_row_and_other_actions_stack(self):
         page = self.page
         page.resize(1200, 800)
         page.show()
         self.app.processEvents()
-        buttons = (
-            page.start_measurement_btn,
-            page.stop_cable_loss_btn,
+        start = page.start_measurement_btn
+        stop = page.stop_cable_loss_btn
+        self.assertEqual(start.geometry().top(), stop.geometry().top())
+        self.assertLess(start.geometry().left(), stop.geometry().left())
+        below = (
             page.show_cable_loss_diagram_btn,
             page.load_cable_results_btn,
         )
-        tops = [button.geometry().top() for button in buttons]
+        tops = [button.geometry().top() for button in below]
         self.assertEqual(tops, sorted(tops))
-        self.assertEqual(len(set(tops)), len(buttons))
-        self.assertEqual(len({button.geometry().width() for button in buttons}), 1)
+        self.assertEqual(len(set(tops)), len(below))
+        self.assertGreater(tops[0], start.geometry().top())
+        self.assertEqual(len({button.geometry().width() for button in below}), 1)
         page.close()
 
     def test_result_surface_holds_the_plot_monitor_and_source_label(self):

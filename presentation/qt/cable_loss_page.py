@@ -133,7 +133,7 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
 
         control_surface = build_surface(CONTROL_SURFACE, title="测量控制")
         control_layout = control_surface.layout()
-        self.start_measurement_btn = QPushButton("开始测量")
+        self.start_measurement_btn = QPushButton("开始测试")
         self.load_cable_results_btn = QPushButton("加载测量结果")
         self.stop_cable_loss_btn = QPushButton("停止测量")
         set_button_variant(self.start_measurement_btn, "primary")
@@ -156,11 +156,15 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
             },
         )
         self.controls.show_idle()
-        # 开始是控制面唯一的主操作；其余动作纵向排列，一行一个，窄栏里每个按钮都
-        # 保持完整文案，不把三个按钮挤在同一行。
-        control_layout.addWidget(self.start_measurement_btn)
+        # 开始与停止是同一组运行控制：并排一行；连接图与加载结果等其余动作仍纵向
+        # 排列，一行一个，窄栏里每个按钮都保持完整文案。
+        action_row = QHBoxLayout()
+        action_row.setContentsMargins(0, 0, 0, 0)
+        action_row.setSpacing(8)
+        action_row.addWidget(self.start_measurement_btn, 1)
+        action_row.addWidget(self.stop_cable_loss_btn, 1)
+        control_layout.addLayout(action_row)
         for button in (
-            self.stop_cable_loss_btn,
             self.show_cable_loss_diagram_btn,
             self.load_cable_results_btn,
         ):

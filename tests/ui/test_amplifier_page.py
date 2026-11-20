@@ -116,6 +116,7 @@ class AmplifierPageTests(unittest.TestCase):
         self.addCleanup(_destroy_widget, self.page)
         self.page.bind_controller(self.controller)
 
+        self.assertEqual(self.page.amplifier_test_btn.text(), "开始测试")
         self.assertTrue(self.page.amplifier_test_btn.isEnabled())
         self.assertFalse(self.page.stop_btn.isEnabled())
         self.assertFalse(hasattr(self.page, "result_table"))
@@ -511,15 +512,18 @@ class AmplifierPageTests(unittest.TestCase):
         self.assertTrue(self.page.amplifier_test_btn.isEnabled())
         self.assertFalse(self.page.stop_btn.isEnabled())
 
-    def test_stop_and_diagram_stack_vertically_below_start(self):
+    def test_stop_shares_the_row_with_start_and_diagram_sits_below(self):
         page = self.page
         page.resize(1200, 800)
         page.show()
         self.app.processEvents()
-        buttons = (page.stop_btn, page.show_amp_diagram_btn)
-        tops = [button.geometry().top() for button in buttons]
-        self.assertLess(tops[0], tops[1])
-        self.assertLess(page.amplifier_test_btn.geometry().top(), tops[0])
+        start_top = page.amplifier_test_btn.geometry().top()
+        self.assertEqual(page.stop_btn.geometry().top(), start_top)
+        self.assertLess(
+            page.amplifier_test_btn.geometry().left(),
+            page.stop_btn.geometry().left(),
+        )
+        self.assertLess(start_top, page.show_amp_diagram_btn.geometry().top())
         page.close()
 
     def test_left_column_holds_controls_and_result_surface_takes_the_right(self):
@@ -583,39 +587,44 @@ class AmplifierPageTests(unittest.TestCase):
         ]
         self.assertEqual(primary, [self.page.amplifier_test_btn])
 
-    def test_actions_stack_vertically_one_per_row(self):
+    def test_start_and_stop_share_a_row_and_other_actions_stack(self):
         from PySide6.QtWidgets import QFrame
 
         control = self.page.findChild(QFrame, "measurementSurface")
         control_layout = control.layout()
-        widgets = [
-            control_layout.itemAt(index).widget()
-            for index in range(control_layout.count())
-        ]
+        action_layout = control_layout.itemAt(1).layout()
         self.assertEqual(
-            widgets[1:4],
             [
-                self.page.amplifier_test_btn,
-                self.page.stop_btn,
-                self.page.show_amp_diagram_btn,
+                action_layout.itemAt(index).widget()
+                for index in range(action_layout.count())
             ],
+            [self.page.amplifier_test_btn, self.page.stop_btn],
+        )
+        self.assertEqual(
+            control_layout.itemAt(2).widget(), self.page.show_amp_diagram_btn
         )
         self.page.resize(1200, 800)
         self.page.show()
         self.app.processEvents()
-        buttons = (
-            self.page.amplifier_test_btn,
-            self.page.stop_btn,
+        start = self.page.amplifier_test_btn
+        stop = self.page.stop_btn
+        self.assertEqual(
+            start.mapTo(control, start.rect().topLeft()).y(),
+            stop.mapTo(control, stop.rect().topLeft()).y(),
+        )
+        stacked = (
             self.page.show_amp_diagram_btn,
             self.page.load_cable_loss_btn,
             self.page.load_driver_mapping_btn,
         )
         tops = [
-            button.mapTo(control, button.rect().topLeft()).y() for button in buttons
+            button.mapTo(control, button.rect().topLeft()).y() for button in stacked
         ]
         self.assertEqual(tops, sorted(tops))
-        self.assertEqual(len(set(tops)), len(buttons))
-        self.assertEqual(len({button.geometry().width() for button in buttons}), 1)
+        self.assertEqual(len(set(tops)), len(stacked))
+        self.assertGreater(
+            tops[0], start.mapTo(control, start.rect().topLeft()).y()
+        )
         self.page.close()
 
     def test_calibration_rows_stack_the_load_action_above_its_source(self):

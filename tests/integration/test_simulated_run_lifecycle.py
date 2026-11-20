@@ -261,7 +261,7 @@ class SimulatedRunLifecycleTests(unittest.TestCase):
         self.assertEqual(Path(amplifier_cable.path), Path(cable_selection.path))
         self.assertIn(
             cable_selection.filename,
-            window.driver_mapping_page.cable_loss_source_label.text(),
+            window.driver_mapping_page.load_data_btn.toolTip(),
         )
         self.assertIn("阶段结果已自动归档", logs)
 
@@ -280,7 +280,7 @@ class SimulatedRunLifecycleTests(unittest.TestCase):
         self.assertTrue(Path(mapping_selection.path).is_relative_to(mapping_dir))
         self.assertIn(
             mapping_selection.filename,
-            window.amplifier_page.driver_mapping_source_label.text(),
+            window.amplifier_page.load_data_btn.toolTip(),
         )
 
         # -- 主功放：两份新校准输入都来自本次仿真运行 --------------------------

@@ -10,7 +10,6 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
-    QLabel,
     QMessageBox,
     QPushButton,
     QVBoxLayout,
@@ -25,6 +24,7 @@ from .measurement_start_facade import (
 from application.dto import DriverPowerMappingMeasurementResult
 from application.dto.measurement_requests import StageResultDigest
 from .archival_page import ArchivalPageMixin
+from .load_data_dialog import LoadTarget, load_tooltip, selection_source_text
 from .measurement_console import (
     CheckState,
     ConsoleCheck,
@@ -49,8 +49,6 @@ from .measurement_surface import (
     CONTROL_SURFACE,
     RESULT_SURFACE,
     build_surface,
-    hairline,
-    section_caption,
 )
 from .pages import PageControllerBindingMixin
 from .realtime_buffer import RealtimeMeasurementBuffer
@@ -145,9 +143,11 @@ class DriverMappingPage(
         self.show_driver_diagram_btn = QPushButton("查看连接图")
         set_button_variant(self.show_driver_diagram_btn, "secondary")
         self.show_driver_diagram_btn.clicked.connect(self.show_connection_diagram)
-        self.load_cable_loss_btn = QPushButton("加载线损结果")
-        set_button_variant(self.load_cable_loss_btn, "secondary")
-        self.load_cable_loss_btn.clicked.connect(self.load_cable_loss_requested.emit)
+        # 一个“加载数据”入口：本页只有线损一种数据，点击直接进入文件选择器；
+        # 已选来源放在按钮 tooltip 里，控制面不再是“按钮 + 来源文字”的纵向堆叠。
+        self.load_data_btn = QPushButton("加载数据")
+        set_button_variant(self.load_data_btn, "secondary")
+        self.load_data_btn.clicked.connect(self.load_cable_loss_requested.emit)
         self.controls = MeasurementControlPresenter(
             MeasurementKind.DRIVER_MAPPING,
             {
@@ -156,29 +156,25 @@ class DriverMappingPage(
             },
         )
         self.controls.show_idle()
-        # 开始与停止是同一组运行控制：并排一行，开始仍是唯一的主操作；
-        # 连接图等其余动作仍纵向排列，一行一个。
+        # 第一行是运行控制（开始仍是唯一的主操作），第二行是加载数据与连接图：
+        # 加载数据在左，查看连接图在右，与另两个测量页一致。
         action_row = QHBoxLayout()
         action_row.setContentsMargins(0, 0, 0, 0)
         action_row.setSpacing(8)
         action_row.addWidget(self.driver_mapping_btn, 1)
         action_row.addWidget(self.driver_stop_btn, 1)
         control_layout.addLayout(action_row)
-        control_layout.addWidget(self.show_driver_diagram_btn)
-        # 线损是驱动映射的前置输入：加载入口与来源文件、测量时间同属“校准输入”区块。
-        # 未选择时这里给出明确空态，但“是否允许启动”的判断仍留在 start_measurement。
-        control_layout.addWidget(hairline())
-        control_layout.addWidget(section_caption("校准输入"))
-        control_layout.addWidget(self.load_cable_loss_btn)
-        self.cable_loss_source_label = QLabel()
-        self.cable_loss_source_label.setObjectName("emptyHint")
-        self.cable_loss_source_label.setWordWrap(True)
-        control_layout.addWidget(self.cable_loss_source_label)
+        load_row = QHBoxLayout()
+        load_row.setContentsMargins(0, 0, 0, 0)
+        load_row.setSpacing(8)
+        load_row.addWidget(self.load_data_btn, 1)
+        load_row.addWidget(self.show_driver_diagram_btn, 1)
+        control_layout.addLayout(load_row)
         # 运行控制台放在左栏顶部：运行时间、线损输入是否已选、接线与归档位置。
         self.console = MeasurementRunConsole()
         left_layout.addWidget(self.console)
         left_layout.addWidget(control_surface)
-        self._sync_cable_loss_label()
+        self._sync_load_tooltip()
         self._refresh_console()
         self.archival_banner = self._build_archival_banner()
         left_layout.addWidget(self.archival_banner)
@@ -286,7 +282,7 @@ class DriverMappingPage(
         sha256: str,
         size_bytes: int,
     ) -> None:
-        """记录用户显式选择的线损结果，并回显来源文件与测量时间。
+        """记录用户显式选择的线损结果，并更新“加载数据”的来源说明。
 
         文件内容、阶段目录边界与结果类型已由应用层校验；页面只保存窗口交回的事实，
         不读取文件，也不把这里的显示当成测量输入的第二次校验。``sha256`` 与
@@ -299,7 +295,7 @@ class DriverMappingPage(
             created_at=created_at,
             digest=StageResultDigest(sha256=sha256, size_bytes=size_bytes),
         )
-        self._sync_cable_loss_label()
+        self._sync_load_tooltip()
         self._refresh_console()
         self._log_callback(
             f"已选择驱动映射线损测量结果：{filename}"
@@ -321,17 +317,17 @@ class DriverMappingPage(
         selection = self._cable_loss_selection
         return None if selection is None else selection.digest
 
-    def _sync_cable_loss_label(self) -> None:
-        label = getattr(self, "cable_loss_source_label", None)
-        if label is None:
+    def _sync_load_tooltip(self) -> None:
+        """把已选的线损来源写进“加载数据”的 tooltip：控制面不再常驻来源文字。"""
+        button = getattr(self, "load_data_btn", None)
+        if button is None:
             return
-        selection = self._cable_loss_selection
-        if selection is None:
-            label.setText("未选择线损结果：开始前请先加载线损测量结果")
-            return
-        label.setText(
-            f"线损来源：{selection.filename}\n测量时间：{selection.created_at}"
+        target = LoadTarget(
+            "cable_loss",
+            "线损数据",
+            selection_source_text(self._cable_loss_selection),
         )
+        button.setToolTip(load_tooltip((target,)))
 
     @property
     def _realtime_data(self):
@@ -520,7 +516,7 @@ class DriverMappingPage(
     def on_activated(self) -> None:
         """回到本页时刷新运行事实：运行可能已重新连接，线损选择也可能已变化。"""
         super().on_activated()
-        self._sync_cable_loss_label()
+        self._sync_load_tooltip()
         self._refresh_console()
 
     def _refresh_console(self) -> None:

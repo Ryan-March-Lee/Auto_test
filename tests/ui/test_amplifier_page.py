@@ -1,6 +1,7 @@
 import os
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -223,7 +224,7 @@ class AmplifierPageTests(unittest.TestCase):
         self.assertEqual(checked.calls[0][0], "start")
         self.assertEqual(replacement.calls, [])
 
-    def test_load_buttons_only_emit_the_selection_requests(self):
+    def test_load_button_offers_both_inputs_and_emits_the_chosen_request(self):
         cable_requests = []
         driver_requests = []
         self.page.load_cable_loss_requested.connect(
@@ -233,13 +234,46 @@ class AmplifierPageTests(unittest.TestCase):
             lambda: driver_requests.append(True)
         )
 
-        self.page.load_cable_loss_btn.click()
-        self.page.load_driver_mapping_btn.click()
+        with patch(
+            "presentation.qt.amplifier_page.choose_load_target",
+            return_value="cable_loss",
+        ):
+            self.page.load_data_btn.click()
+        with patch(
+            "presentation.qt.amplifier_page.choose_load_target",
+            return_value="driver_mapping",
+        ):
+            self.page.load_data_btn.click()
+        with patch(
+            "presentation.qt.amplifier_page.choose_load_target",
+            return_value=None,
+        ):
+            self.page.load_data_btn.click()
 
         self.assertEqual(cable_requests, [True])
         self.assertEqual(driver_requests, [True])
 
-    def test_selected_inputs_show_their_source_and_measurement_time(self):
+    def test_load_dialog_lists_both_inputs_with_their_current_sources(self):
+        self._select_cable_loss()
+        captured = []
+
+        def choose(_parent, targets):
+            captured.extend(targets)
+            return None
+
+        with patch(
+            "presentation.qt.amplifier_page.choose_load_target", side_effect=choose
+        ):
+            self.page.load_data_btn.click()
+
+        self.assertEqual(
+            [target.key for target in captured], ["cable_loss", "driver_mapping"]
+        )
+        self.assertIn("20261111T010203Z_a1b2c3d4.json", captured[0].source)
+        self.assertIn("2026-11-11T01:02:03+00:00", captured[0].source)
+        self.assertIsNone(captured[1].source)
+
+    def test_selected_inputs_are_visible_in_the_load_tooltip(self):
         # 两类输入互不关联：来源文件与测量时间可以来自不同日期和运行。
         self._select_cable_loss("20261111T010203Z_a1b2c3d4.json", "2026-11-11T01:02:03+00:00")
         self._select_driver_mapping("20261110T050607Z_0f1e2d3c.json", "2026-11-10T05:06:07+00:00")
@@ -251,33 +285,33 @@ class AmplifierPageTests(unittest.TestCase):
         self.assertEqual(cable.filename, "20261111T010203Z_a1b2c3d4.json")
         self.assertEqual(driver.filename, "20261110T050607Z_0f1e2d3c.json")
         self.assertNotEqual(cable.created_at, driver.created_at)
-        self.assertIn(cable.filename, self.page.cable_loss_source_label.text())
-        self.assertIn(cable.created_at, self.page.cable_loss_source_label.text())
-        self.assertIn(driver.filename, self.page.driver_mapping_source_label.text())
-        self.assertIn(driver.created_at, self.page.driver_mapping_source_label.text())
+        tooltip = self.page.load_data_btn.toolTip()
+        for expected in (
+            cable.filename,
+            cable.created_at,
+            driver.filename,
+            driver.created_at,
+        ):
+            self.assertIn(expected, tooltip)
         self.assertIn("已选择主功放线损测量结果", self.logs[-2])
         self.assertIn("已选择主功放驱动映射测量结果", self.logs[-1])
 
-    def test_without_selections_the_labels_prompt_per_driver_mode(self):
+    def test_without_selections_the_tooltip_prompts_per_driver_mode(self):
         self.assertIsNone(self.page.cable_loss_selection)
         self.assertIsNone(self.page.driver_mapping_selection)
-        self.assertIn("未选择线损结果", self.page.cable_loss_source_label.text())
-        self.assertIn(
-            "未选择驱动映射结果", self.page.driver_mapping_source_label.text()
-        )
-        # 驱动关闭时入口与来源行一起隐藏，不再提示加载驱动映射。
+        tooltip = self.page.load_data_btn.toolTip()
+        self.assertIn("线损数据：未选择", tooltip)
+        self.assertIn("驱放数据：未选择", tooltip)
+        # 驱动关闭时加载目标里不再有驱放一项，tooltip 也不再列它。
         self.page._driver_mode_provider = lambda: False
         self.page.on_activated()
-        self.assertTrue(self.page.load_driver_mapping_btn.isHidden())
-        self.assertTrue(self.page.driver_mapping_source_label.isHidden())
-        self.assertIn(
-            "无驱放测试不需要驱动映射结果",
-            self.page.driver_mapping_source_label.text(),
+        self.assertNotIn("驱放数据", self.page.load_data_btn.toolTip())
+        self.assertEqual(
+            [target.key for target in self.page._load_targets()], ["cable_loss"]
         )
         self.page._driver_mode_provider = lambda: True
         self.page.on_activated()
-        self.assertFalse(self.page.load_driver_mapping_btn.isHidden())
-        self.assertFalse(self.page.driver_mapping_source_label.isHidden())
+        self.assertIn("驱放数据", self.page.load_data_btn.toolTip())
 
     def test_start_without_required_inputs_neither_connects_nor_starts(self):
         self.page.start_measurement()
@@ -377,7 +411,9 @@ class AmplifierPageTests(unittest.TestCase):
 
         self.assertEqual(self.errors, [])
         self.assertEqual(self.controller.calls[0][0], "start")
-        self.assertTrue(self.page.driver_mapping_source_label.isHidden())
+        self.assertEqual(
+            [target.key for target in self.page._load_targets()], ["cable_loss"]
+        )
         self.assertIsNotNone(self.page.driver_mapping_selection)
 
     def test_switching_back_to_driver_on_rechecks_the_saved_selection(self):
@@ -388,7 +424,10 @@ class AmplifierPageTests(unittest.TestCase):
         self.page.on_activated()
 
         # 切回有驱放不需要重新选择：已有选择重新成为必需输入并照常通过。
-        self.assertFalse(self.page.load_driver_mapping_btn.isHidden())
+        self.assertEqual(
+            [target.key for target in self.page._load_targets()],
+            ["cable_loss", "driver_mapping"],
+        )
         self.page.start_measurement()
         self.assertEqual(self.errors, [])
         self.assertEqual(self.controller.calls[0][0], "start")
@@ -407,7 +446,7 @@ class AmplifierPageTests(unittest.TestCase):
 
         self._select_cable_loss("second.json", "2026-11-12T04:05:06+00:00")
         self.assertEqual(self.page.cable_loss_selection.filename, "second.json")
-        self.assertIn("second.json", self.page.cable_loss_source_label.text())
+        self.assertIn("second.json", self.page.load_data_btn.toolTip())
         # 替换线损不会影响驱动映射选择。
         self.assertEqual(
             self.page.driver_mapping_selection.filename,
@@ -512,7 +551,7 @@ class AmplifierPageTests(unittest.TestCase):
         self.assertTrue(self.page.amplifier_test_btn.isEnabled())
         self.assertFalse(self.page.stop_btn.isEnabled())
 
-    def test_stop_shares_the_row_with_start_and_diagram_sits_below(self):
+    def test_stop_shares_the_row_with_start_and_load_sits_below(self):
         page = self.page
         page.resize(1200, 800)
         page.show()
@@ -523,7 +562,11 @@ class AmplifierPageTests(unittest.TestCase):
             page.amplifier_test_btn.geometry().left(),
             page.stop_btn.geometry().left(),
         )
-        self.assertLess(start_top, page.show_amp_diagram_btn.geometry().top())
+        self.assertLess(start_top, page.load_data_btn.geometry().top())
+        self.assertEqual(
+            page.load_data_btn.geometry().top(),
+            page.show_amp_diagram_btn.geometry().top(),
+        )
         page.close()
 
     def test_left_column_holds_controls_and_result_surface_takes_the_right(self):
@@ -579,15 +622,14 @@ class AmplifierPageTests(unittest.TestCase):
             for button in (
                 self.page.amplifier_test_btn,
                 self.page.stop_btn,
-                self.page.load_cable_loss_btn,
-                self.page.load_driver_mapping_btn,
+                self.page.load_data_btn,
                 self.page.show_amp_diagram_btn,
             )
             if button.property("variant") == "primary"
         ]
         self.assertEqual(primary, [self.page.amplifier_test_btn])
 
-    def test_start_and_stop_share_a_row_and_other_actions_stack(self):
+    def test_start_and_stop_share_a_row_and_load_sits_left_of_the_diagram(self):
         from PySide6.QtWidgets import QFrame
 
         control = self.page.findChild(QFrame, "measurementSurface")
@@ -600,8 +642,13 @@ class AmplifierPageTests(unittest.TestCase):
             ],
             [self.page.amplifier_test_btn, self.page.stop_btn],
         )
+        load_layout = control_layout.itemAt(2).layout()
         self.assertEqual(
-            control_layout.itemAt(2).widget(), self.page.show_amp_diagram_btn
+            [
+                load_layout.itemAt(index).widget()
+                for index in range(load_layout.count())
+            ],
+            [self.page.load_data_btn, self.page.show_amp_diagram_btn],
         )
         self.page.resize(1200, 800)
         self.page.show()
@@ -612,75 +659,63 @@ class AmplifierPageTests(unittest.TestCase):
             start.mapTo(control, start.rect().topLeft()).y(),
             stop.mapTo(control, stop.rect().topLeft()).y(),
         )
-        stacked = (
-            self.page.show_amp_diagram_btn,
-            self.page.load_cable_loss_btn,
-            self.page.load_driver_mapping_btn,
+        load = self.page.load_data_btn
+        diagram = self.page.show_amp_diagram_btn
+        self.assertEqual(
+            load.mapTo(control, load.rect().topLeft()).y(),
+            diagram.mapTo(control, diagram.rect().topLeft()).y(),
         )
-        tops = [
-            button.mapTo(control, button.rect().topLeft()).y() for button in stacked
-        ]
-        self.assertEqual(tops, sorted(tops))
-        self.assertEqual(len(set(tops)), len(stacked))
+        self.assertLess(
+            load.mapTo(control, load.rect().topLeft()).x(),
+            diagram.mapTo(control, diagram.rect().topLeft()).x(),
+        )
         self.assertGreater(
-            tops[0], start.mapTo(control, start.rect().topLeft()).y()
+            load.mapTo(control, load.rect().topLeft()).y(),
+            start.mapTo(control, start.rect().topLeft()).y(),
         )
+        self.assertEqual(load.width(), diagram.width())
         self.page.close()
 
-    def test_calibration_rows_stack_the_load_action_above_its_source(self):
-        rows = (
-            (
-                self.page.cable_loss_input_row,
-                self.page.load_cable_loss_btn,
-                self.page.cable_loss_source_label,
-            ),
-            (
-                self.page.driver_mapping_input_row,
-                self.page.load_driver_mapping_btn,
-                self.page.driver_mapping_source_label,
-            ),
-        )
-        self.page.resize(1200, 800)
-        self.page.show()
-        self.app.processEvents()
-        for row, button, label in rows:
-            with self.subTest(button=button.text()):
-                layout = row.layout()
-                self.assertEqual(
-                    [layout.itemAt(index).widget() for index in range(layout.count())],
-                    [button, label],
-                )
-                self.assertLess(
-                    button.geometry().top(),
-                    label.geometry().top(),
-                )
-        self.page.close()
-
-    def test_calibration_inputs_share_one_section_in_the_control_surface(self):
+    def test_control_surface_has_no_calibration_section(self):
         from PySide6.QtWidgets import QFrame
 
         control = self.page.findChild(QFrame, "measurementSurface")
-        self.assertIs(self.page.cable_loss_input_row.parentWidget(), control)
-        self.assertIs(self.page.driver_mapping_input_row.parentWidget(), control)
         captions = [
             label.text()
             for label in control.findChildren(QLabel)
             if label.property("role") == "sectionCaption"
         ]
-        self.assertEqual(captions, ["测量控制", "校准输入"])
+        self.assertEqual(captions, ["测量控制"])
+        self.assertFalse(hasattr(self.page, "cable_loss_source_label"))
+        self.assertFalse(hasattr(self.page, "driver_mapping_source_label"))
+        self.assertFalse(hasattr(self.page, "cable_loss_input_row"))
+        self.assertFalse(hasattr(self.page, "driver_mapping_input_row"))
 
-    def test_driver_off_hides_the_whole_driver_mapping_row(self):
+    def test_driver_off_keeps_one_load_entry_and_drops_the_driver_target(self):
         self.page._driver_mode_provider = lambda: False
         self.page.on_activated()
 
-        self.assertTrue(self.page.driver_mapping_input_row.isHidden())
-        self.assertTrue(self.page.load_driver_mapping_btn.isHidden())
-        self.assertTrue(self.page.driver_mapping_source_label.isHidden())
-        self.assertFalse(self.page.cable_loss_input_row.isHidden())
+        self.assertFalse(self.page.load_data_btn.isHidden())
+        self.assertEqual(
+            [target.key for target in self.page._load_targets()], ["cable_loss"]
+        )
+
+        # 只剩一种数据时与单来源页一样直接进入文件选择，不弹选择框。
+        requests = []
+        self.page.load_cable_loss_requested.connect(lambda: requests.append(True))
+        with patch(
+            "presentation.qt.amplifier_page.choose_load_target"
+        ) as chooser:
+            self.page.load_data_btn.click()
+        chooser.assert_not_called()
+        self.assertEqual(requests, [True])
 
         self.page._driver_mode_provider = lambda: True
         self.page.on_activated()
-        self.assertFalse(self.page.driver_mapping_input_row.isHidden())
+        self.assertEqual(
+            [target.key for target in self.page._load_targets()],
+            ["cable_loss", "driver_mapping"],
+        )
 
     def test_result_surface_wraps_the_plot_and_only_adds_a_title(self):
         from PySide6.QtWidgets import QFrame
@@ -789,7 +824,9 @@ class AmplifierPageTests(unittest.TestCase):
             check.detail for check in console.checks()
             if check.label == "驱动映射结果"
         ][0])
-        self.assertTrue(self.page.driver_mapping_input_row.isHidden())
+        self.assertEqual(
+            [target.key for target in self.page._load_targets()], ["cable_loss"]
+        )
 
         self._select_cable_loss()
         self._select_driver_mapping()

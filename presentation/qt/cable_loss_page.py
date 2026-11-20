@@ -134,13 +134,13 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         control_surface = build_surface(CONTROL_SURFACE, title="测量控制")
         control_layout = control_surface.layout()
         self.start_measurement_btn = QPushButton("开始测试")
-        self.load_cable_results_btn = QPushButton("加载测量结果")
+        self.load_data_btn = QPushButton("加载数据")
         self.stop_cable_loss_btn = QPushButton("停止测量")
         set_button_variant(self.start_measurement_btn, "primary")
         set_button_variant(self.stop_cable_loss_btn, "secondary")
-        set_button_variant(self.load_cable_results_btn, "secondary")
+        set_button_variant(self.load_data_btn, "secondary")
         self.start_measurement_btn.clicked.connect(self.start_measurement)
-        self.load_cable_results_btn.clicked.connect(self.load_result_requested.emit)
+        self.load_data_btn.clicked.connect(self.load_result_requested.emit)
         self.stop_cable_loss_btn.clicked.connect(self.stop_measurement)
         # 接线说明只保留一个连接图入口：两条路径在同一窗口里上下展示，按钮只用于防止忘记。
         self.show_cable_loss_diagram_btn = QPushButton("查看连接图")
@@ -156,19 +156,20 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
             },
         )
         self.controls.show_idle()
-        # 开始与停止是同一组运行控制：并排一行；连接图与加载结果等其余动作仍纵向
-        # 排列，一行一个，窄栏里每个按钮都保持完整文案。
+        # 第一行是运行控制（开始仍是唯一的主操作），第二行是加载数据与连接图：
+        # 加载数据在左，查看连接图在右，与另两个测量页一致。
         action_row = QHBoxLayout()
         action_row.setContentsMargins(0, 0, 0, 0)
         action_row.setSpacing(8)
         action_row.addWidget(self.start_measurement_btn, 1)
         action_row.addWidget(self.stop_cable_loss_btn, 1)
         control_layout.addLayout(action_row)
-        for button in (
-            self.show_cable_loss_diagram_btn,
-            self.load_cable_results_btn,
-        ):
-            control_layout.addWidget(button)
+        load_row = QHBoxLayout()
+        load_row.setContentsMargins(0, 0, 0, 0)
+        load_row.setSpacing(8)
+        load_row.addWidget(self.load_data_btn, 1)
+        load_row.addWidget(self.show_cable_loss_diagram_btn, 1)
+        control_layout.addLayout(load_row)
         # 运行控制台回答“这是哪次运行、开始前还缺什么”，放在左栏顶部、控制面上方。
         self.console = MeasurementRunConsole()
         left_layout.addWidget(self.console)

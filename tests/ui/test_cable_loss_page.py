@@ -229,7 +229,7 @@ class CableLossPageTests(unittest.TestCase):
     def test_load_results_requests_window_owned_structured_result(self):
         requests = []
         self.page.load_result_requested.connect(lambda: requests.append(True))
-        self.page.load_cable_results_btn.click()
+        self.page.load_data_btn.click()
         self.assertEqual(requests, [True])
         self.page.show_loaded_result(MeasurementResultReference(
             "loaded-result",
@@ -347,7 +347,7 @@ class CableLossPageTests(unittest.TestCase):
         self.assertFalse(hasattr(self.page, "show_path2_btn"))
         self.assertEqual(self.page.findChildren(QTextEdit), [])
 
-    def test_start_and_stop_share_a_row_and_other_actions_stack(self):
+    def test_start_and_stop_share_a_row_and_load_sits_left_of_the_diagram(self):
         page = self.page
         page.resize(1200, 800)
         page.show()
@@ -356,15 +356,12 @@ class CableLossPageTests(unittest.TestCase):
         stop = page.stop_cable_loss_btn
         self.assertEqual(start.geometry().top(), stop.geometry().top())
         self.assertLess(start.geometry().left(), stop.geometry().left())
-        below = (
-            page.show_cable_loss_diagram_btn,
-            page.load_cable_results_btn,
-        )
-        tops = [button.geometry().top() for button in below]
-        self.assertEqual(tops, sorted(tops))
-        self.assertEqual(len(set(tops)), len(below))
-        self.assertGreater(tops[0], start.geometry().top())
-        self.assertEqual(len({button.geometry().width() for button in below}), 1)
+        load = page.load_data_btn
+        diagram = page.show_cable_loss_diagram_btn
+        self.assertEqual(load.geometry().top(), diagram.geometry().top())
+        self.assertLess(load.geometry().left(), diagram.geometry().left())
+        self.assertGreater(load.geometry().top(), start.geometry().top())
+        self.assertEqual(load.geometry().width(), diagram.geometry().width())
         page.close()
 
     def test_result_surface_holds_the_plot_monitor_and_source_label(self):

@@ -1737,7 +1737,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         """步骤 1 验收：旧运行 A 之后选相反模式 B，排布页与功放页都按 B 呈现。
 
         徽标与标签页在上一轮已经覆盖；这里盯住两个曾从旧运行推导模式的消费者：
-        仪器排布页的链路和功放页的驱动映射入口。
+        仪器排布页的链路和功放页“加载数据”里的驱放项。
         """
         self._silence_dialogs()
         self.config_path.write_text(
@@ -1765,10 +1765,18 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         )
 
         window.amplifier_page.on_activated()
-        self.assertTrue(window.amplifier_page.load_driver_mapping_btn.isHidden())
         self.assertEqual(
-            window.amplifier_page.driver_mapping_source_label.text(),
-            "无驱放测试不需要驱动映射结果",
+            [target.key for target in window.amplifier_page._load_targets()],
+            ["cable_loss"],
+            "无驱放测试的“加载数据”里不能再出现驱放一项",
+        )
+        self.assertIn(
+            "无驱放模式不使用",
+            [
+                check.detail
+                for check in window.amplifier_page.console.checks()
+                if check.label == "驱动映射结果"
+            ][0],
         )
 
     def test_new_driver_mode_restores_the_driver_chain_and_mapping_entry(self):
@@ -1791,7 +1799,10 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         )
 
         window.amplifier_page.on_activated()
-        self.assertFalse(window.amplifier_page.load_driver_mapping_btn.isHidden())
+        self.assertEqual(
+            [target.key for target in window.amplifier_page._load_targets()],
+            ["cable_loss", "driver_mapping"],
+        )
 
     def test_full_mode_switch_after_abandoning_a_connected_run(self):
         """步骤 7：A 连接 → 返回欢迎页清理 A → 选相反模式 B → UI 按 B、入口拒绝旧运行。"""
@@ -1832,10 +1843,18 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
             "新模式 B 的排布链路里不能沿用旧运行的 Driver",
         )
         window.amplifier_page.on_activated()
-        self.assertTrue(window.amplifier_page.load_driver_mapping_btn.isHidden())
         self.assertEqual(
-            window.amplifier_page.driver_mapping_source_label.text(),
-            "无驱放测试不需要驱动映射结果",
+            [target.key for target in window.amplifier_page._load_targets()],
+            ["cable_loss"],
+            "新模式 B 的“加载数据”里不能再出现驱放一项",
+        )
+        self.assertIn(
+            "无驱放模式不使用",
+            [
+                check.detail
+                for check in window.amplifier_page.console.checks()
+                if check.label == "驱动映射结果"
+            ][0],
         )
 
         # 新会话尚未连接：测量入口必须拒绝，不能把旧运行的契约交给页面。
@@ -2272,7 +2291,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
             "presentation.qt.stage_result_selection.choose_stage_result",
             return_value=None,
         ) as chooser:
-            window.driver_mapping_page.load_cable_loss_btn.click()
+            window.driver_mapping_page.load_data_btn.click()
             self.app.processEvents()
 
         chooser.assert_called_once()
@@ -2322,8 +2341,8 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIsNotNone(selection)
         self.assertEqual(selection.filename, reference.path.name)
         self.assertEqual(selection.created_at, result.created_at)
-        self.assertIn(reference.path.name, page.cable_loss_source_label.text())
-        self.assertIn(result.created_at, page.cable_loss_source_label.text())
+        self.assertIn(reference.path.name, page.load_data_btn.toolTip())
+        self.assertIn(result.created_at, page.load_data_btn.toolTip())
 
     def test_driver_mapping_start_without_a_chosen_cable_loss_never_starts(self):
         self._silence_dialogs()
@@ -2338,19 +2357,25 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertFalse(window.measurement_controller.state.is_active)
         self.assertIsNone(page.cable_loss_selection)
 
-    def test_amplifier_load_buttons_route_to_the_stage_result_selector(self):
+    def test_amplifier_load_dialog_routes_each_choice_to_the_stage_result_selector(self):
         from application.ports.stage_result_repository import MeasurementStage
 
         self._silence_dialogs()
         window = self._window()
+        window._enter_test_mode(True)
+        window.amplifier_page.on_activated()
         with patch(
             "presentation.qt.stage_result_selection.choose_stage_result",
             return_value=None,
-        ) as chooser:
-            window.amplifier_page.load_cable_loss_btn.click()
-            window.amplifier_page.load_driver_mapping_btn.click()
+        ) as chooser, patch(
+            "presentation.qt.amplifier_page.choose_load_target",
+            side_effect=["cable_loss", "driver_mapping"],
+        ) as dialog:
+            window.amplifier_page.load_data_btn.click()
+            window.amplifier_page.load_data_btn.click()
             self.app.processEvents()
 
+        self.assertEqual(dialog.call_count, 2)
         self.assertEqual(chooser.call_count, 2)
         first, second = chooser.call_args_list
         self.assertIs(first.args[0], window)
@@ -2401,7 +2426,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
             MeasurementStage.DRIVER_MAPPING, driver_result
         )
         window = self._window()
-        # 驱动映射来源行只在有驱放模式下可见；先把窗口切到该模式。
+        # 驱动模式决定“加载数据”里要不要列出驱放一项；先把窗口切到该模式。
         window._enter_test_mode(True)
 
         with patch(
@@ -2425,9 +2450,9 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertEqual(
             page.driver_mapping_selection.created_at, driver_result.created_at
         )
-        self.assertIn(cable_reference.path.name, page.cable_loss_source_label.text())
+        self.assertIn(cable_reference.path.name, page.load_data_btn.toolTip())
         self.assertIn(
-            driver_reference.path.name, page.driver_mapping_source_label.text()
+            driver_reference.path.name, page.load_data_btn.toolTip()
         )
 
     def test_amplifier_start_without_chosen_inputs_never_starts(self):

@@ -468,10 +468,10 @@ class DriverMappingPageTests(unittest.TestCase):
     def test_load_button_only_emits_the_selection_request(self):
         requests = []
         self.page.load_cable_loss_requested.connect(lambda: requests.append(True))
-        self.page.load_cable_loss_btn.click()
+        self.page.load_data_btn.click()
         self.assertEqual(requests, [True])
 
-    def test_loaded_cable_loss_shows_source_and_measurement_time(self):
+    def test_loaded_cable_loss_is_visible_in_the_load_tooltip(self):
         filename = "20261111T010203Z_a1b2c3d4.json"
         created_at = "2026-11-11T01:02:03+00:00"
         self._select_cable_loss(filename, created_at)
@@ -481,9 +481,9 @@ class DriverMappingPageTests(unittest.TestCase):
         self.assertEqual(selection.path, f"test_results/cable_loss/{filename}")
         self.assertEqual(selection.filename, filename)
         self.assertEqual(selection.created_at, created_at)
-        label = self.page.cable_loss_source_label.text()
-        self.assertIn(filename, label)
-        self.assertIn(created_at, label)
+        tooltip = self.page.load_data_btn.toolTip()
+        self.assertIn(filename, tooltip)
+        self.assertIn(created_at, tooltip)
         self.assertIn(f"已选择驱动映射线损测量结果：{filename}", self.logs[-1])
 
     def test_selection_survives_page_switch_and_can_be_replaced(self):
@@ -494,11 +494,11 @@ class DriverMappingPageTests(unittest.TestCase):
 
         self._select_cable_loss("second.json", "2026-11-12T04:05:06+00:00")
         self.assertEqual(self.page.cable_loss_selection.filename, "second.json")
-        self.assertIn("second.json", self.page.cable_loss_source_label.text())
+        self.assertIn("second.json", self.page.load_data_btn.toolTip())
 
-    def test_without_a_selection_the_label_prompts_for_cable_loss(self):
+    def test_without_a_selection_the_tooltip_prompts_for_cable_loss(self):
         self.assertIsNone(self.page.cable_loss_selection)
-        self.assertIn("未选择线损结果", self.page.cable_loss_source_label.text())
+        self.assertIn("未选择", self.page.load_data_btn.toolTip())
 
 
     def test_left_column_holds_controls_and_plot_takes_the_right(self):
@@ -525,7 +525,7 @@ class DriverMappingPageTests(unittest.TestCase):
 
 
 
-    def test_start_and_stop_share_a_row_and_other_actions_stack(self):
+    def test_start_and_stop_share_a_row_and_load_sits_left_of_the_diagram(self):
         page = self.page
         page.resize(1200, 800)
         page.show()
@@ -534,29 +534,27 @@ class DriverMappingPageTests(unittest.TestCase):
         stop = page.driver_stop_btn
         self.assertEqual(start.geometry().top(), stop.geometry().top())
         self.assertLess(start.geometry().left(), stop.geometry().left())
-        below = (
-            page.show_driver_diagram_btn,
-            page.load_cable_loss_btn,
-        )
-        tops = [button.geometry().top() for button in below]
-        self.assertEqual(tops, sorted(tops))
-        self.assertEqual(len(set(tops)), len(below))
-        self.assertGreater(tops[0], start.geometry().top())
-        self.assertEqual(len({button.geometry().width() for button in below}), 1)
+        load = page.load_data_btn
+        diagram = page.show_driver_diagram_btn
+        self.assertEqual(load.geometry().top(), diagram.geometry().top())
+        self.assertLess(load.geometry().left(), diagram.geometry().left())
+        self.assertGreater(load.geometry().top(), start.geometry().top())
+        self.assertEqual(load.geometry().width(), diagram.geometry().width())
         page.close()
 
-    def test_calibration_inputs_live_in_the_control_surface(self):
+    def test_control_surface_holds_only_the_two_action_rows(self):
         from PySide6.QtWidgets import QFrame
 
         control = self.page.findChild(QFrame, "measurementSurface")
-        self.assertIs(self.page.load_cable_loss_btn.parentWidget(), control)
-        self.assertIs(self.page.cable_loss_source_label.parentWidget(), control)
+        self.assertIs(self.page.load_data_btn.parentWidget(), control)
+        self.assertIs(self.page.show_driver_diagram_btn.parentWidget(), control)
         captions = [
             label.text()
             for label in control.findChildren(QLabel)
             if label.property("role") == "sectionCaption"
         ]
-        self.assertEqual(captions, ["测量控制", "校准输入"])
+        self.assertEqual(captions, ["测量控制"])
+        self.assertFalse(hasattr(self.page, "cable_loss_source_label"))
 
     def test_result_surface_wraps_the_plot(self):
         from PySide6.QtWidgets import QFrame
